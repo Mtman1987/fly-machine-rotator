@@ -256,6 +256,11 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
 
 async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
   const runtime = (await RotatorRuntimeStateStore.load(getRuntimeStateFile(env))).snapshot();
+  const rotationHistory = await readRotationHistory(env);
+  const latestHistoryEntry = rotationHistory.at(-1);
+  const startedAt = runtime.lastStartedAt ?? latestHistoryEntry?.startedAt ?? latestHistoryEntry?.at;
+  const finishedAt = runtime.lastFinishedAt ?? latestHistoryEntry?.finishedAt ?? latestHistoryEntry?.at;
+  const totalRuns = runtime.totalRuns > 0 ? runtime.totalRuns : rotationHistory.length;
   const rawErrors = pruneLast24Hours(await readErrorHistory(env));
   const ignoreStore = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
   const ignoredErrors = rawErrors.filter((event) => ignoreStore.matches(event));
@@ -276,7 +281,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       : env.GEMINI_API_KEY
         ? `Gemini ${env.GEMINI_FIX_MODEL ?? "gemini-2.5-flash"}`
         : "No AI provider configured";
-  const latestRunLines = runtime.lastRunLines.join("\n") || "No rotation output recorded yet.";
+  const latestRunLines = runtime.lastRunLines.join("\n") || renderHistoryRunLines(latestHistoryEntry);
   const statusTone = runtime.currentStatus === "failed"
     ? "status-bad"
     : runtime.currentStatus === "running"
@@ -329,8 +334,8 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         `).join("");
   const runtimeRows = [
     ["Trigger", runtime.lastTrigger ?? "n/a"],
-    ["Started", formatDashboardTimestamp(runtime.lastStartedAt)],
-    ["Finished", formatDashboardTimestamp(runtime.lastFinishedAt)],
+    ["Started", formatDashboardTimestamp(startedAt)],
+    ["Finished", formatDashboardTimestamp(finishedAt)],
     ["Duration", formatDuration(runtime.lastDurationMs)],
     ["Next run", formatDashboardTimestamp(runtime.nextRunAt)],
   ].map(([label, value]) => `
@@ -778,7 +783,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
             <div class="eyebrow">Rotation telemetry</div>
             <h2>Run timing and cadence</h2>
           </div>
-          <strong>${runtime.totalRuns}</strong>
+          <strong>${totalRuns}</strong>
         </div>
         <p class="muted section-copy">This panel keeps the operator-facing timing view readable even when the raw runtime state is sparse after a deploy or restart.</p>
         <div class="data-list">
@@ -1293,6 +1298,31 @@ async function findErrorEventById(id: string, env: NodeJS.ProcessEnv): Promise<S
   const event = events.find((item) => buildFixId(item.appName, item.fingerprint) === id);
   if (!event) throw new HttpError(404, `Error event ${id} not found.`);
   return event;
+}
+
+type RotationHistoryEntry = {
+  at?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  results?: Array<{ appName?: string; mode?: string }>;
+};
+
+async function readRotationHistory(env: NodeJS.ProcessEnv): Promise<RotationHistoryEntry[]> {
+  const historyFile = env.ROTATION_HISTORY_FILE ?? "/data/rotation-history.json";
+  try {
+    const parsed = JSON.parse(await readFile(historyFile, "utf8")) as RotationHistoryEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderHistoryRunLines(entry: RotationHistoryEntry | undefined): string {
+  if (!entry?.results?.length) return "No rotation output recorded yet.";
+  return entry.results
+    .map((result) => `${(result.appName ?? "unknown").padEnd(24, " ")} ${result.mode ?? "unknown"}`)
+    .join("\n")
+    .slice(0, 1000);
 }
 
 function dedupeErrorEvents(events: StoredErrorEvent[]): StoredErrorEvent[] {

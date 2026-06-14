@@ -86,6 +86,16 @@ export class RotatorRuntimeStateStore {
   }
 
   async setNextRunAt(nextRunAt: string | undefined): Promise<void> {
+    const latest = await RotatorRuntimeStateStore.load(this.path);
+    const snapshot = latest.snapshot();
+    this.value.totalRuns = snapshot.totalRuns;
+    this.value.currentStatus = snapshot.currentStatus;
+    this.value.lastTrigger = snapshot.lastTrigger;
+    this.value.lastStartedAt = snapshot.lastStartedAt;
+    this.value.lastFinishedAt = snapshot.lastFinishedAt;
+    this.value.lastDurationMs = snapshot.lastDurationMs;
+    this.value.lastError = snapshot.lastError;
+    this.value.lastRunLines = snapshot.lastRunLines;
     this.value.nextRunAt = nextRunAt;
     this.value.updatedAt = new Date().toISOString();
     await this.save();
