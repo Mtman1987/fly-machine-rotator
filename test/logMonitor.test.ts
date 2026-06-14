@@ -21,6 +21,11 @@ describe("looksLikeError", () => {
     "\u001b[31mERROR\u001b[0m error umounting /data: EBUSY: Device or resource busy, retrying in a bit",
     '[TTS] inworld failed (voice: Snik), falling back to EdenAI: Inworld TTS failed: 402 {"code":7}',
     '[TTS] OpenAI failed (voice: openai:nova), falling back to EdenAI edenai:openai:FEMALE: OpenAI TTS failed: 429 {',
+    '[Bot] Join result: {"error":"Already in game","__ok":false,"__status":400}',
+    '[API Error] /api/tag: 400 {"error":"Already in game"}',
+    '[Bot] Failed joining x3_selegna: msg_banned',
+    '[Bot] Auto-blacklisting banned channel: x3_selegna',
+    '[Bot] Join failed nrdedan: account exists (id=416571103) but IRC timed out — may have chat disabled, followers-only, or Twitch IRC issue',
     '[Dispatcher] Non-command message from gpplayhouse, checking mentions. lowerMessage: "panic turned 41"',
     "[BRB] Playing clip: All Panic all the time (15.7s) for gpplayhouse"
   ])("ignores expected or non-actionable rotator report noise: %s", (message) => {

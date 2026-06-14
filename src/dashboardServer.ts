@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { generateFixRecord, StoredErrorEvent } from "./aiFixer.js";
 import { loadConfig } from "./config.js";
-import { buildFixId, FixRecord, FixStore, getFixStoreFile } from "./fixStore.js";
+import { appendFixAttempt, buildFixId, FixRecord, FixStore, getFixStoreFile } from "./fixStore.js";
 import { buildFingerprintIgnoreRule, buildPatternIgnoreRule, getIgnoreRulesFile, IgnoreRule, IgnoreRuleStore } from "./ignoreRules.js";
 import { buildFixBranchName, ensureRepoDependencies, ensureRepoReady, hasWorkingTreeChanges, pushRepoBranch, runCheckCommands, writeRepoFiles } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
@@ -148,7 +148,9 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     if (!event) throw new HttpError(404, `Error event ${id} not found.`);
     let record: FixRecord;
     try {
-      record = await generateFixRecord(event, env);
+      const existing = store.get(id);
+      const related = store.list().filter((item) => item.repoId === existing?.repoId || item.appName === event.appName);
+      record = await generateFixRecord(event, env, { existing, related });
     } catch (error) {
       record = {
         id,
@@ -157,8 +159,16 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
         status: "error",
         updatedAt: new Date().toISOString(),
         changes: [],
+        attempts: [],
         lastError: error instanceof Error ? error.message : String(error)
       };
+      appendFixAttempt(record, {
+        attemptedAt: record.updatedAt,
+        action: "generate",
+        ok: false,
+        summary: "Fix generation failed.",
+        details: record.lastError
+      });
     }
     store.upsert(record);
     await store.save();
@@ -197,6 +207,12 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     existing.status = "applied";
     existing.updatedAt = new Date().toISOString();
     existing.lastError = undefined;
+    appendFixAttempt(existing, {
+      attemptedAt: existing.updatedAt,
+      action: "apply",
+      ok: true,
+      summary: `Applied ${existing.changes.length} file change(s).`
+    });
     store.upsert(existing);
     await store.save();
     return { ok: true, message: `Applied ${existing.changes.length} file change(s).` };
@@ -216,6 +232,13 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     existing.status = existing.checkResult.ok ? "checked" : "error";
     existing.updatedAt = new Date().toISOString();
     existing.lastError = existing.checkResult.ok ? undefined : commandResults.find((result) => result.exitCode !== 0)?.output.slice(-4000);
+    appendFixAttempt(existing, {
+      attemptedAt: existing.updatedAt,
+      action: "check",
+      ok: existing.checkResult.ok,
+      summary: existing.checkResult.ok ? "Checks passed." : "Checks failed.",
+      details: commandResults.map((result) => `${result.command} => ${result.exitCode}`).join(" | ")
+    });
     store.upsert(existing);
     await store.save();
     return { ok: true, message: existing.checkResult.ok ? "Checks passed." : "Checks failed." };
@@ -236,6 +259,13 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     existing.status = "pushed";
     existing.updatedAt = new Date().toISOString();
     existing.lastError = undefined;
+    appendFixAttempt(existing, {
+      attemptedAt: existing.updatedAt,
+      action: "push",
+      ok: true,
+      summary: `Pushed branch ${push.branch}.`,
+      details: push.commit
+    });
     store.upsert(existing);
     await store.save();
     return { ok: true, message: `Pushed branch ${push.branch}.` };
@@ -245,6 +275,12 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     existing.status = "handled";
     existing.handledAt = new Date().toISOString();
     existing.updatedAt = existing.handledAt;
+    appendFixAttempt(existing, {
+      attemptedAt: existing.updatedAt,
+      action: "handled",
+      ok: true,
+      summary: "Marked handled and removed from active error state."
+    });
     store.upsert(existing);
     await store.save();
     await removeFingerprintFromErrorState(existing.fingerprint, env);
@@ -1230,20 +1266,31 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
 
   for (const event of events) {
     try {
-      const record = await generateFixRecord(event, env);
+      const existing = store.get(buildFixId(event.appName, event.fingerprint));
+      const related = store.list().filter((item) => item.repoId === existing?.repoId || item.appName === event.appName);
+      const record = await generateFixRecord(event, env, { existing, related });
       store.upsert(record);
       if (record.status === "error") failed += 1;
       else generated += 1;
     } catch (error) {
-      store.upsert({
+      const record: FixRecord = {
         id: buildFixId(event.appName, event.fingerprint),
         appName: event.appName,
         fingerprint: event.fingerprint,
         status: "error",
         updatedAt: new Date().toISOString(),
         changes: [],
+        attempts: [],
         lastError: error instanceof Error ? error.message : String(error)
+      };
+      appendFixAttempt(record, {
+        attemptedAt: record.updatedAt,
+        action: "generate",
+        ok: false,
+        summary: "Fix generation failed.",
+        details: record.lastError
       });
+      store.upsert(record);
       failed += 1;
     }
   }

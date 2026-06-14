@@ -33,6 +33,24 @@ export interface FixPushResult {
   output: string;
 }
 
+export interface FixAttempt {
+  attemptedAt: string;
+  action: "generate" | "apply" | "check" | "push" | "handled";
+  ok: boolean;
+  summary: string;
+  details?: string;
+}
+
+export interface FixRepoSnapshot {
+  capturedAt: string;
+  repoPath: string;
+  branch?: string;
+  headCommit?: string;
+  originCommit?: string;
+  dirty?: boolean;
+  contextPaths: string[];
+}
+
 export interface FixRecord {
   id: string;
   appName: string;
@@ -48,6 +66,8 @@ export interface FixRecord {
   confidence?: "low" | "medium" | "high";
   sourceSummary?: string;
   changes: FixFileChange[];
+  attempts: FixAttempt[];
+  repoSnapshot?: FixRepoSnapshot;
   checkResult?: FixCheckResult;
   pushResult?: FixPushResult;
   lastError?: string;
@@ -63,7 +83,7 @@ export class FixStore {
   static async load(path: string): Promise<FixStore> {
     try {
       const parsed = JSON.parse(await readFile(path, "utf8")) as FixRecord[];
-      return new FixStore(path, Array.isArray(parsed) ? parsed : []);
+      return new FixStore(path, Array.isArray(parsed) ? parsed.map(normalizeFixRecord) : []);
     } catch {
       return new FixStore(path, []);
     }
@@ -101,4 +121,20 @@ export function getFixStoreFile(env: NodeJS.ProcessEnv = process.env): string {
 
 export function buildFixId(appName: string, fingerprint: string): string {
   return `${appName}::${fingerprint}`;
+}
+
+export function appendFixAttempt(
+  record: FixRecord,
+  attempt: FixAttempt
+): FixRecord {
+  record.attempts = [...(Array.isArray(record.attempts) ? record.attempts : []), attempt].slice(-20);
+  return record;
+}
+
+function normalizeFixRecord(record: FixRecord): FixRecord {
+  return {
+    ...record,
+    changes: Array.isArray(record.changes) ? record.changes : [],
+    attempts: Array.isArray(record.attempts) ? record.attempts : []
+  };
 }

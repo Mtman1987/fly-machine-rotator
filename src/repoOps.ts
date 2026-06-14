@@ -4,6 +4,14 @@ import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { RepoConfig } from "./repoMap.js";
 
+export interface RepoSnapshot {
+  repoPath: string;
+  branch?: string;
+  headCommit?: string;
+  originCommit?: string;
+  dirty: boolean;
+}
+
 export async function ensureRepoReady(config: RepoConfig, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const reposRoot = env.ROTATOR_REPO_CACHE_DIR ?? "/data/repos";
   const repoPath = join(reposRoot, config.cloneDirName);
@@ -15,6 +23,7 @@ export async function ensureRepoReady(config: RepoConfig, env: NodeJS.ProcessEnv
   }
 
   await configureGitIdentity(repoPath);
+  await refreshRepoCache(repoPath);
   return repoPath;
 }
 
@@ -105,9 +114,30 @@ export async function hasWorkingTreeChanges(repoPath: string): Promise<boolean> 
   return result.output.trim().length > 0;
 }
 
+export async function captureRepoSnapshot(repoPath: string): Promise<RepoSnapshot> {
+  const branch = await readGitValue(repoPath, "git rev-parse --abbrev-ref HEAD");
+  const headCommit = await readGitValue(repoPath, "git rev-parse HEAD");
+  const originCommit = await readGitValue(repoPath, "git rev-parse @{upstream}");
+  return {
+    repoPath,
+    branch,
+    headCommit,
+    originCommit,
+    dirty: await hasWorkingTreeChanges(repoPath)
+  };
+}
+
 async function configureGitIdentity(repoPath: string): Promise<void> {
   await runShell('git config user.name "Fly Rotator"', repoPath, 60_000, false);
   await runShell('git config user.email "rotator@local.invalid"', repoPath, 60_000, false);
+}
+
+async function refreshRepoCache(repoPath: string): Promise<void> {
+  await runShell("git fetch --all --prune", repoPath, 5 * 60 * 1000, false);
+  if (await hasWorkingTreeChanges(repoPath)) return;
+  const branch = (await readGitValue(repoPath, "git rev-parse --abbrev-ref HEAD"))?.trim();
+  if (!branch || branch === "HEAD") return;
+  await runShell(`git pull --ff-only origin ${shellQuote(branch)}`, repoPath, 5 * 60 * 1000, false);
 }
 
 function authenticatedRepoUrl(url: string, token: string | undefined): string {
@@ -130,6 +160,12 @@ async function firstExisting(paths: string[]): Promise<string | undefined> {
     if (await pathExists(path)) return path;
   }
   return undefined;
+}
+
+async function readGitValue(repoPath: string, command: string): Promise<string | undefined> {
+  const result = await runShell(command, repoPath, 60_000, false);
+  const value = result.output.trim();
+  return result.exitCode === 0 && value ? value : undefined;
 }
 
 async function hashFile(path: string): Promise<string> {

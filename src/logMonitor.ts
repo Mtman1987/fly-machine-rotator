@@ -268,6 +268,11 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[Bot\] Tag error: You are not it!/i,
     /\[Bot\] Tag error: [^:]+ is immune \((?:20-min cooldown|no-tagback)\)/i,
     /\[Bot\] Tag error: [^:]+ is away\/offline/i,
+    /\[Bot\] Join result: .*"error":"Already in game"/i,
+    /\[API Error\]\s*\/api\/tag:\s*400\b.*"error":"Already in game"/i,
+    /\[Bot\] Failed joining .+:\s*msg_banned/i,
+    /\[Bot\] Auto-blacklisting banned channel:/i,
+    /\[Bot\] Join failed .+: account exists \(id=\d+\) but IRC timed out/i,
     /\[Bot\] Auto-rotate failed \(\d+\/\d+\): no other live eligible players/i,
     /\[Bot\] Auto-rotate failed \d+ times for .+; triggering FFA fallback/i,
     /\[PM\d+\] machines API returned an error: "machine still attempting to start"/i,
@@ -370,6 +375,27 @@ function normalizeErrorMessage(message: string): string {
 
 function suggestFix(message: string): string {
   const lower = message.toLowerCase();
+  if (lower.includes("failed to get needed list: 502")) {
+    return "The clip worker could not fetch /api/clips/needed because the upstream DSH route returned 502. Check the DSH route and add retry/backoff around the worker fetch so a transient upstream error does not poison the queue.";
+  }
+  if (lower.includes("invalid json payload")) {
+    return "The Discord chat route is receiving malformed or truncated JSON. Inspect the request-body parsing path, log the raw payload length safely, and harden parsing so one bad payload does not cascade into multiple app errors.";
+  }
+  if (lower.includes("watchmode returned 401")) {
+    return "Watchmode rejected the fallback request with 401. Verify the Watchmode API key secret and, if the app should tolerate missing Watchmode access, downgrade the fallback failure to a handled warning instead of a noisy error.";
+  }
+  if (lower.includes("cdn chunk fetch failed (401)")) {
+    return "The proxy is reusing an expired signed CDN URL for range fetches. Refresh the media URL before later chunk requests or restart the fetch from a newly resolved source URL when the CDN returns 401.";
+  }
+  if (lower.includes("conversion failed for vod")) {
+    return "The HLS worker hit an unexpected 4XX from the VOD source. Handle non-401/403/404 client errors explicitly, capture the exact status code, and stop retrying permanent source URLs that are no longer playable.";
+  }
+  if (lower.includes("tts generation failed") && lower.includes("aborterror")) {
+    return "The TTS provider aborted mid-request. Catch AbortError in the TTS flow, log it as a handled provider timeout, and fall back cleanly instead of surfacing it as a hard error.";
+  }
+  if (lower.includes("failed to fetch crew source: 404")) {
+    return "The crew source URL is returning a 404 HTML page instead of JSON. Fix the configured crew API URL and add a guard that treats HTML 404 responses as a configuration issue, not a parsing failure.";
+  }
   if (lower.includes("maximum number of edits to messages older than 1 hour reached")) {
     return "Discord blocks repeated edits to messages older than one hour. Repost a fresh message instead of editing the old one, then update stored message IDs.";
   }

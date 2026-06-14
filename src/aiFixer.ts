@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { buildFixId, FixRecord, FixStatus } from "./fixStore.js";
-import { ensureRepoReady } from "./repoOps.js";
+import { appendFixAttempt, buildFixId, FixRecord, FixStatus } from "./fixStore.js";
+import { captureRepoSnapshot, ensureRepoReady } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
 
 export interface StoredErrorEvent {
@@ -30,7 +30,11 @@ interface ModelFixPlan {
 
 export async function generateFixRecord(
   event: StoredErrorEvent,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  options: {
+    existing?: FixRecord;
+    related?: FixRecord[];
+  } = {}
 ): Promise<FixRecord> {
   const config = getRepoConfigForApp(event.appName);
   if (!config) {
@@ -47,8 +51,13 @@ export async function generateFixRecord(
 
   const repoPath = await ensureRepoReady(config, env);
   const context = await collectRepoContext(repoPath, event);
-  const plan = await requestFixPlan(config.label, repoPath, event, context, env);
-  return {
+  const repoSnapshot = await captureRepoSnapshot(repoPath);
+  const plan = await requestFixPlan(config.label, repoPath, event, context, env, {
+    existing: options.existing,
+    related: options.related,
+    repoSnapshot
+  });
+  const record: FixRecord = {
     id: buildFixId(event.appName, event.fingerprint),
     appName: event.appName,
     fingerprint: event.fingerprint,
@@ -63,8 +72,30 @@ export async function generateFixRecord(
     confidence: plan.confidence,
     sourceSummary: plan.sourceSummary,
     changes: plan.changes,
+    attempts: options.existing?.attempts ?? [],
+    repoSnapshot: {
+      capturedAt: new Date().toISOString(),
+      repoPath,
+      branch: repoSnapshot.branch,
+      headCommit: repoSnapshot.headCommit,
+      originCommit: repoSnapshot.originCommit,
+      dirty: repoSnapshot.dirty,
+      contextPaths: context.map((item) => item.path)
+    },
     lastError: plan.changes.length > 0 ? undefined : "Model did not return any safe file changes."
   };
+  appendFixAttempt(record, {
+    attemptedAt: record.updatedAt,
+    action: "generate",
+    ok: plan.changes.length > 0,
+    summary: plan.changes.length > 0
+      ? `Generated ${plan.changes.length} file change(s).`
+      : "Model returned no safe file changes.",
+    details: repoSnapshot.headCommit
+      ? `repo=${repoSnapshot.branch ?? "unknown"}@${repoSnapshot.headCommit.slice(0, 12)} context=${context.map((item) => item.path).join(", ")}`
+      : `context=${context.map((item) => item.path).join(", ")}`
+  });
+  return record;
 }
 
 function baseRecord(
@@ -79,6 +110,7 @@ function baseRecord(
     status,
     updatedAt: new Date().toISOString(),
     changes: [],
+    attempts: [],
     ...partial
   };
 }
@@ -88,9 +120,19 @@ async function requestFixPlan(
   repoPath: string,
   event: StoredErrorEvent,
   contextFiles: Array<{ path: string; content: string }>,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  options: {
+    existing?: FixRecord;
+    related?: FixRecord[];
+    repoSnapshot?: {
+      branch?: string;
+      headCommit?: string;
+      originCommit?: string;
+      dirty: boolean;
+    };
+  }
 ): Promise<ModelFixPlan> {
-  const prompt = buildPrompt(repoLabel, repoPath, event, contextFiles);
+  const prompt = buildPrompt(repoLabel, repoPath, event, contextFiles, options);
   const failures: string[] = [];
   if (env.EDENAI_API_KEY) {
     try {
@@ -120,8 +162,25 @@ function buildPrompt(
   repoLabel: string,
   repoPath: string,
   event: StoredErrorEvent,
-  contextFiles: Array<{ path: string; content: string }>
+  contextFiles: Array<{ path: string; content: string }>,
+  options: {
+    existing?: FixRecord;
+    related?: FixRecord[];
+    repoSnapshot?: {
+      branch?: string;
+      headCommit?: string;
+      originCommit?: string;
+      dirty: boolean;
+    };
+  }
 ): string {
+  const previousAttempts = (options.existing?.attempts ?? [])
+    .slice(-6)
+    .map((attempt) => `- ${attempt.attemptedAt} ${attempt.action} ${attempt.ok ? "ok" : "error"} ${attempt.summary}${attempt.details ? ` :: ${attempt.details}` : ""}`);
+  const relatedFixes = (options.related ?? [])
+    .filter((record) => record.id !== options.existing?.id)
+    .slice(-5)
+    .map((record) => `- ${record.appName} ${record.fingerprint} status=${record.status} summary=${record.summary ?? "n/a"} lastError=${record.lastError ?? "n/a"}`);
   return [
     `Repo: ${repoLabel}`,
     `Repo path: ${repoPath}`,
@@ -130,14 +189,24 @@ function buildPrompt(
     `Recorded: ${event.recordedAt}`,
     `Message: ${event.message}`,
     `Suggestion from monitor: ${event.suggestion}`,
+    `Repo branch: ${options.repoSnapshot?.branch ?? "unknown"}`,
+    `Repo head: ${options.repoSnapshot?.headCommit ?? "unknown"}`,
+    `Repo upstream head: ${options.repoSnapshot?.originCommit ?? "unknown"}`,
+    `Repo dirty: ${options.repoSnapshot?.dirty ? "yes" : "no"}`,
     "",
     "Recent logs:",
     ...event.context.map((line) => `- ${line}`),
     "",
+    "Previous attempts for this exact fingerprint:",
+    ...(previousAttempts.length > 0 ? previousAttempts : ["- none"]),
+    "",
+    "Recent related fixes in this repo:",
+    ...(relatedFixes.length > 0 ? relatedFixes : ["- none"]),
+    "",
     "Candidate source files:",
     ...contextFiles.map((file) => `FILE: ${file.path}\n${file.content}`),
     "",
-    "Return strict JSON only. Make the smallest safe fix. Prefer changing existing files over creating new ones. Do not invent missing infrastructure. If you are not confident, return an empty changes array."
+    "Return strict JSON only. Make the smallest safe fix. Prefer changing existing files over creating new ones. Do not invent missing infrastructure. Avoid repeating a prior failed approach unless the new context clearly invalidates the old failure. If you are not confident, return an empty changes array."
   ].join("\n");
 }
 
@@ -271,10 +340,49 @@ async function requestGeminiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Pro
   return normalizeModelPlan(JSON.parse(extractJsonPayload(content)) as Partial<ModelFixPlan>);
 }
 
-function extractJsonPayload(content: string): string {
+export function extractJsonPayload(content: string): string {
   const trimmed = content.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return fenced?.[1]?.trim() || trimmed;
+  const unfenced = fenced?.[1]?.trim() || trimmed;
+  return findBalancedJsonPayload(unfenced) ?? unfenced;
+}
+
+function findBalancedJsonPayload(value: string): string | undefined {
+  const firstBrace = value.indexOf("{");
+  const firstBracket = value.indexOf("[");
+  const startCandidates = [firstBrace, firstBracket].filter((index) => index >= 0);
+  if (startCandidates.length === 0) return undefined;
+  const start = Math.min(...startCandidates);
+  const open = value[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === open) depth += 1;
+    if (char === close) depth -= 1;
+    if (depth === 0) {
+      return value.slice(start, index + 1);
+    }
+  }
+  return undefined;
 }
 
 function normalizeModelPlan(parsed: Partial<ModelFixPlan>): ModelFixPlan {
@@ -297,28 +405,51 @@ async function collectRepoContext(
 ): Promise<Array<{ path: string; content: string }>> {
   const packageJsonPath = join(repoPath, "package.json");
   const contexts: Array<{ path: string; content: string }> = [];
+  const seenPaths = new Set<string>();
 
   try {
     const packageJson = await readFile(packageJsonPath, "utf8");
     contexts.push({ path: "package.json", content: clipFile(packageJson) });
+    seenPaths.add("package.json");
   } catch {
     // No package file.
+  }
+
+  for (const relativePath of derivePriorityPaths(event)) {
+    const normalizedPath = relativePath.replaceAll("\\", "/");
+    if (seenPaths.has(normalizedPath)) continue;
+    try {
+      const content = await readFile(join(repoPath, relativePath), "utf8");
+      contexts.push({ path: normalizedPath, content: clipFile(content) });
+      seenPaths.add(normalizedPath);
+    } catch {
+      // Optional priority file missing in this repo variant.
+    }
   }
 
   const searchTerms = deriveSearchTerms(event);
   const candidates = await searchFiles(repoPath, searchTerms, 5);
   for (const candidate of candidates) {
-    if (candidate.path === "package.json") continue;
+    if (seenPaths.has(candidate.path)) continue;
     contexts.push(candidate);
+    seenPaths.add(candidate.path);
   }
 
-  return contexts.slice(0, 6);
+  return contexts.slice(0, 8);
 }
 
 function deriveSearchTerms(event: StoredErrorEvent): string[] {
   const terms = new Set<string>();
   const routeMatches = event.message.match(/\/api\/[a-z0-9/_-]+/gi) ?? [];
   for (const route of routeMatches) terms.add(route.toLowerCase());
+
+  const pathMatches = `${event.message}\n${event.context.join("\n")}`.match(/[A-Za-z0-9/_-]+\.(?:ts|tsx|js|jsx)/g) ?? [];
+  for (const filePath of pathMatches) terms.add(filePath.toLowerCase());
+
+  const bracketMatches = event.message.match(/\[([^\]]+)\]/g) ?? [];
+  for (const match of bracketMatches) {
+    terms.add(match.replace(/^\[|\]$/g, "").toLowerCase());
+  }
 
   const wordMatches = `${event.message}\n${event.context.join("\n")}`
     .match(/[A-Za-z][A-Za-z0-9/_-]{3,}/g) ?? [];
@@ -343,6 +474,49 @@ function deriveSearchTerms(event: StoredErrorEvent): string[] {
   return [...terms];
 }
 
+function derivePriorityPaths(event: StoredErrorEvent): string[] {
+  const message = event.message.toLowerCase();
+  const paths = new Set<string>();
+
+  if (event.appName === "dsh-clip-worker") {
+    paths.add("clip-worker/worker.js");
+    if (message.includes("needed list") || message.includes("/api/clips/needed")) {
+      paths.add("src/app/api/clips/needed/route.ts");
+    }
+  }
+
+  if (event.appName === "discord-stream-hub-new") {
+    paths.add("src/app/api/discord/chat/route.ts");
+  }
+
+  if (event.appName === "chat-tag-bot-new" || event.appName === "chat-tag-new") {
+    paths.add("bot.js");
+    paths.add("src/app/api/tag/route.ts");
+    paths.add("src/lib/chat-tag-discord.ts");
+  }
+
+  if (event.appName === "streamweaver-new") {
+    paths.add("src/services/chat-dispatcher.ts");
+    paths.add("src/services/tts-provider.ts");
+    paths.add("src/ai/flows/text-to-speech.ts");
+    paths.add("src/services/checkin-sources.ts");
+  }
+
+  if (event.appName === "hearmeout-main" || event.appName === "hmo-dj-worker") {
+    paths.add("server.js");
+    paths.add("src/server.js");
+    paths.add("worker.js");
+    paths.add("worker/src/server.js");
+    if (message.includes("watchmode")) {
+      paths.add("watchmode.js");
+      paths.add("src/services/watchmode.js");
+      paths.add("src/lib/watchmode.js");
+    }
+  }
+
+  return [...paths];
+}
+
 async function searchFiles(
   repoPath: string,
   searchTerms: string[],
@@ -351,7 +525,7 @@ async function searchFiles(
   const hits: Array<{ path: string; content: string }> = [];
   if (searchTerms.length === 0) return hits;
 
-  const roots = ["src", "app", "pages", "worker", "scripts"];
+  const roots = ["src", "app", "pages", "worker", "clip-worker", "scripts", "."];
   for (const root of roots) {
     const absoluteRoot = join(repoPath, root);
     if (!(await exists(absoluteRoot))) continue;
