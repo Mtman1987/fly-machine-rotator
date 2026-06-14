@@ -18,4 +18,23 @@ describe("extractJsonPayload", () => {
     const content = "```json\n{\"summary\":\"ok\",\"diagnosis\":\"d\",\"confidence\":\"medium\",\"sourceSummary\":\"s\",\"changes\":[]}\n```";
     expect(extractJsonPayload(content)).toBe('{"summary":"ok","diagnosis":"d","confidence":"medium","sourceSummary":"s","changes":[]}');
   });
+
+  it("extracts a fenced JSON block even when wrapped in prose", () => {
+    const content = [
+      "I found the root cause.",
+      "",
+      "```json",
+      "{\"summary\":\"ok\",\"diagnosis\":\"d\",\"confidence\":\"medium\",\"sourceSummary\":\"s\",\"changes\":[]}",
+      "```",
+      "",
+      "Apply that minimal fix."
+    ].join("\n");
+
+    expect(extractJsonPayload(content)).toBe('{"summary":"ok","diagnosis":"d","confidence":"medium","sourceSummary":"s","changes":[]}');
+  });
+
+  it("extracts a balanced JSON object from a json-prefixed payload", () => {
+    const content = 'json {"summary":"ok","diagnosis":"d","confidence":"medium","sourceSummary":"s","changes":[]}';
+    expect(extractJsonPayload(content)).toBe('{"summary":"ok","diagnosis":"d","confidence":"medium","sourceSummary":"s","changes":[]}');
+  });
 });

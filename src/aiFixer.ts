@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { appendFixAttempt, buildFixId, FixRecord, FixStatus } from "./fixStore.js";
@@ -26,6 +27,12 @@ interface ModelFixPlan {
     reason: string;
     content: string;
   }>;
+}
+
+interface RepoContextFile {
+  path: string;
+  content: string;
+  reason: string;
 }
 
 export async function generateFixRecord(
@@ -119,7 +126,7 @@ async function requestFixPlan(
   repoLabel: string,
   repoPath: string,
   event: StoredErrorEvent,
-  contextFiles: Array<{ path: string; content: string }>,
+  contextFiles: RepoContextFile[],
   env: NodeJS.ProcessEnv,
   options: {
     existing?: FixRecord;
@@ -136,21 +143,21 @@ async function requestFixPlan(
   const failures: string[] = [];
   if (env.EDENAI_API_KEY) {
     try {
-      return await requestEdenAiFixPlan(prompt, env);
+      return await requestEdenAiFixPlan(prompt, repoPath, env);
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (env.OPENAI_API_KEY) {
     try {
-      return await requestOpenAiFixPlan(prompt, env);
+      return await requestOpenAiFixPlan(prompt, repoPath, env);
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (env.GEMINI_API_KEY) {
     try {
-      return await requestGeminiFixPlan(prompt, env);
+      return await requestGeminiFixPlan(prompt, repoPath, env);
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
@@ -162,7 +169,7 @@ function buildPrompt(
   repoLabel: string,
   repoPath: string,
   event: StoredErrorEvent,
-  contextFiles: Array<{ path: string; content: string }>,
+  contextFiles: RepoContextFile[],
   options: {
     existing?: FixRecord;
     related?: FixRecord[];
@@ -204,13 +211,20 @@ function buildPrompt(
     ...(relatedFixes.length > 0 ? relatedFixes : ["- none"]),
     "",
     "Candidate source files:",
-    ...contextFiles.map((file) => `FILE: ${file.path}\n${file.content}`),
+    ...contextFiles.map((file) => `FILE: ${file.path}\nREASON: ${file.reason}\n${file.content}`),
     "",
-    "Return strict JSON only. Make the smallest safe fix. Prefer changing existing files over creating new ones. Do not invent missing infrastructure. Avoid repeating a prior failed approach unless the new context clearly invalidates the old failure. If you are not confident, return an empty changes array."
+    "Rules:",
+    "- Return strict JSON only.",
+    "- First identify the root cause from the provided code evidence, then propose the smallest safe fix.",
+    "- Prefer editing an existing file already shown in the candidate source files.",
+    "- Do not rewrite an entire file with generic scaffolding.",
+    "- Preserve unrelated code and return the full updated file content only for files you actually modify.",
+    "- If the failure is external or config-only and no safe code fix exists, return an empty changes array.",
+    "- Avoid repeating a prior failed approach unless the new context clearly invalidates the old failure."
   ].join("\n");
 }
 
-async function requestOpenAiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
+async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.OPENAI_FIX_MODEL ?? "gpt-4.1-mini";
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -247,10 +261,10 @@ async function requestOpenAiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Pro
     throw new Error("OpenAI response did not include content.");
   }
 
-  return normalizeModelPlan(JSON.parse(extractJsonPayload(content)) as Partial<ModelFixPlan>);
+  return normalizeModelPlan(parseModelPlanContent(content), repoPath);
 }
 
-async function requestEdenAiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
+async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.EDENAI_FIX_MODEL ?? "anthropic/claude-sonnet-4-5";
   const response = await fetch("https://api.edenai.run/v3/chat/completions", {
     method: "POST",
@@ -287,10 +301,10 @@ async function requestEdenAiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Pro
     throw new Error("EdenAI response did not include content.");
   }
 
-  return normalizeModelPlan(JSON.parse(extractJsonPayload(content)) as Partial<ModelFixPlan>);
+  return normalizeModelPlan(parseModelPlanContent(content), repoPath);
 }
 
-async function requestGeminiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
+async function requestGeminiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.GEMINI_FIX_MODEL ?? "gemini-2.5-flash";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`, {
     method: "POST",
@@ -337,79 +351,54 @@ async function requestGeminiFixPlan(prompt: string, env: NodeJS.ProcessEnv): Pro
     throw new Error("Gemini response did not include content.");
   }
 
-  return normalizeModelPlan(JSON.parse(extractJsonPayload(content)) as Partial<ModelFixPlan>);
+  return normalizeModelPlan(parseModelPlanContent(content), repoPath);
 }
 
 export function extractJsonPayload(content: string): string {
-  const trimmed = content.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const unfenced = fenced?.[1]?.trim() || trimmed;
-  return findBalancedJsonPayload(unfenced) ?? unfenced;
-}
-
-function findBalancedJsonPayload(value: string): string | undefined {
-  const firstBrace = value.indexOf("{");
-  const firstBracket = value.indexOf("[");
-  const startCandidates = [firstBrace, firstBracket].filter((index) => index >= 0);
-  if (startCandidates.length === 0) return undefined;
-  const start = Math.min(...startCandidates);
-  const open = value[start];
-  const close = open === "{" ? "}" : "]";
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < value.length; index += 1) {
-    const char = value[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-    if (char === open) depth += 1;
-    if (char === close) depth -= 1;
-    if (depth === 0) {
-      return value.slice(start, index + 1);
+  for (const candidate of extractJsonCandidates(content)) {
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Continue.
     }
   }
-  return undefined;
+  return content.trim();
 }
 
-function normalizeModelPlan(parsed: Partial<ModelFixPlan>): ModelFixPlan {
+function parseModelPlanContent(content: string): Partial<ModelFixPlan> {
+  const payload = extractJsonPayload(content);
+  return JSON.parse(payload) as Partial<ModelFixPlan>;
+}
+
+function normalizeModelPlan(parsed: Partial<ModelFixPlan>, repoPath: string): ModelFixPlan {
+  const changes = Array.isArray(parsed.changes)
+    ? parsed.changes
+      .filter((change): change is { path: string; reason: string; content: string } =>
+        Boolean(change && typeof change.path === "string" && typeof change.reason === "string" && typeof change.content === "string"))
+    : [];
+
   return {
     summary: String(parsed.summary ?? "No summary provided."),
     diagnosis: String(parsed.diagnosis ?? "No diagnosis provided."),
     confidence: parsed.confidence === "low" || parsed.confidence === "high" ? parsed.confidence : "medium",
     sourceSummary: String(parsed.sourceSummary ?? "Used repo-local source files and package metadata."),
-    changes: Array.isArray(parsed.changes)
-      ? parsed.changes
-        .filter((change): change is { path: string; reason: string; content: string } =>
-          Boolean(change && typeof change.path === "string" && typeof change.reason === "string" && typeof change.content === "string"))
-      : []
+    changes: filterSafeChanges(repoPath, changes)
   };
 }
 
 async function collectRepoContext(
   repoPath: string,
   event: StoredErrorEvent
-): Promise<Array<{ path: string; content: string }>> {
+): Promise<RepoContextFile[]> {
   const packageJsonPath = join(repoPath, "package.json");
-  const contexts: Array<{ path: string; content: string }> = [];
+  const contexts: RepoContextFile[] = [];
   const seenPaths = new Set<string>();
+  const searchTerms = deriveSearchTerms(event);
 
   try {
     const packageJson = await readFile(packageJsonPath, "utf8");
-    contexts.push({ path: "package.json", content: clipFile(packageJson) });
+    contexts.push({ path: "package.json", content: clipRelevantFile(packageJson, searchTerms), reason: "package metadata and scripts" });
     seenPaths.add("package.json");
   } catch {
     // No package file.
@@ -420,22 +409,25 @@ async function collectRepoContext(
     if (seenPaths.has(normalizedPath)) continue;
     try {
       const content = await readFile(join(repoPath, relativePath), "utf8");
-      contexts.push({ path: normalizedPath, content: clipFile(content) });
+      contexts.push({
+        path: normalizedPath,
+        content: clipRelevantFile(content, searchTerms),
+        reason: "priority path derived from app/error heuristics"
+      });
       seenPaths.add(normalizedPath);
     } catch {
       // Optional priority file missing in this repo variant.
     }
   }
 
-  const searchTerms = deriveSearchTerms(event);
-  const candidates = await searchFiles(repoPath, searchTerms, 5);
+  const candidates = await searchFiles(repoPath, searchTerms, 8);
   for (const candidate of candidates) {
     if (seenPaths.has(candidate.path)) continue;
     contexts.push(candidate);
     seenPaths.add(candidate.path);
   }
 
-  return contexts.slice(0, 8);
+  return contexts.slice(0, 10);
 }
 
 function deriveSearchTerms(event: StoredErrorEvent): string[] {
@@ -503,14 +495,17 @@ function derivePriorityPaths(event: StoredErrorEvent): string[] {
   }
 
   if (event.appName === "hearmeout-main" || event.appName === "hmo-dj-worker") {
-    paths.add("server.js");
-    paths.add("src/server.js");
-    paths.add("worker.js");
     paths.add("worker/src/server.js");
+    paths.add("src/app/api/discord/chat/route.ts");
     if (message.includes("watchmode")) {
-      paths.add("watchmode.js");
-      paths.add("src/services/watchmode.js");
-      paths.add("src/lib/watchmode.js");
+      paths.add("src/lib/watch/watchmode-provider.ts");
+      paths.add("src/lib/watch/watch-request-service.ts");
+    }
+    if (message.includes("cdn chunk fetch failed")) {
+      paths.add("src/app/api/youtube-audio/proxy/route.ts");
+    }
+    if (message.includes("conversion failed for vod")) {
+      paths.add("worker/src/server.js");
     }
   }
 
@@ -521,8 +516,8 @@ async function searchFiles(
   repoPath: string,
   searchTerms: string[],
   limit: number
-): Promise<Array<{ path: string; content: string }>> {
-  const hits: Array<{ path: string; content: string }> = [];
+): Promise<RepoContextFile[]> {
+  const hits: RepoContextFile[] = [];
   if (searchTerms.length === 0) return hits;
 
   const roots = ["src", "app", "pages", "worker", "clip-worker", "scripts", "."];
@@ -533,11 +528,14 @@ async function searchFiles(
       if (hits.length >= limit) return true;
       if (!isTextSourceFile(absolutePath)) return false;
       const content = await readFile(absolutePath, "utf8").catch(() => "");
-      const haystack = content.toLowerCase();
-      if (searchTerms.some((term) => haystack.includes(term))) {
+      const relativePath = absolutePath.slice(repoPath.length + 1).replaceAll("\\", "/");
+      const haystack = `${relativePath}\n${content}`.toLowerCase();
+      const matchedTerms = searchTerms.filter((term) => haystack.includes(term)).slice(0, 6);
+      if (matchedTerms.length > 0) {
         hits.push({
-          path: absolutePath.slice(repoPath.length + 1).replaceAll("\\", "/"),
-          content: clipFile(content)
+          path: relativePath,
+          content: clipRelevantFile(content, matchedTerms),
+          reason: `matched search terms: ${matchedTerms.join(", ")}`
         });
       }
       return false;
@@ -571,6 +569,140 @@ function isTextSourceFile(path: string): boolean {
 
 function clipFile(content: string): string {
   return content.length > 12_000 ? `${content.slice(0, 12_000)}\n/* truncated */` : content;
+}
+
+function clipRelevantFile(content: string, searchTerms: string[]): string {
+  if (content.length <= 12_000 || searchTerms.length === 0) {
+    return clipFile(content);
+  }
+
+  const lower = content.toLowerCase();
+  const chunks: string[] = [];
+  const seen = new Set<string>();
+
+  for (const term of searchTerms.slice(0, 6)) {
+    const index = lower.indexOf(term.toLowerCase());
+    if (index < 0) continue;
+    const start = Math.max(0, index - 1200);
+    const end = Math.min(content.length, index + 2800);
+    const chunk = content.slice(start, end).trim();
+    if (!chunk || seen.has(chunk)) continue;
+    seen.add(chunk);
+    chunks.push(chunk);
+    if (chunks.join("\n\n/* --- */\n\n").length >= 12_000) break;
+  }
+
+  if (chunks.length === 0) {
+    return clipFile(content);
+  }
+
+  const combined = chunks.join("\n\n/* --- */\n\n");
+  return combined.length > 12_000 ? `${combined.slice(0, 12_000)}\n/* truncated */` : combined;
+}
+
+function extractJsonCandidates(content: string): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const trimmed = content.trim();
+
+  const push = (value: string | undefined) => {
+    if (!value) return;
+    const candidate = value.trim();
+    if (!candidate || seen.has(candidate)) return;
+    seen.add(candidate);
+    candidates.push(candidate);
+  };
+
+  push(trimmed);
+  push(trimmed.replace(/^json\s*/i, ""));
+
+  for (const match of trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)) {
+    push(match[1]);
+  }
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (char !== "{" && char !== "[") continue;
+    push(findBalancedJsonPayload(trimmed, index));
+  }
+
+  return candidates;
+}
+
+function findBalancedJsonPayload(value: string, start: number): string | undefined {
+  const open = value[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") inString = false;
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === open) depth += 1;
+    if (char === close) depth -= 1;
+    if (depth === 0) return value.slice(start, index + 1);
+  }
+
+  return undefined;
+}
+
+function estimateLineCount(value: string): number {
+  return value.split(/\r?\n/).length;
+}
+
+function filterSafeChanges(
+  repoPath: string,
+  changes: Array<{ path: string; reason: string; content: string }>
+): Array<{ path: string; reason: string; content: string }> {
+  return changes.filter((change) => isSafeChange(repoPath, change));
+}
+
+function isSafeChange(
+  repoPath: string,
+  change: { path: string; reason: string; content: string }
+): boolean {
+  const normalizedPath = change.path.replaceAll("\\", "/");
+  if (normalizedPath.startsWith("../") || normalizedPath.startsWith("/") || normalizedPath.includes("/../")) {
+    return false;
+  }
+
+  const absolutePath = join(repoPath, change.path);
+  if (!existsSync(absolutePath)) {
+    return false;
+  }
+
+  let currentContent = "";
+  try {
+    currentContent = readFileSync(absolutePath, "utf8");
+  } catch {
+    return false;
+  }
+
+  const currentLines = estimateLineCount(currentContent);
+  const proposedLines = estimateLineCount(change.content);
+  if (currentLines >= 120 && proposedLines < Math.floor(currentLines * 0.4)) {
+    return false;
+  }
+
+  if (currentContent.length >= 4000 && change.content.length < Math.floor(currentContent.length * 0.35)) {
+    return false;
+  }
+
+  if (!change.content.includes("\n") || !change.content.trim()) {
+    return false;
+  }
+
+  return true;
 }
 
 async function exists(path: string): Promise<boolean> {
