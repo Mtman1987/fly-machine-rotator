@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+import { looksLikeError } from "../src/logMonitor.js";
+
+describe("looksLikeError", () => {
+  it.each([
+    '[API Error] /api/tag: 400 {"error":"tigerflakes420 is immune (20-min cooldown)"}',
+    '[Bot] Tag API response: {"error":"fultztrain420 is immune (no-tagback)","__ok":false,"__status":400}',
+    "[Bot] Tag error: mtman1987 is away/offline",
+    "[Bot] Auto-rotate failed (1/3): no other live eligible players",
+    "[Bot] Auto-rotate failed 3 times for fatkid4ev4; triggering FFA fallback",
+    '[API Error] /api/quackverse/pack: 429 {"packsRemaining":0,"dailyLimit":3}',
+    '[PM01] machines API returned an error: "machine still attempting to start"',
+    '[PM01] machines API returned an error: "rate limit exceeded"',
+    "[PM08] machine is in a non-startable state: stopping",
+    '[PM01] machines API returned an error: "machine ID 32870570a60738 lease currently held by 21609dbf-3b65-5861-a8b6-c1dd95cfdd5b@tokens.fly.io, expires at 2026-05-19T05:45:22Z"',
+    "[PM05] failed to connect to machine: gave up after 15 attempts (in 8.261252872s)",
+    "[PC07] failed to connect to instance after 6 attempts",
+    "[PR03] could not find a good candidate within 1 attempts at load balancing. last error: [PM05] failed to connect to machine: gave up after 15 attempts (in 8.199409689s)",
+    '[PR03] could not find a good candidate within 1 attempts at load balancing. last error: [PM01] machines API returned an error: "rate limit exceeded"',
+    "[PU02] could not complete HTTP request to instance: legacy hyper error: client error (SendRequest), caused by: connection error, caused by: fly-proxy-p2p/tls/http-multihop: connection reset",
+    "\u001b[31mERROR\u001b[0m error umounting /data: EBUSY: Device or resource busy, retrying in a bit",
+    '[TTS] inworld failed (voice: Snik), falling back to EdenAI: Inworld TTS failed: 402 {"code":7}',
+    '[TTS] OpenAI failed (voice: openai:nova), falling back to EdenAI edenai:openai:FEMALE: OpenAI TTS failed: 429 {',
+    '[Dispatcher] Non-command message from gpplayhouse, checking mentions. lowerMessage: "panic turned 41"',
+    "[BRB] Playing clip: All Panic all the time (15.7s) for gpplayhouse"
+  ])("ignores expected or non-actionable rotator report noise: %s", (message) => {
+    expect(looksLikeError(message)).toBe(false);
+  });
+
+  it.each([
+    "Out of memory: Killed process",
+    "[18:43] error: Login authentication failed",
+    "[XtreamCache] Cache failed for VOD 936395: Xtream cache upstream returned 551",
+    "Health check 'servicecheck-00-http-8091' on port 8091 has failed."
+  ])("keeps actionable production failures: %s", (message) => {
+    expect(looksLikeError(message)).toBe(true);
+  });
+});

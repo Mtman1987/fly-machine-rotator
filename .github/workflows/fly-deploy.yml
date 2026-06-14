@@ -1,0 +1,35 @@
+name: Fly Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy fly-machine-rotator
+    runs-on: ubuntu-latest
+    concurrency: fly-deploy-machine-rotator
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Check Fly token
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN is not set"
+            exit 1
+          fi
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Run typecheck
+        run: npm run typecheck
+      - name: Deploy rotator
+        run: flyctl deploy --remote-only --config fly.toml --access-token "$FLY_API_TOKEN"

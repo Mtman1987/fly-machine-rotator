@@ -1,0 +1,44 @@
+app = "mtman-machine-rotator"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  FLY_API_HOSTNAME = "https://api.machines.dev"
+  FLY_ORG = "mtman-new"
+  PUBLIC_DASHBOARD_URL = "https://mtman-machine-rotator.fly.dev/"
+  HEALTH_TIMEOUT_MS = "300000"
+  HEALTH_POLL_INTERVAL_MS = "5000"
+  STOP_TIMEOUT_SECONDS = "60"
+  REQUIRE_HEALTH_CHECKS = "false"
+  ALLOW_MULTI_MACHINE_SERVICES = "true"
+  API_MIN_INTERVAL_MS = "1200"
+  API_MAX_RETRIES = "8"
+  ROTATION_HISTORY_FILE = "/data/rotation-history.json"
+  DISCORD_ROTATION_REPORT_MESSAGE_FILE = "/data/discord-rotation-report-message.json"
+  LOG_MONITOR_ENABLED = "true"
+  LOG_ERROR_DEDUPE_FILE = "/data/error-fingerprints.json"
+  LOG_ERROR_HISTORY_FILE = "/data/error-history.json"
+  DISCORD_ERROR_REPORT_MESSAGE_FILE = "/data/discord-error-report-message.json"
+  LOG_CONTEXT_LINES = "8"
+  LOG_SAMPLE_DURATION_MS = "15000"
+  LOG_POLL_INTERVAL_MS = "60000"
+  RESTART_UNSAFE_APPS = "true"
+  ROTATOR_RUNTIME_STATE_FILE = "/data/runtime-state.json"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024
+
+[mounts]
+  source = "rotator_data"
+  destination = "/data"
