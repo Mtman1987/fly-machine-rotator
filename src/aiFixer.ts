@@ -517,33 +517,36 @@ async function searchFiles(
   searchTerms: string[],
   limit: number
 ): Promise<RepoContextFile[]> {
-  const hits: RepoContextFile[] = [];
+  const hits: Array<RepoContextFile & { score: number }> = [];
   if (searchTerms.length === 0) return hits;
 
-  const roots = ["src", "app", "pages", "worker", "clip-worker", "scripts", "."];
+  const roots = ["src", "app", "pages", "worker", "clip-worker", "scripts"];
   for (const root of roots) {
     const absoluteRoot = join(repoPath, root);
     if (!(await exists(absoluteRoot))) continue;
     await walkFiles(absoluteRoot, async (absolutePath) => {
-      if (hits.length >= limit) return true;
       if (!isTextSourceFile(absolutePath)) return false;
       const content = await readFile(absolutePath, "utf8").catch(() => "");
       const relativePath = absolutePath.slice(repoPath.length + 1).replaceAll("\\", "/");
       const haystack = `${relativePath}\n${content}`.toLowerCase();
       const matchedTerms = searchTerms.filter((term) => haystack.includes(term)).slice(0, 6);
       if (matchedTerms.length > 0) {
+        const score = scoreCandidate(relativePath, content, matchedTerms);
         hits.push({
           path: relativePath,
           content: clipRelevantFile(content, matchedTerms),
-          reason: `matched search terms: ${matchedTerms.join(", ")}`
+          reason: `matched search terms: ${matchedTerms.join(", ")}`,
+          score
         });
       }
       return false;
     });
-    if (hits.length >= limit) break;
   }
 
-  return hits;
+  return hits
+    .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+    .slice(0, limit)
+    .map(({ score: _score, ...candidate }) => candidate);
 }
 
 async function walkFiles(
@@ -564,7 +567,8 @@ async function walkFiles(
 }
 
 function isTextSourceFile(path: string): boolean {
-  return [".ts", ".tsx", ".js", ".jsx", ".json", ".md"].includes(extname(path).toLowerCase());
+  if (/\/readme\.md$/i.test(path.replaceAll("\\", "/"))) return false;
+  return [".ts", ".tsx", ".js", ".jsx", ".json"].includes(extname(path).toLowerCase());
 }
 
 function clipFile(content: string): string {
@@ -598,6 +602,34 @@ function clipRelevantFile(content: string, searchTerms: string[]): string {
 
   const combined = chunks.join("\n\n/* --- */\n\n");
   return combined.length > 12_000 ? `${combined.slice(0, 12_000)}\n/* truncated */` : combined;
+}
+
+function scoreCandidate(path: string, content: string, matchedTerms: string[]): number {
+  const normalizedPath = path.toLowerCase();
+  const normalizedContent = content.toLowerCase();
+  let score = 0;
+
+  score += matchedTerms.length * 8;
+  score += matchedTerms.filter((term) => normalizedPath.includes(term)).length * 12;
+
+  if (normalizedPath.includes("/api/")) score += 8;
+  if (normalizedPath.includes("/lib/")) score += 6;
+  if (normalizedPath.includes("/worker")) score += 7;
+  if (normalizedPath.endsWith("/bot.js") || normalizedPath === "bot.js") score += 10;
+  if (normalizedPath.includes("/test") || normalizedPath.endsWith(".test.ts")) score -= 8;
+  if (normalizedPath.includes("/ai/flows/")) score -= 6;
+  if (normalizedPath.includes("/components/")) score -= 4;
+
+  const exactOccurrences = matchedTerms.reduce((total, term) => {
+    return total + (normalizedContent.match(new RegExp(escapeRegExp(term), "g"))?.length ?? 0);
+  }, 0);
+  score += Math.min(exactOccurrences, 8);
+
+  return score;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractJsonCandidates(content: string): string[] {
