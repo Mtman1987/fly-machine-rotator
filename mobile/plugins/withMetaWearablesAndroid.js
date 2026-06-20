@@ -256,6 +256,31 @@ class MountainViewMetaWearablesModule(
 
   @SuppressLint("MissingPermission")
   @ReactMethod
+  fun getBondedBluetoothDevices(promise: Promise) {
+    if (!hasBlePermissions()) {
+      promise.reject("BLE_PERMISSION_REQUIRED", "Grant Bluetooth connect permissions before reading paired devices.")
+      return
+    }
+    val adapter = bluetoothManager()?.adapter
+    if (adapter == null) {
+      promise.reject("BLUETOOTH_UNAVAILABLE", "Bluetooth adapter is unavailable.")
+      return
+    }
+    try {
+      val devices = adapter.bondedDevices?.map { bondedDeviceMap(it) } ?: emptyList()
+      appendResearchLog("bonded device lookup returned " + devices.size + " devices")
+      val result = WritableNativeMap()
+      result.putBoolean("androidNativeBridge", true)
+      result.putString("state", "bonded-devices")
+      result.putArray("devices", mapValues(devices))
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("BONDED_DEVICE_LOOKUP_FAILED", error.message ?: "Could not read paired Bluetooth devices.")
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  @ReactMethod
   fun connectGenericBleDevice(address: String, promise: Promise) {
     if (!hasBlePermissions()) {
       promise.reject("BLE_PERMISSION_REQUIRED", "Grant Bluetooth connect permissions before connecting.")
@@ -385,6 +410,18 @@ class MountainViewMetaWearablesModule(
     appendResearchLog("scan hit " + safeName(device) + " " + address + " rssi " + result.rssi)
   }
 
+  @SuppressLint("MissingPermission")
+  private fun bondedDeviceMap(device: BluetoothDevice): WritableNativeMap {
+    val item = WritableNativeMap()
+    item.putString("address", device.address ?: "unknown")
+    item.putString("name", safeName(device))
+    item.putString("kindHint", classifyDeviceName(safeName(device)))
+    item.putString("bondState", bondStateName(device.bondState))
+    item.putString("bluetoothType", bluetoothTypeName(device.type))
+    item.putArray("serviceUuids", stringArray(device.uuids?.map { it.uuid.toString() } ?: emptyList()))
+    return item
+  }
+
   private fun classifyDeviceName(name: String): String {
     val lower = name.lowercase(Locale.US)
     return when {
@@ -430,6 +467,25 @@ class MountainViewMetaWearablesModule(
     if (properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) names.add("notify")
     if (properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) names.add("indicate")
     return names.joinToString("|").ifEmpty { properties.toString() }
+  }
+
+  private fun bondStateName(state: Int): String {
+    return when (state) {
+      BluetoothDevice.BOND_BONDED -> "bonded"
+      BluetoothDevice.BOND_BONDING -> "bonding"
+      BluetoothDevice.BOND_NONE -> "none"
+      else -> state.toString()
+    }
+  }
+
+  private fun bluetoothTypeName(type: Int): String {
+    return when (type) {
+      BluetoothDevice.DEVICE_TYPE_CLASSIC -> "classic"
+      BluetoothDevice.DEVICE_TYPE_LE -> "le"
+      BluetoothDevice.DEVICE_TYPE_DUAL -> "dual"
+      BluetoothDevice.DEVICE_TYPE_UNKNOWN -> "unknown"
+      else -> type.toString()
+    }
   }
 
   private fun bytesToHex(bytes: ByteArray): String =

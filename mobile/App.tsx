@@ -71,6 +71,8 @@ type BleScanDevice = {
   name?: string;
   rssi?: number;
   kindHint?: string;
+  bondState?: string;
+  bluetoothType?: string;
   serviceUuids?: string[];
 };
 
@@ -372,6 +374,34 @@ export default function App() {
     }
   }
 
+  async function loadBondedBluetoothDevices() {
+    try {
+      announce("Loading paired Bluetooth devices from Android...");
+      const result = await metaWearables.getBondedBluetoothDevices();
+      const devices = Array.isArray(result.devices) ? result.devices as BleScanDevice[] : [];
+      setBleDevices(devices);
+      setLog(JSON.stringify(result, null, 2));
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "bluetooth-bonded-devices",
+          source: "android-paired-audio",
+          targetApp: "streamweaver",
+          status: devices.length > 0 ? "devices-found" : "no-devices",
+          metadata: {
+            checkedAt: new Date().toISOString(),
+            deviceCount: devices.length,
+            devices,
+            nativeResult: result
+          }
+        })
+      });
+      setStatusMessage(devices.length > 0 ? `Found ${devices.length} paired Bluetooth devices. Tap the glasses row to inspect/connect.` : "No paired Bluetooth devices returned by Android.");
+    } catch (error) {
+      reportError("Paired Bluetooth lookup", error);
+    }
+  }
+
   async function connectGenericBleDevice(address: string) {
     try {
       announce(`Connecting to BLE device ${address}...`);
@@ -550,6 +580,7 @@ export default function App() {
                 <Text style={styles.label}>RDGlass / AiMB research</Text>
                 <Text style={styles.note}>Scan for the knockoff glasses path first. The RDGlass export points to BLE, 16 kHz mono voice events, Microsoft speech libraries, and Nordic UART-like UUIDs; this screen discovers what your actual glasses expose.</Text>
                 <Pressable style={styles.primaryButton} onPress={requestBleResearchPermissions}><Text style={styles.primaryButtonText}>Grant BLE permissions</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={loadBondedBluetoothDevices}><Text style={styles.secondaryButtonText}>Load paired Bluetooth devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={scanGenericBleDevices}><Text style={styles.secondaryButtonText}>Scan nearby BLE devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={discoverGenericBleServices}><Text style={styles.secondaryButtonText}>Discover connected services</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={loadGenericBleLog}><Text style={styles.secondaryButtonText}>Load BLE research log</Text></Pressable>
@@ -559,7 +590,8 @@ export default function App() {
                 {bleDevices.map((device) => (
                   <Pressable key={device.address} style={styles.memoryRow} onPress={() => connectGenericBleDevice(device.address)}>
                     <Text style={styles.memoryTitle}>{device.name ?? "Unnamed BLE device"}</Text>
-                    <Text style={styles.memoryBody}>{device.address} • RSSI {device.rssi ?? "?"} • {device.kindHint ?? "unknown"}</Text>
+                    <Text style={styles.memoryBody}>{device.address} • RSSI {device.rssi ?? "n/a"} • {device.kindHint ?? "unknown"}</Text>
+                    <Text style={styles.memoryBody}>{device.bondState ?? "scan"} • {device.bluetoothType ?? "ble"}</Text>
                     <Text style={styles.memoryBody}>{(device.serviceUuids ?? []).slice(0, 3).join(", ")}</Text>
                   </Pressable>
                 ))}

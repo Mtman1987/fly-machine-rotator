@@ -9,6 +9,7 @@ type MetaWearablesModule = {
   requestVoiceWakePermissions(): Promise<Record<string, unknown>>;
   requestBleResearchPermissions(): Promise<Record<string, unknown>>;
   scanGenericBleDevices(): Promise<Record<string, unknown>>;
+  getBondedBluetoothDevices(): Promise<Record<string, unknown>>;
   connectGenericBleDevice(address: string): Promise<Record<string, unknown>>;
   discoverGenericBleServices(): Promise<Record<string, unknown>>;
   getGenericBleLog(): Promise<Record<string, unknown>>;
@@ -36,6 +37,7 @@ export const metaWearables: MetaWearablesModule = {
   requestVoiceWakePermissions: () => nativeModule?.requestVoiceWakePermissions?.() ?? unavailable("requestVoiceWakePermissions"),
   requestBleResearchPermissions: () => nativeModule?.requestBleResearchPermissions?.() ?? unavailable("requestBleResearchPermissions"),
   scanGenericBleDevices: () => nativeModule?.scanGenericBleDevices?.() ?? unavailable("scanGenericBleDevices"),
+  getBondedBluetoothDevices: () => nativeModule?.getBondedBluetoothDevices?.() ?? unavailable("getBondedBluetoothDevices"),
   connectGenericBleDevice: (address: string) => nativeModule?.connectGenericBleDevice?.(address) ?? unavailable(`connectGenericBleDevice:${address}`),
   discoverGenericBleServices: () => nativeModule?.discoverGenericBleServices?.() ?? unavailable("discoverGenericBleServices"),
   getGenericBleLog: () => nativeModule?.getGenericBleLog?.() ?? unavailable("getGenericBleLog"),
