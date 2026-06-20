@@ -23,6 +23,31 @@ type MemoryRecord = {
   tags?: string[];
 };
 
+type DeviceRecord = {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  pairing_code?: string;
+  connection_hint?: string;
+  capabilities?: string[];
+};
+
+type PollingProfile = {
+  id: string;
+  name: string;
+  interval_seconds: number;
+  battery_mode: string;
+  trigger_targets?: string[];
+  enabled: number;
+};
+
+type RoadmapItem = {
+  title: string;
+  status: string;
+  description: string;
+};
+
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
 
 export default function App() {
@@ -31,8 +56,13 @@ export default function App() {
   const [tab, setTab] = useState("home");
   const [commands, setCommands] = useState<Command[]>([]);
   const [memory, setMemory] = useState<MemoryRecord[]>([]);
+  const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [pollingProfiles, setPollingProfiles] = useState<PollingProfile[]>([]);
+  const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
   const [note, setNote] = useState("");
+  const [deviceName, setDeviceName] = useState("Companion Tablet");
+  const [pollInterval, setPollInterval] = useState("60");
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -82,6 +112,9 @@ export default function App() {
     const data = await request("/bootstrap", {}, authToken);
     setCommands(data.commands ?? []);
     setMemory(data.memory ?? []);
+    setDevices(data.devices ?? []);
+    setPollingProfiles(data.pollingProfiles ?? []);
+    setRoadmap(data.roadmap ?? []);
     setLog((data.logs ?? []).map((item: Record<string, string>) => `${item.created_at} ${item.app_id} ${item.status}`).join("\n") || "No activity yet.");
   }
 
@@ -186,6 +219,33 @@ export default function App() {
     }
   }
 
+  async function saveDevice() {
+    await request("/devices", {
+      method: "POST",
+      body: JSON.stringify({
+        name: deviceName,
+        kind: "tablet",
+        pairingCode: "qr-command-portal",
+        connectionHint: "qr-bluetooth",
+        capabilities: ["display", "commands", "companion-hud"]
+      })
+    });
+    await load();
+  }
+
+  async function savePollingProfile() {
+    await request("/polling-profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Visual trigger scan",
+        intervalSeconds: Number(pollInterval),
+        batteryMode: Number(pollInterval) <= 15 ? "high-power" : "balanced",
+        triggerTargets: ["qr", "device-marker", "scene-change"]
+      })
+    });
+    await load();
+  }
+
   return (
     <View style={styles.app}>
       <View style={styles.header}>
@@ -219,6 +279,12 @@ export default function App() {
                 <Pressable style={styles.secondaryButton} onPress={registerGlasses}><Text style={styles.secondaryButtonText}>Register glasses</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={captureGlassesPhoto}><Text style={styles.secondaryButtonText}>Capture glasses photo</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Request flashlight</Text></Pressable>
+              </View>
+              <View style={styles.panel}>
+                <Text style={styles.label}>Companion HUD</Text>
+                <Text style={styles.note}>Use your phone, tablet, PC, or browser as the display layer for glasses commands, memory, QR triggers, and StreamWeaver/HearMeOut status.</Text>
+                <Pressable style={styles.secondaryButton} onPress={() => setTab("devices")}><Text style={styles.secondaryButtonText}>Open device mesh</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setTab("polling")}><Text style={styles.secondaryButtonText}>Configure visual polling</Text></Pressable>
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Quick commands</Text>
@@ -267,6 +333,56 @@ export default function App() {
           )}
 
           {tab === "logs" && <View style={styles.panel}><Text style={styles.label}>Activity logs</Text><Text style={styles.log}>{log}</Text></View>}
+
+          {tab === "devices" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>Device mesh</Text>
+              <TextInput value={deviceName} onChangeText={setDeviceName} placeholder="Device name" placeholderTextColor="#7f8ca8" style={styles.input} />
+              <Pressable style={styles.primaryButton} onPress={saveDevice}><Text style={styles.primaryButtonText}>Register companion device</Text></Pressable>
+              {devices.map((device) => (
+                <View key={device.id} style={styles.memoryRow}>
+                  <Text style={styles.memoryTitle}>{device.name}</Text>
+                  <Text style={styles.memoryBody}>{device.kind} • {device.status} • {device.connection_hint ?? "local"}</Text>
+                  <Text style={styles.memoryBody}>{(device.capabilities ?? []).join(", ")}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {tab === "polling" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>Visual trigger polling</Text>
+              <Text style={styles.note}>Snapshot polling checks for QR codes, device markers, scene changes, and memory prompts without continuous video streaming.</Text>
+              <View style={styles.inlineOptions}>
+                {["15", "60", "180", "300"].map((value) => (
+                  <Pressable key={value} style={[styles.optionChip, pollInterval === value && styles.optionChipActive]} onPress={() => setPollInterval(value)}>
+                    <Text style={styles.optionChipText}>{value}s</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable style={styles.primaryButton} onPress={savePollingProfile}><Text style={styles.primaryButtonText}>Save polling profile</Text></Pressable>
+              {pollingProfiles.map((profile) => (
+                <View key={profile.id} style={styles.memoryRow}>
+                  <Text style={styles.memoryTitle}>{profile.name}</Text>
+                  <Text style={styles.memoryBody}>{profile.interval_seconds}s • {profile.battery_mode} • {profile.enabled ? "enabled" : "paused"}</Text>
+                  <Text style={styles.memoryBody}>{(profile.trigger_targets ?? []).join(", ")}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {tab === "roadmap" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>Coming soon</Text>
+              {roadmap.map((item) => (
+                <View key={item.title} style={styles.memoryRow}>
+                  <Text style={styles.memoryTitle}>{item.title}</Text>
+                  <Text style={styles.memoryBody}>{item.status}</Text>
+                  <Text style={styles.memoryBody}>{item.description}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </ScrollView>
       )}
 
@@ -276,6 +392,9 @@ export default function App() {
           ["relay", "image"],
           ["memory", "file-tray-full"],
           ["stream", "radio"],
+          ["devices", "phone-portrait"],
+          ["polling", "scan"],
+          ["roadmap", "rocket"],
           ["logs", "terminal"]
         ].map(([id, icon]) => (
           <Pressable key={id} style={[styles.tab, tab === id && styles.activeTab]} onPress={() => setTab(id)}>
@@ -352,6 +471,10 @@ const styles = StyleSheet.create({
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },
   log: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 12 },
+  inlineOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  optionChip: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
+  optionChipActive: { borderColor: "#20d5ff", backgroundColor: "rgba(32,213,255,.14)" },
+  optionChipText: { color: "#f8fbff", fontWeight: "800" },
   tabs: { position: "absolute", bottom: 18, left: 14, right: 14, flexDirection: "row", justifyContent: "space-around", backgroundColor: "rgba(8,12,25,.94)", borderRadius: 12, padding: 8, borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   tab: { padding: 10, borderRadius: 8 },
   activeTab: { backgroundColor: "rgba(32,213,255,.14)" }

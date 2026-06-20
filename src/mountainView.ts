@@ -79,6 +79,9 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       commands: context.listCommands(user.id),
       memory: context.searchMemory(user.id, "", ""),
       mediaEvents: context.listGlassesMediaEvents(user.id),
+      devices: context.listDevices(user.id),
+      pollingProfiles: context.listPollingProfiles(user.id),
+      roadmap: context.listRoadmap(),
       logs: context.listLogs(user.id)
     });
   }
@@ -131,6 +134,32 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
   if (method === "GET" && apiPath === "/api/logs") {
     const user = context.requireAuth(request);
     return json(response, { logs: context.listLogs(user.id) });
+  }
+
+  if (method === "GET" && apiPath === "/api/devices") {
+    const user = context.requireAuth(request);
+    return json(response, { devices: context.listDevices(user.id) });
+  }
+
+  if (method === "POST" && apiPath === "/api/devices") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.saveDevice(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/polling-profiles") {
+    const user = context.requireAuth(request);
+    return json(response, { pollingProfiles: context.listPollingProfiles(user.id) });
+  }
+
+  if (method === "POST" && apiPath === "/api/polling-profiles") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.savePollingProfile(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/roadmap") {
+    return json(response, { roadmap: context.listRoadmap() });
   }
 
   if (method === "GET" && apiPath === "/api/admin/integrations") {
@@ -348,6 +377,87 @@ class MountainViewContext {
     return rows.map(normalizeRow);
   }
 
+  listDevices(userId: string): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM devices WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as JsonRecord[];
+    return rows.map(normalizeRow);
+  }
+
+  saveDevice(userId: string, input: JsonRecord): JsonRecord {
+    const id = String(input.id ?? `device_${Date.now()}`);
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO devices (id, user_id, name, kind, pairing_code, connection_hint, status, capabilities_json, last_seen_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        kind = excluded.kind,
+        pairing_code = excluded.pairing_code,
+        connection_hint = excluded.connection_hint,
+        status = excluded.status,
+        capabilities_json = excluded.capabilities_json,
+        last_seen_at = excluded.last_seen_at,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      String(input.name ?? "New device"),
+      String(input.kind ?? "companion-display"),
+      String(input.pairingCode ?? input.pairing_code ?? ""),
+      String(input.connectionHint ?? input.connection_hint ?? "qr"),
+      String(input.status ?? "registered"),
+      JSON.stringify(input.capabilities ?? ["display", "commands"]),
+      String(input.lastSeenAt ?? input.last_seen_at ?? now),
+      now
+    );
+    return { ok: true, device: normalizeRow(this.db.prepare("SELECT * FROM devices WHERE id = ?").get(id) as JsonRecord) };
+  }
+
+  listPollingProfiles(userId: string): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM visual_polling_profiles WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as JsonRecord[];
+    return rows.map(normalizeRow);
+  }
+
+  savePollingProfile(userId: string, input: JsonRecord): JsonRecord {
+    const id = String(input.id ?? `poll_${Date.now()}`);
+    const now = new Date().toISOString();
+    const intervalSeconds = Math.max(10, Number(input.intervalSeconds ?? input.interval_seconds ?? 60));
+    this.db.prepare(`
+      INSERT INTO visual_polling_profiles (id, user_id, name, interval_seconds, battery_mode, trigger_targets_json, enabled, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        interval_seconds = excluded.interval_seconds,
+        battery_mode = excluded.battery_mode,
+        trigger_targets_json = excluded.trigger_targets_json,
+        enabled = excluded.enabled,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      String(input.name ?? "Visual trigger polling"),
+      intervalSeconds,
+      String(input.batteryMode ?? input.battery_mode ?? "balanced"),
+      JSON.stringify(input.triggerTargets ?? input.trigger_targets ?? ["qr", "device-marker", "scene-change"]),
+      input.enabled === false ? 0 : 1,
+      now
+    );
+    return { ok: true, pollingProfile: normalizeRow(this.db.prepare("SELECT * FROM visual_polling_profiles WHERE id = ?").get(id) as JsonRecord) };
+  }
+
+  listRoadmap(): JsonRecord[] {
+    return [
+      { title: "Companion HUD", status: "available", description: "Phone/tablet/browser display for glasses results, commands, memory, and transcripts." },
+      { title: "Device Mesh", status: "available", description: "QR/Bluetooth/Wi-Fi pairing records for phone, tablet, PC, OBS, and stream machines." },
+      { title: "Visual Polling", status: "available-config", description: "Battery-aware snapshot schedules for QR, device, and scene triggers without 24/7 streaming." },
+      { title: "StreamWeaver Flow Runner", status: "available", description: "Run StreamWeaver commands and flow endpoints from glasses voice or snapshot events." },
+      { title: "HearMeOut Voice Bridge", status: "available", description: "Route glasses audio events toward rooms, chats, song requests, and watch-party controls." },
+      { title: "EdenAI Vision Lab", status: "coming-soon", description: "Provider picker for scene analysis, OCR, image editing, avatar insertion, and generation." },
+      { title: "On-Device Recognition", status: "coming-soon", description: "Local device/person/context matching with explicit profile controls." },
+      { title: "Glasses Flashlight", status: "sdk-gated", description: "UI is ready, but current public DAT docs do not expose glasses torch control." },
+      { title: "Always-On Stream", status: "battery-risk", description: "Reserved for short sessions. Default design favors polling and event-triggered capture." }
+    ];
+  }
+
   saveMemory(userId: string, input: JsonRecord): JsonRecord {
     const id = `mem_${Date.now()}`;
     const now = new Date().toISOString();
@@ -465,6 +575,28 @@ class MountainViewContext {
         metadata_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        pairing_code TEXT NOT NULL,
+        connection_hint TEXT NOT NULL,
+        status TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS visual_polling_profiles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        interval_seconds INTEGER NOT NULL,
+        battery_mode TEXT NOT NULL,
+        trigger_targets_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -502,6 +634,31 @@ class MountainViewContext {
         VALUES (?, 'system', ?, ?, ?, ?, ?, ?, 2, 1, ?)
         ON CONFLICT(id) DO NOTHING
       `).run(command[0], command[1], command[2], command[3], command[4], command[5], JSON.stringify(command[6]), now);
+    }
+    const devices = [
+      ["device_phone", "MountainView Phone", "phone", "phone-companion", "local", ["display", "camera", "commands", "notifications"]],
+      ["device_tablet", "Companion Tablet", "tablet", "tablet-hud", "qr", ["display", "companion-hud", "commands"]],
+      ["device_pc", "Stream PC", "computer", "stream-pc", "qr-bluetooth", ["obs", "streamweaver", "browser-display"]],
+      ["device_obs", "OBS / Stream Machine", "stream-machine", "obs-control", "local-network", ["obs-scenes", "overlays", "stream-control"]]
+    ] as const;
+    for (const device of devices) {
+      this.db.prepare(`
+        INSERT INTO devices (id, user_id, name, kind, pairing_code, connection_hint, status, capabilities_json, last_seen_at, updated_at)
+        VALUES (?, 'owner', ?, ?, ?, ?, 'ready', ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+      `).run(device[0], device[1], device[2], device[3], device[4], JSON.stringify(device[5]), now, now);
+    }
+    const pollingProfiles = [
+      ["poll_balanced_qr", "Balanced QR/device scan", 60, "balanced", ["qr", "device-marker", "screen-marker"]],
+      ["poll_fast_trigger", "Fast command trigger scan", 15, "high-power", ["qr", "scene-change", "stream-overlay"]],
+      ["poll_low_power_memory", "Low power memory assist", 180, "battery-saver", ["person-card", "place", "meeting-context"]]
+    ] as const;
+    for (const profile of pollingProfiles) {
+      this.db.prepare(`
+        INSERT INTO visual_polling_profiles (id, user_id, name, interval_seconds, battery_mode, trigger_targets_json, enabled, updated_at)
+        VALUES (?, 'owner', ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(id) DO NOTHING
+      `).run(profile[0], profile[1], profile[2], profile[3], JSON.stringify(profile[4]), now);
     }
   }
 
@@ -705,6 +862,10 @@ function renderMountainViewHtml(): string {
           <div class="cards" id="quickCommands"></div>
         </div>
       </div>
+      <div class="grid" style="margin-top:14px;">
+        <div class="panel"><div class="label">Companion HUD</div><div class="value">Phone / tablet / browser display</div><p class="sub">Use paired devices as the display your glasses do not have: memory cards, command output, transcripts, QR targets, and stream controls.</p><button class="secondary" onclick="show('devices', document.querySelector('[data-tab=devices]'))">Open device mesh</button></div>
+        <div class="panel"><div class="label">Visual trigger polling</div><div class="value">Snapshot mode</div><p class="sub">Battery-aware scheduled photo checks for QR codes, device markers, scene changes, and memory prompts without continuous video streaming.</p><button class="secondary" onclick="show('polling', document.querySelector('[data-tab=polling]'))">Configure polling</button></div>
+      </div>
     </section>
 
     <section id="commands" class="screen">
@@ -747,6 +908,37 @@ function renderMountainViewHtml(): string {
       </div><p class="sub">Glasses audio/video are treated as input streams. StreamWeaver, HearMeOut, DiscordStreamHub, Chat-Tag, and EdenAI do the workflow work behind the bridge.</p></div>
     </section>
 
+    <section id="devices" class="screen">
+      <div class="split">
+        <div class="panel"><div class="label">Device mesh</div><div id="deviceList" class="timeline"></div></div>
+        <div class="panel">
+          <div class="label">Register device</div>
+          <div class="row"><span>Name</span><input id="deviceName" value="Companion Display"></div>
+          <div class="row"><span>Kind</span><select id="deviceKind"><option value="tablet">Tablet</option><option value="computer">Computer</option><option value="phone">Phone</option><option value="stream-machine">Stream machine</option><option value="browser-display">Browser display</option></select></div>
+          <div class="row"><span>Pairing code</span><input id="devicePairing" value="qr-command-portal"></div>
+          <button onclick="saveDevice()">Save device</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="polling" class="screen">
+      <div class="split">
+        <div class="panel"><div class="label">Visual polling profiles</div><div id="pollingList" class="timeline"></div></div>
+        <div class="panel">
+          <div class="label">Create polling profile</div>
+          <div class="row"><span>Name</span><input id="pollName" value="QR and device trigger scan"></div>
+          <div class="row"><span>Interval</span><select id="pollInterval"><option value="15">15 seconds</option><option value="60" selected>60 seconds</option><option value="180">3 minutes</option><option value="300">5 minutes</option></select></div>
+          <div class="row"><span>Battery mode</span><select id="pollBattery"><option value="balanced">Balanced</option><option value="battery-saver">Battery saver</option><option value="high-power">High power</option></select></div>
+          <div class="row"><span>Targets</span><input id="pollTargets" value="qr,device-marker,scene-change"></div>
+          <button onclick="savePollingProfile()">Save polling profile</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap" class="screen">
+      <div class="panel"><div class="label">Coming soon and test beds</div><div id="roadmapList" class="cards"></div></div>
+    </section>
+
     <section id="settings" class="screen">
       <div class="split">
         <div class="panel"><div class="label">Service token storage</div><div class="row"><span>Service</span><select id="tokenService"><option value="streamweaver">StreamWeaver</option><option value="discordstreamhub">DiscordStreamHub</option><option value="chat-tag">Chat-Tag</option><option value="hearmeout">HearMeOut</option></select></div><div class="row"><span>Token</span><input id="serviceToken" type="password"></div><button onclick="saveToken()">Store encrypted token</button></div>
@@ -754,12 +946,12 @@ function renderMountainViewHtml(): string {
       </div>
     </section>
   </main>
-  <nav class="tabs"><button class="active" onclick="show('home',this)">Home</button><button onclick="show('commands',this)">Commands</button><button onclick="show('relay',this)">Relay</button><button onclick="show('memory',this)">Memory</button><button onclick="show('stream',this)">Stream</button><button onclick="show('settings',this)">Settings</button></nav>
+  <nav class="tabs"><button data-tab="home" class="active" onclick="show('home',this)">Home</button><button data-tab="commands" onclick="show('commands',this)">Commands</button><button data-tab="relay" onclick="show('relay',this)">Relay</button><button data-tab="memory" onclick="show('memory',this)">Memory</button><button data-tab="stream" onclick="show('stream',this)">Stream</button><button data-tab="devices" onclick="show('devices',this)">Devices</button><button data-tab="polling" onclick="show('polling',this)">Polling</button><button data-tab="roadmap" onclick="show('roadmap',this)">Roadmap</button><button data-tab="settings" onclick="show('settings',this)">Settings</button></nav>
   <script>
     let token = localStorage.mvToken || ""; let state = {commands:[], memory:[], logs:[]};
     const api = async (path, options={}) => { const res = await fetch('/mountainview/api' + path, { ...options, headers: { 'content-type':'application/json', authorization: token ? 'Bearer '+token : '', ...(options.headers||{}) } }); const data = await res.json(); if(!res.ok || data.error) throw new Error(data.error || 'Request failed'); return data; };
     async function login(){ const password = prompt('MountainView owner password'); if(!password) return; const data = await api('/login',{method:'POST',body:JSON.stringify({email:'owner@spacemountain.live',password})}); token=data.token; localStorage.mvToken=token; await load(); }
-    async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderLogs(); }
+    async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderDevices(); renderPolling(); renderRoadmap(); renderLogs(); }
     function show(id, btn){ document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active')); document.getElementById(id).classList.add('active'); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); if(id==='memory') loadMemory(); }
     function renderCommands(){ const commands=state.commands||[]; const html = commands.map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+' • '+esc(c.method)+' '+esc(c.url_template)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); commandList.innerHTML=html; quickCommands.innerHTML=commands.slice(0,8).map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); const groups={StreamWeaver:commands.filter(c=>c.app_id==='streamweaver'),HearMeOut:commands.filter(c=>c.app_id==='hearmeout'),DiscordStreamHub:commands.filter(c=>c.app_id==='discordstreamhub'),'Chat-Tag':commands.filter(c=>c.app_id==='chat-tag'),EdenAI:commands.filter(c=>c.app_id==='edenai')}; commandGroups.innerHTML=Object.entries(groups).map(([name,items])=>'<div class="memory"><strong>'+esc(name)+'</strong><div class="sub">'+items.length+' commands ready</div></div>').join(''); }
     async function runSystemCommand(id){ const message = prompt('Payload message', 'MountainView trigger') || ''; const data = await api('/commands/execute',{method:'POST',body:JSON.stringify({commandId:id,payload:{message,payload:{message},metadata:{source:'dashboard'}}})}); appendLog(JSON.stringify(data,null,2)); await load(); }
@@ -770,6 +962,11 @@ function renderMountainViewHtml(): string {
     function renderMemory(){ memoryList.innerHTML=(state.memory||[]).map(m=>'<div class="memory"><strong>'+esc(m.title)+'</strong><div class="sub">'+esc(m.body)+'</div><div class="sub">'+esc((m.tags||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No memory records yet.</p>'; }
     function renderLogs(){ activityLog.textContent=(state.logs||[]).map(l=>l.created_at+' '+l.app_id+' '+l.status+' '+l.method+' '+l.url+'\\n'+(l.error||'')).join('\\n\\n') || 'No activity yet.'; }
     async function saveToken(){ await api('/settings/token',{method:'POST',body:JSON.stringify({serviceId:tokenService.value,token:serviceToken.value})}); serviceToken.value=''; appendLog('Stored encrypted token for '+tokenService.value); }
+    async function saveDevice(){ await api('/devices',{method:'POST',body:JSON.stringify({name:deviceName.value,kind:deviceKind.value,pairingCode:devicePairing.value,capabilities:['display','commands','companion-hud']})}); await load(); }
+    async function savePollingProfile(){ await api('/polling-profiles',{method:'POST',body:JSON.stringify({name:pollName.value,intervalSeconds:Number(pollInterval.value),batteryMode:pollBattery.value,triggerTargets:pollTargets.value.split(',').map(x=>x.trim()).filter(Boolean)})}); await load(); }
+    function renderDevices(){ deviceList.innerHTML=(state.devices||[]).map(d=>'<div class="memory"><strong>'+esc(d.name)+'</strong><div class="sub">'+esc(d.kind)+' • '+esc(d.status)+' • '+esc(d.connection_hint)+'</div><div class="sub">Pairing: '+esc(d.pairing_code||'local')+'</div><div class="sub">'+esc((d.capabilities||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No devices registered.</p>'; }
+    function renderPolling(){ pollingList.innerHTML=(state.pollingProfiles||[]).map(p=>'<div class="memory"><strong>'+esc(p.name)+'</strong><div class="sub">'+esc(p.interval_seconds)+'s • '+esc(p.battery_mode)+' • '+(p.enabled ? 'enabled' : 'paused')+'</div><div class="sub">'+esc((p.trigger_targets||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No polling profiles yet.</p>'; }
+    function renderRoadmap(){ roadmapList.innerHTML=(state.roadmap||[]).map(r=>'<div class="stat"><div class="label">'+esc(r.status)+'</div><div class="value" style="font-size:18px">'+esc(r.title)+'</div><p class="sub">'+esc(r.description)+'</p></div>').join(''); }
     function appendLog(text){ activityLog.textContent = new Date().toISOString()+' '+text+'\\n\\n'+activityLog.textContent; }
     function esc(v){ return String(v ?? '').replace(/[&<>"]/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }
     load().catch(()=>{});
