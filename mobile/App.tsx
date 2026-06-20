@@ -122,7 +122,13 @@ export default function App() {
         ...(options.headers ?? {})
       }
     });
-    const data = await response.json();
+    const raw = await response.text();
+    let data: Record<string, any> = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(raw ? `Server returned non-JSON: ${raw.slice(0, 160)}` : "Server returned an empty response");
+    }
     if (!response.ok || data.error) throw new Error(data.error ?? "Request failed");
     return data;
   }
