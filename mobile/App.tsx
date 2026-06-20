@@ -85,6 +85,8 @@ export default function App() {
   const [pollInterval, setPollInterval] = useState("60");
   const [logoTestText, setLogoTestText] = useState("I see the StreamWeaver logo on my tablet");
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
+  const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
+  const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -147,7 +149,18 @@ export default function App() {
       const command = commandMap.get(commandId);
       const data = await request("/commands/execute", {
         method: "POST",
-        body: JSON.stringify({ commandId, payload: { message, payload: { message }, source: "mountainview-mobile" } })
+        body: JSON.stringify({
+          commandId,
+          payload: {
+            message,
+            transcript: message,
+            destination: voiceDestination,
+            wakeWord: message.toLowerCase().startsWith("hey annie") ? "hey annie" : "hey athena",
+            username: "mtman1987",
+            source: "mountainview-mobile",
+            payload: { message, transcript: message, destination: voiceDestination, source: "mountainview-mobile" }
+          }
+        })
       });
       setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
       Speech.speak(data.ok ? "Command sent." : "Command failed.");
@@ -241,6 +254,19 @@ export default function App() {
     } catch (error) {
       setLog(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function requestVoiceWakePermissions() {
+    try {
+      const result = await metaWearables.requestVoiceWakePermissions();
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function askStreamWeaverVoiceCommander() {
+    await runCommand("cmd_streamweaver_voice_commander", voicePrompt);
   }
 
   async function saveDevice() {
@@ -342,6 +368,20 @@ export default function App() {
                 <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Request flashlight</Text></Pressable>
               </View>
               <View style={styles.panel}>
+                <Text style={styles.label}>Athena wake bridge</Text>
+                <Text style={styles.note}>Test Hey Athena or Hey Annie by sending the transcript to StreamWeaver voice commander. Android permissions prepare mic and foreground wake testing; always-on wake still needs a foreground listener or glasses wake event.</Text>
+                <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
+                <View style={styles.inlineOptions}>
+                  {(["ai", "private", "twitch"] as const).map((value) => (
+                    <Pressable key={value} style={[styles.optionChip, voiceDestination === value && styles.optionChipActive]} onPress={() => setVoiceDestination(value)}>
+                      <Text style={styles.optionChipText}>{value}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Pressable style={styles.primaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.primaryButtonText}>Ask StreamWeaver AI</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={requestVoiceWakePermissions}><Text style={styles.secondaryButtonText}>Request wake permissions</Text></Pressable>
+              </View>
+              <View style={styles.panel}>
                 <Text style={styles.label}>Companion HUD</Text>
                 <Text style={styles.note}>Use your phone, tablet, PC, or browser as the display layer for glasses commands, memory, QR triggers, and StreamWeaver/HearMeOut status.</Text>
                 <Pressable style={styles.secondaryButton} onPress={() => setTab("devices")}><Text style={styles.secondaryButtonText}>Open device mesh</Text></Pressable>
@@ -388,7 +428,7 @@ export default function App() {
               <Pressable style={styles.primaryButton} onPress={() => runCommand("cmd_stream_start", "Start stream")}><Text style={styles.primaryButtonText}>Start stream</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={startGlassesAudioStream}><Text style={styles.secondaryButtonText}>Start glasses audio relay</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={startGlassesVideoStream}><Text style={styles.secondaryButtonText}>Start glasses video relay</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_voice_commander", "Run voice commander")}><Text style={styles.secondaryButtonText}>Run StreamWeaver voice commander</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.secondaryButtonText}>Run StreamWeaver voice commander</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_room", "Join voice room")}><Text style={styles.secondaryButtonText}>Join HearMeOut voice room</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => setLog("Stop stream requested")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_overlay", "Overlay event requested")}><Text style={styles.secondaryButtonText}>Trigger overlay/event</Text></Pressable>

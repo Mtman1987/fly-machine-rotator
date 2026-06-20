@@ -110,10 +110,16 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableNativeMap
+import com.facebook.react.modules.core.PermissionAwareActivity
+import com.facebook.react.modules.core.PermissionListener
+import android.Manifest
+import android.os.Build
 
 class MountainViewMetaWearablesModule(
   private val reactContext: ReactApplicationContext
-) : ReactContextBaseJavaModule(reactContext) {
+) : ReactContextBaseJavaModule(reactContext), PermissionListener {
+  private var pendingPermissionPromise: Promise? = null
+
   override fun getName(): String = "MountainViewMetaWearables"
 
   @ReactMethod
@@ -125,7 +131,42 @@ class MountainViewMetaWearablesModule(
     result.putString("state", "installed-not-bound")
     result.putString("note", "Native module shell is installed. Next step is binding registration/session/camera APIs after Gradle resolves the DAT artifacts with GITHUB_TOKEN.")
     result.putBoolean("flashControlSupported", false)
+    result.putBoolean("wakePhraseSupported", false)
+    result.putString("wakePhraseNote", "Android can request microphone/foreground-service permissions, but always-on custom wake phrases require a foreground service or vendor SDK support.")
     promise.resolve(result)
+  }
+
+  @ReactMethod
+  fun requestVoiceWakePermissions(promise: Promise) {
+    val activity = currentActivity
+    if (activity !is PermissionAwareActivity) {
+      promise.reject("NO_PERMISSION_ACTIVITY", "Current activity cannot request Android runtime permissions.")
+      return
+    }
+    if (pendingPermissionPromise != null) {
+      promise.reject("PERMISSION_REQUEST_ACTIVE", "A permission request is already active.")
+      return
+    }
+    val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+    if (Build.VERSION.SDK_INT >= 33) {
+      permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    pendingPermissionPromise = promise
+    activity.requestPermissions(permissions.toTypedArray(), 4107, this)
+  }
+
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean {
+    if (requestCode != 4107) return false
+    val result = WritableNativeMap()
+    result.putBoolean("androidNativeBridge", true)
+    result.putString("state", "permissions-result")
+    permissions.forEachIndexed { index, permission ->
+      result.putBoolean(permission, grantResults.getOrNull(index) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }
+    result.putString("note", "Permissions are ready for push-to-talk and foreground wake testing. Always-on Hey Athena/Hey Annie still needs a foreground listener implementation or glasses SDK wake event.")
+    pendingPermissionPromise?.resolve(result)
+    pendingPermissionPromise = null
+    return true
   }
 
   @ReactMethod

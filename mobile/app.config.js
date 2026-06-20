@@ -6,6 +6,16 @@ module.exports = () => {
     ...app.expo,
     android: {
       ...app.expo.android,
+      permissions: [
+        ...new Set([
+          ...(app.expo.android?.permissions || []),
+          "RECORD_AUDIO",
+          "POST_NOTIFICATIONS",
+          "FOREGROUND_SERVICE",
+          "FOREGROUND_SERVICE_MICROPHONE",
+          "WAKE_LOCK"
+        ])
+      ],
       config: {
         ...(app.expo.android?.config || {}),
         metaWearablesAndroidAppId: metaAppId

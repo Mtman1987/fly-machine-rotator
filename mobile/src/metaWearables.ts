@@ -6,6 +6,7 @@ type MetaWearablesModule = {
   capturePhoto(): Promise<Record<string, unknown>>;
   startAudioStream(): Promise<Record<string, unknown>>;
   startVideoStream(): Promise<Record<string, unknown>>;
+  requestVoiceWakePermissions(): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
 };
 
@@ -27,5 +28,6 @@ export const metaWearables: MetaWearablesModule = {
   capturePhoto: () => nativeModule?.capturePhoto?.() ?? unavailable("capturePhoto"),
   startAudioStream: () => nativeModule?.startAudioStream?.() ?? unavailable("startAudioStream"),
   startVideoStream: () => nativeModule?.startVideoStream?.() ?? unavailable("startVideoStream"),
+  requestVoiceWakePermissions: () => nativeModule?.requestVoiceWakePermissions?.() ?? unavailable("requestVoiceWakePermissions"),
   setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
 };
