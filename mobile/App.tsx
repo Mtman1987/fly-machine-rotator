@@ -88,6 +88,7 @@ export default function App() {
   const [qrTriggers, setQrTriggers] = useState<QrTrigger[]>([]);
   const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
+  const [statusMessage, setStatusMessage] = useState("Ready. Leave owner password blank and tap Connect.");
   const [note, setNote] = useState("");
   const [deviceName, setDeviceName] = useState("Companion Tablet");
   const [pollInterval, setPollInterval] = useState("60");
@@ -103,6 +104,18 @@ export default function App() {
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
+
+  function announce(message: string) {
+    setStatusMessage(message);
+    setLog(message);
+  }
+
+  function reportError(action: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatusMessage(`${action} failed: ${message}`);
+    setLog(`${action} failed\n${message}`);
+    Alert.alert(`${action} failed`, message);
+  }
 
   useEffect(() => {
     SecureStore.getItemAsync("mountainview_token").then((stored) => {
@@ -135,6 +148,7 @@ export default function App() {
 
   async function login() {
     try {
+      announce("Connecting to MountainView backend...");
       const data = await request("/login", {
         method: "POST",
         body: JSON.stringify({ email: "owner@spacemountain.live", password })
@@ -142,12 +156,14 @@ export default function App() {
       setToken(data.token);
       await SecureStore.setItemAsync("mountainview_token", data.token);
       await load(data.token);
+      setStatusMessage("Connected. MountainView command bridge is ready.");
     } catch (error) {
-      Alert.alert("Login failed", error instanceof Error ? error.message : String(error));
+      reportError("Login", error);
     }
   }
 
   async function load(authToken = token) {
+    setStatusMessage("Loading MountainView dashboard data...");
     const data = await request("/bootstrap", {}, authToken);
     setCommands(data.commands ?? []);
     setMemory(data.memory ?? []);
@@ -157,10 +173,12 @@ export default function App() {
     setQrTriggers(data.qrTriggers ?? []);
     setRoadmap(data.roadmap ?? []);
     setLog((data.logs ?? []).map((item: Record<string, string>) => `${item.created_at} ${item.app_id} ${item.status}`).join("\n") || "No activity yet.");
+    setStatusMessage("Dashboard data loaded.");
   }
 
   async function runCommand(commandId: string, message = "MountainView mobile trigger") {
     try {
+      announce(`Sending command ${commandId}...`);
       const command = commandMap.get(commandId);
       const data = await request("/commands/execute", {
         method: "POST",
@@ -178,156 +196,201 @@ export default function App() {
         })
       });
       setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
+      setStatusMessage(`${command?.name ?? commandId} sent.`);
       Speech.speak(data.ok ? "Command sent." : "Command failed.");
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Command", error);
     }
   }
 
   async function sendImageToStreamWeaver() {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      base64: true,
-      quality: 0.8
-    });
-    if (result.canceled) return;
-    const imageBase64 = result.assets[0]?.base64 ?? "";
-    const data = await request("/media/streamweaver", {
-      method: "POST",
-      body: JSON.stringify({
-        imageBase64,
-        metadata: { source: "mountainview-mobile", sentAt: new Date().toISOString() }
-      })
-    });
-    setLog(JSON.stringify(data, null, 2));
+    try {
+      announce("Opening image picker...");
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        base64: true,
+        quality: 0.8
+      });
+      if (result.canceled) {
+        setStatusMessage("Image relay canceled.");
+        return;
+      }
+      announce("Uploading image to StreamWeaver relay...");
+      const imageBase64 = result.assets[0]?.base64 ?? "";
+      const data = await request("/media/streamweaver", {
+        method: "POST",
+        body: JSON.stringify({
+          imageBase64,
+          metadata: { source: "mountainview-mobile", sentAt: new Date().toISOString() }
+        })
+      });
+      setLog(JSON.stringify(data, null, 2));
+      setStatusMessage("Image sent to StreamWeaver.");
+    } catch (error) {
+      reportError("StreamWeaver image relay", error);
+    }
   }
 
   async function saveMemory() {
-    await request("/memory", {
-      method: "POST",
-      body: JSON.stringify({ title: "Mobile note", body: note, tags: ["mobile", "glasses"] })
-    });
-    setNote("");
-    await load();
+    try {
+      announce("Saving memory...");
+      await request("/memory", {
+        method: "POST",
+        body: JSON.stringify({ title: "Mobile note", body: note, tags: ["mobile", "glasses"] })
+      });
+      setNote("");
+      await load();
+      setStatusMessage("Memory saved.");
+    } catch (error) {
+      reportError("Save memory", error);
+    }
   }
 
   async function checkGlassesSdk() {
-    const status = await metaWearables.getSdkStatus();
-    setGlassesStatus(status);
-    setLog(JSON.stringify(status, null, 2));
+    try {
+      announce("Checking Android glasses bridge...");
+      const status = await metaWearables.getSdkStatus();
+      setGlassesStatus(status);
+      setLog(JSON.stringify(status, null, 2));
+      setStatusMessage(`Glasses bridge status: ${String(status.state ?? "checked")}`);
+    } catch (error) {
+      reportError("SDK status", error);
+    }
   }
 
   async function registerGlasses() {
     try {
+      announce("Starting glasses registration...");
       const result = await metaWearables.startRegistration();
       setGlassesStatus(result);
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Registration result: ${String(result.state ?? "complete")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Register glasses", error);
     }
   }
 
   async function captureGlassesPhoto() {
     try {
+      announce("Requesting glasses photo...");
       const result = await metaWearables.capturePhoto();
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Photo request result: ${String(result.state ?? "complete")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Capture glasses photo", error);
     }
   }
 
   async function startGlassesAudioStream() {
     try {
+      announce("Starting glasses audio relay...");
       const result = await metaWearables.startAudioStream();
       setLog(JSON.stringify(result, null, 2));
       await request("/glasses/media-event", {
         method: "POST",
         body: JSON.stringify({ kind: "audio-stream", targetApp: "hearmeout", metadata: result })
       });
+      setStatusMessage("Audio relay event sent to HearMeOut route.");
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Audio relay", error);
     }
   }
 
   async function startGlassesVideoStream() {
     try {
+      announce("Starting glasses video relay...");
       const result = await metaWearables.startVideoStream();
       setLog(JSON.stringify(result, null, 2));
       await request("/glasses/media-event", {
         method: "POST",
         body: JSON.stringify({ kind: "video-stream", targetApp: "streamweaver", metadata: result })
       });
+      setStatusMessage("Video relay event sent to StreamWeaver route.");
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Video relay", error);
     }
   }
 
   async function requestGlassesFlashlight() {
     try {
+      announce("Requesting glasses flashlight...");
       const result = await metaWearables.setFlashlight(true);
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Flashlight result: ${String(result.state ?? "checked")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Flashlight", error);
     }
   }
 
   async function requestVoiceWakePermissions() {
     try {
+      announce("Requesting wake/microphone permissions...");
       const result = await metaWearables.requestVoiceWakePermissions();
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Wake permission result: ${String(result.state ?? "checked")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Wake permissions", error);
     }
   }
 
   async function requestBleResearchPermissions() {
     try {
+      announce("Requesting Bluetooth permissions...");
       const result = await metaWearables.requestBleResearchPermissions();
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Bluetooth permission result: ${String(result.state ?? "checked")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("Bluetooth permissions", error);
     }
   }
 
   async function scanGenericBleDevices() {
     try {
+      announce("Scanning nearby BLE devices for 12 seconds...");
       const result = await metaWearables.scanGenericBleDevices();
       const devices = Array.isArray(result.devices) ? result.devices as BleScanDevice[] : [];
       setBleDevices(devices);
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(devices.length > 0 ? `Found ${devices.length} BLE devices. Tap the glasses row to connect.` : "No BLE devices found. Put glasses in pairing mode and scan again.");
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("BLE scan", error);
     }
   }
 
   async function connectGenericBleDevice(address: string) {
     try {
+      announce(`Connecting to BLE device ${address}...`);
       const result = await metaWearables.connectGenericBleDevice(address);
       setLog(JSON.stringify(result, null, 2));
       await request("/glasses/media-event", {
         method: "POST",
         body: JSON.stringify({ kind: "ble-connect", source: "rdglass-research", targetApp: "streamweaver", metadata: result })
       });
+      setStatusMessage(`BLE connect result: ${String(result.state ?? result.status ?? "complete")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("BLE connect", error);
     }
   }
 
   async function discoverGenericBleServices() {
     try {
+      announce("Discovering services on connected BLE device...");
       const result = await metaWearables.discoverGenericBleServices();
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`Service discovery result: ${String(result.state ?? "complete")}`);
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("BLE service discovery", error);
     }
   }
 
   async function loadGenericBleLog() {
     try {
+      announce("Loading BLE research log...");
       const result = await metaWearables.getGenericBleLog();
       setLog(JSON.stringify(result, null, 2));
+      setStatusMessage("BLE research log loaded.");
     } catch (error) {
-      setLog(error instanceof Error ? error.message : String(error));
+      reportError("BLE log", error);
     }
   }
 
@@ -336,67 +399,97 @@ export default function App() {
   }
 
   async function saveDevice() {
-    await request("/devices", {
-      method: "POST",
-      body: JSON.stringify({
-        name: deviceName,
-        kind: "tablet",
-        pairingCode: "qr-command-portal",
-        connectionHint: "qr-bluetooth",
-        capabilities: ["display", "commands", "companion-hud"]
-      })
-    });
-    await load();
+    try {
+      announce("Registering companion device...");
+      await request("/devices", {
+        method: "POST",
+        body: JSON.stringify({
+          name: deviceName,
+          kind: "tablet",
+          pairingCode: "qr-command-portal",
+          connectionHint: "qr-bluetooth",
+          capabilities: ["display", "commands", "companion-hud"]
+        })
+      });
+      await load();
+      setStatusMessage("Companion device registered.");
+    } catch (error) {
+      reportError("Register device", error);
+    }
   }
 
   async function savePollingProfile() {
-    await request("/polling-profiles", {
-      method: "POST",
-      body: JSON.stringify({
-        name: "Visual trigger scan",
-        intervalSeconds: Number(pollInterval),
-        batteryMode: Number(pollInterval) <= 15 ? "high-power" : "balanced",
-        triggerTargets: ["qr", "device-marker", "scene-change", "app-logo", "screen-read"]
-      })
-    });
-    await load();
+    try {
+      announce("Saving visual polling profile...");
+      await request("/polling-profiles", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Visual trigger scan",
+          intervalSeconds: Number(pollInterval),
+          batteryMode: Number(pollInterval) <= 15 ? "high-power" : "balanced",
+          triggerTargets: ["qr", "device-marker", "scene-change", "app-logo", "screen-read"]
+        })
+      });
+      await load();
+      setStatusMessage("Visual polling profile saved.");
+    } catch (error) {
+      reportError("Save polling profile", error);
+    }
   }
 
   async function testLogoMatch() {
-    const data = await request("/logo-profiles/match", {
-      method: "POST",
-      body: JSON.stringify({ observedText: logoTestText })
-    });
-    setLog(JSON.stringify(data, null, 2));
-    Speech.speak(data.matched ? "Logo route matched." : "No logo route matched.");
-    await load();
+    try {
+      announce("Testing logo route...");
+      const data = await request("/logo-profiles/match", {
+        method: "POST",
+        body: JSON.stringify({ observedText: logoTestText })
+      });
+      setLog(JSON.stringify(data, null, 2));
+      setStatusMessage(data.matched ? "Logo route matched." : "No logo route matched.");
+      Speech.speak(data.matched ? "Logo route matched." : "No logo route matched.");
+      await load();
+    } catch (error) {
+      reportError("Logo route test", error);
+    }
   }
 
   async function saveLogoProfile() {
-    await request("/logo-profiles", {
-      method: "POST",
-      body: JSON.stringify({
-        name: "MountainView app logo",
-        appId: "streamweaver",
-        aliases: "streamweaver,stream weaver,spacemountain stream",
-        commandId: "cmd_streamweaver_voice_commander"
-      })
-    });
-    await load();
+    try {
+      announce("Saving logo profile...");
+      await request("/logo-profiles", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "MountainView app logo",
+          appId: "streamweaver",
+          aliases: "streamweaver,stream weaver,spacemountain stream",
+          commandId: "cmd_streamweaver_voice_commander"
+        })
+      });
+      await load();
+      setStatusMessage("Logo profile saved.");
+    } catch (error) {
+      reportError("Save logo profile", error);
+    }
   }
 
   async function saveQrTrigger() {
-    await request("/qr-triggers", {
-      method: "POST",
-      body: JSON.stringify({
-        name: "AR avatar room anchor",
-        targetApp: "streamweaver",
-        commandId: "cmd_eden_image_generation",
-        actionType: "ar-avatar",
-        payload: qrPayload
-      })
-    });
-    await load();
+    try {
+      announce("Saving QR trigger...");
+      await request("/qr-triggers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "AR avatar room anchor",
+          targetApp: "streamweaver",
+          commandId: "cmd_eden_image_generation",
+          actionType: "ar-avatar",
+          payload: qrPayload
+        })
+      });
+      await load();
+      setStatusMessage("QR trigger saved.");
+    } catch (error) {
+      reportError("Save QR trigger", error);
+    }
   }
 
   return (
@@ -408,11 +501,16 @@ export default function App() {
           <Text style={styles.subtitle}>Spacemountain.live command bridge</Text>
         </View>
       </View>
+      <View style={styles.statusStrip}>
+        <Ionicons name={connected ? "radio" : "cloud-outline"} size={16} color={connected ? "#32d583" : "#ffd166"} />
+        <Text style={styles.statusStripText}>{statusMessage}</Text>
+      </View>
 
       {!connected ? (
         <View style={styles.panel}>
           <Text style={styles.label}>Owner login</Text>
-          <TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="Owner password" placeholderTextColor="#7f8ca8" style={styles.input} />
+          <Text style={styles.note}>Development auth is disabled on Fly. Leave this blank and tap Connect.</Text>
+          <TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="Owner password optional" placeholderTextColor="#7f8ca8" style={styles.input} />
           <Pressable style={styles.primaryButton} onPress={login}><Text style={styles.primaryButtonText}>Connect</Text></Pressable>
         </View>
       ) : (
@@ -608,19 +706,20 @@ export default function App() {
 
       <View style={styles.tabs}>
         {[
-          ["home", "planet"],
-          ["relay", "image"],
-          ["memory", "file-tray-full"],
-          ["stream", "radio"],
-          ["devices", "phone-portrait"],
-          ["polling", "scan"],
-          ["logos", "apps"],
-          ["qr", "qr-code"],
-          ["roadmap", "rocket"],
-          ["logs", "terminal"]
-        ].map(([id, icon]) => (
-          <Pressable key={id} style={[styles.tab, tab === id && styles.activeTab]} onPress={() => setTab(id)}>
+          ["home", "planet", "Home"],
+          ["relay", "image", "Relay"],
+          ["memory", "file-tray-full", "Memory"],
+          ["stream", "radio", "Stream"],
+          ["devices", "phone-portrait", "Devices"],
+          ["polling", "scan", "Scan"],
+          ["logos", "apps", "Logos"],
+          ["qr", "qr-code", "QR"],
+          ["roadmap", "rocket", "Soon"],
+          ["logs", "terminal", "Logs"]
+        ].map(([id, icon, label]) => (
+          <Pressable key={id} style={[styles.tab, tab === id && styles.activeTab]} onPress={() => { setStatusMessage(`Opened ${label}.`); setTab(id); }}>
             <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={20} color={tab === id ? "#20d5ff" : "#94a3b8"} />
+            <Text style={[styles.tabLabel, tab === id && styles.activeTabLabel]} numberOfLines={1}>{label}</Text>
           </Pressable>
         ))}
       </View>
@@ -668,6 +767,8 @@ const styles = StyleSheet.create({
   mark: { width: 40, height: 40, borderRadius: 10, backgroundColor: "#20d5ff" },
   title: { color: "#f8fbff", fontSize: 24, fontWeight: "900" },
   subtitle: { color: "#9fb1cc", fontSize: 13 },
+  statusStrip: { marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(32,213,255,.28)", flexDirection: "row", alignItems: "center", gap: 8 },
+  statusStripText: { color: "#d9e8ff", fontSize: 13, lineHeight: 18, flex: 1 },
   content: { padding: 14, paddingBottom: 110, gap: 14 },
   panel: { margin: 14, padding: 16, borderRadius: 8, backgroundColor: "#10172a", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 12 },
   grid: { gap: 10 },
@@ -698,7 +799,9 @@ const styles = StyleSheet.create({
   optionChip: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   optionChipActive: { borderColor: "#20d5ff", backgroundColor: "rgba(32,213,255,.14)" },
   optionChipText: { color: "#f8fbff", fontWeight: "800" },
-  tabs: { position: "absolute", bottom: 18, left: 14, right: 14, flexDirection: "row", justifyContent: "space-around", backgroundColor: "rgba(8,12,25,.94)", borderRadius: 12, padding: 8, borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
-  tab: { padding: 10, borderRadius: 8 },
-  activeTab: { backgroundColor: "rgba(32,213,255,.14)" }
+  tabs: { position: "absolute", bottom: 18, left: 8, right: 8, flexDirection: "row", justifyContent: "space-between", backgroundColor: "rgba(8,12,25,.96)", borderRadius: 12, padding: 6, borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
+  tab: { width: "10%", minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 3 },
+  activeTab: { backgroundColor: "rgba(32,213,255,.14)" },
+  tabLabel: { color: "#94a3b8", fontSize: 9, fontWeight: "800" },
+  activeTabLabel: { color: "#20d5ff" }
 });
