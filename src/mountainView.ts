@@ -572,6 +572,7 @@ class MountainViewContext {
       { title: "App Logo Recognition", status: "test-bed", description: "Polling snapshots can route detected app logos to StreamWeaver, HearMeOut, DiscordStreamHub, or Chat-Tag commands." },
       { title: "QR Trigger Maker", status: "available", description: "Create scannable QR commands for AR avatars, phone/tablet pairing, stream overlays, tags, and room actions." },
       { title: "Screen Read", status: "test-bed", description: "Route a glasses/phone snapshot to StreamWeaver or EdenAI OCR so the app can read visible screen text." },
+      { title: "Twitch Screen Assist", status: "test-bed", description: "When a Twitch logo is detected, MountainView can route speech-to-text, posting, and stream actions through StreamWeaver or another token-owning app." },
       { title: "StreamWeaver Flow Runner", status: "available", description: "Run StreamWeaver commands and flow endpoints from glasses voice or snapshot events." },
       { title: "HearMeOut Voice Bridge", status: "available", description: "Route glasses audio events toward rooms, chats, song requests, audiobooks, and watch-party controls." },
       { title: "EdenAI Vision Lab", status: "coming-soon", description: "Provider picker for scene analysis, OCR, image editing, avatar insertion, and generation." },
@@ -760,6 +761,7 @@ class MountainViewContext {
       ["cmd_stream_video", "streamweaver", "Start glasses video relay", "start glasses video", "POST", "/api/glasses/video-stream/start", { source: "mountainview-ai", device: "{{device}}", roomId: "{{roomId}}", payload: "{{payload}}" }],
       ["cmd_stream_overlay", "streamweaver", "Trigger stream overlay/event", "trigger stream overlay", "POST", "/api/stream/overlay", { source: "mountainview-ai", event: "{{payload}}" }],
       ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/voice-commander/trigger", { source: "mountainview-ai", transcript: "{{transcript}}", payload: "{{payload}}" }],
+      ["cmd_twitch_stream_assist", "streamweaver", "Start Twitch screen assist", "start twitch assist", "POST", "/api/twitch/screen-assist/start", { source: "mountainview-ai", trigger: "twitch-logo", transcript: "{{transcript}}", payload: "{{payload}}" }],
       ["cmd_discord_event", "discordstreamhub", "Push event to DiscordStreamHub", "push event to discord", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
       ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub message", "send discord stream message", "POST", "/api/messages", { source: "mountainview-ai", message: "{{message}}", payload: "{{payload}}" }],
       ["cmd_chat_tag", "chat-tag", "Trigger Chat-Tag workflow", "trigger chat tag", "POST", "/api/tags/events", { source: "mountainview-ai", tag: "{{payload}}" }],
@@ -811,7 +813,9 @@ class MountainViewContext {
       ["logo_hearmeout", "hearmeout", "HearMeOut", ["hearmeout", "hear me out", "voice room"], "cmd_hearmeout_voice_room", 0.78],
       ["logo_discordstreamhub", "discordstreamhub", "DiscordStreamHub", ["discordstreamhub", "discord stream hub", "discord"], "cmd_discord_event", 0.78],
       ["logo_chattag", "chat-tag", "Chat-Tag", ["chat-tag", "chat tag", "tag trigger"], "cmd_chat_tag", 0.78],
-      ["logo_edenai", "edenai", "EdenAI", ["edenai", "eden ai", "ai router"], "cmd_eden_scene", 0.78]
+      ["logo_edenai", "edenai", "EdenAI", ["edenai", "eden ai", "ai router"], "cmd_eden_scene", 0.78],
+      ["logo_twitch", "twitch", "Twitch", ["twitch", "twitch.tv", "purple chat", "live channel"], "cmd_twitch_stream_assist", 0.78],
+      ["logo_discord", "discord", "Discord", ["discord", "discord app", "discord chat", "discord server"], "cmd_discord_message", 0.78]
     ] as const;
     for (const logo of logoProfiles) {
       this.db.prepare(`
