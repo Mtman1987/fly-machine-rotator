@@ -151,6 +151,32 @@ export default function App() {
     }
   }
 
+  async function startGlassesAudioStream() {
+    try {
+      const result = await metaWearables.startAudioStream();
+      setLog(JSON.stringify(result, null, 2));
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({ kind: "audio-stream", targetApp: "hearmeout", metadata: result })
+      });
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function startGlassesVideoStream() {
+    try {
+      const result = await metaWearables.startVideoStream();
+      setLog(JSON.stringify(result, null, 2));
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({ kind: "video-stream", targetApp: "streamweaver", metadata: result })
+      });
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function requestGlassesFlashlight() {
     try {
       const result = await metaWearables.setFlashlight(true);
@@ -196,9 +222,11 @@ export default function App() {
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Quick commands</Text>
-                {commands.slice(0, 5).map((command) => (
-                  <CommandRow key={command.id} command={command} onPress={() => runCommand(command.id)} />
-                ))}
+                <CommandGroup title="StreamWeaver" commands={commands.filter((command) => command.app_id === "streamweaver")} onRun={runCommand} />
+                <CommandGroup title="HearMeOut" commands={commands.filter((command) => command.app_id === "hearmeout")} onRun={runCommand} />
+                <CommandGroup title="DiscordStreamHub" commands={commands.filter((command) => command.app_id === "discordstreamhub")} onRun={runCommand} />
+                <CommandGroup title="Chat-Tag" commands={commands.filter((command) => command.app_id === "chat-tag")} onRun={runCommand} />
+                <CommandGroup title="EdenAI" commands={commands.filter((command) => command.app_id === "edenai")} onRun={runCommand} />
               </View>
             </>
           )}
@@ -229,8 +257,12 @@ export default function App() {
             <View style={styles.panel}>
               <Text style={styles.label}>Live stream controls</Text>
               <Pressable style={styles.primaryButton} onPress={() => runCommand("cmd_stream_start", "Start stream")}><Text style={styles.primaryButtonText}>Start stream</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={startGlassesAudioStream}><Text style={styles.secondaryButtonText}>Start glasses audio relay</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={startGlassesVideoStream}><Text style={styles.secondaryButtonText}>Start glasses video relay</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_voice_commander", "Run voice commander")}><Text style={styles.secondaryButtonText}>Run StreamWeaver voice commander</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_room", "Join voice room")}><Text style={styles.secondaryButtonText}>Join HearMeOut voice room</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => setLog("Stop stream requested")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => setLog("Overlay event requested")}><Text style={styles.secondaryButtonText}>Trigger overlay/event</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_overlay", "Overlay event requested")}><Text style={styles.secondaryButtonText}>Trigger overlay/event</Text></Pressable>
             </View>
           )}
 
@@ -277,6 +309,18 @@ function CommandRow({ command, onPress }: { command: Command; onPress: () => voi
   );
 }
 
+function CommandGroup({ title, commands, onRun }: { title: string; commands: Command[]; onRun: (id: string) => void }) {
+  if (commands.length === 0) return null;
+  return (
+    <View style={styles.commandGroup}>
+      <Text style={styles.commandGroupTitle}>{title}</Text>
+      {commands.map((command) => (
+        <CommandRow key={command.id} command={command} onPress={() => onRun(command.id)} />
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: "#050712", paddingTop: 54 },
   header: { flexDirection: "row", gap: 12, alignItems: "center", paddingHorizontal: 18, paddingBottom: 16 },
@@ -302,6 +346,8 @@ const styles = StyleSheet.create({
   commandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", marginTop: 8 },
   commandTitle: { color: "#f8fbff", fontWeight: "800" },
   commandMeta: { color: "#9fb1cc", fontSize: 12, marginTop: 3 },
+  commandGroup: { gap: 6, marginTop: 10 },
+  commandGroupTitle: { color: "#20d5ff", fontSize: 14, fontWeight: "900", marginTop: 4 },
   memoryRow: { borderLeftWidth: 2, borderLeftColor: "#20d5ff", paddingLeft: 12, paddingVertical: 8, marginTop: 8 },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },

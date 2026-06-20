@@ -139,6 +139,11 @@ class MountainViewMetaWearablesModule(
   }
 
   @ReactMethod
+  fun startAudioStream(promise: Promise) {
+    promise.reject("MWDAT_NOT_BOUND", "Audio streaming needs DAT/session API binding after package resolution. Route audio events to StreamWeaver or HearMeOut through MountainView commands.")
+  }
+
+  @ReactMethod
   fun startVideoStream(promise: Promise) {
     promise.reject("MWDAT_NOT_BOUND", "Video streaming needs DAT Camera API binding after package resolution.")
   }

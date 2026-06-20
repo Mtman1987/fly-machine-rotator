@@ -25,7 +25,8 @@ const defaultConfig: MountainViewConfig = {
     { id: "streamweaver", name: "StreamWeaver", baseUrl: "https://streamweaver-new.fly.dev" },
     { id: "discordstreamhub", name: "DiscordStreamHub", baseUrl: "https://discord-stream-hub-new.fly.dev" },
     { id: "chat-tag", name: "Chat-Tag", baseUrl: "https://chat-tag-new.fly.dev" },
-    { id: "hearmeout", name: "HearMeOut", baseUrl: "https://hearmeout-main.fly.dev" }
+    { id: "hearmeout", name: "HearMeOut", baseUrl: "https://hearmeout-main.fly.dev" },
+    { id: "edenai", name: "EdenAI Router", baseUrl: "https://api.edenai.run" }
   ],
   metaWearables: {
     toolkitStatus: "Developer preview bridge. Camera/audio/display support depends on Meta Wearables Device Access Toolkit availability for the signed-in developer account and target glasses.",
@@ -77,6 +78,7 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       config: context.publicConfig(),
       commands: context.listCommands(user.id),
       memory: context.searchMemory(user.id, "", ""),
+      mediaEvents: context.listGlassesMediaEvents(user.id),
       logs: context.listLogs(user.id)
     });
   }
@@ -103,6 +105,13 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     const user = context.requireAuth(request);
     const body = await readJson(request, 20 * 1024 * 1024);
     const result = await context.relayImageToStreamWeaver(user.id, body);
+    return json(response, result);
+  }
+
+  if (method === "POST" && apiPath === "/api/glasses/media-event") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 20 * 1024 * 1024);
+    const result = await context.recordGlassesMediaEvent(user.id, body);
     return json(response, result);
   }
 
@@ -318,6 +327,27 @@ class MountainViewContext {
     return { ok: state === "uploaded", status, response: parseMaybeJson(responseText), error };
   }
 
+  recordGlassesMediaEvent(userId: string, input: JsonRecord): JsonRecord {
+    const id = `glasses_media_${Date.now()}`;
+    const kind = String(input.kind ?? "event");
+    const source = String(input.source ?? "meta-glasses");
+    const targetApp = String(input.targetApp ?? input.target_app ?? "streamweaver");
+    const status = String(input.status ?? "received");
+    const metadata = asRecord(input.metadata);
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO glasses_media_events (id, user_id, kind, source, target_app, status, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, userId, kind, source, targetApp, status, JSON.stringify(metadata), now);
+    this.logCommand(userId, `glasses-${kind}`, targetApp, "EVENT", source, "success", 0, 0, JSON.stringify(metadata).slice(0, 4000), "");
+    return { ok: true, event: { id, kind, source, targetApp, status, metadata, created_at: now } };
+  }
+
+  listGlassesMediaEvents(userId: string): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM glasses_media_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId) as JsonRecord[];
+    return rows.map(normalizeRow);
+  }
+
   saveMemory(userId: string, input: JsonRecord): JsonRecord {
     const id = `mem_${Date.now()}`;
     const now = new Date().toISOString();
@@ -425,6 +455,16 @@ class MountainViewContext {
         error TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS glasses_media_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        target_app TEXT NOT NULL,
+        status TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -440,9 +480,21 @@ class MountainViewContext {
     const defaults = [
       ["cmd_streamweaver_image", "streamweaver", "Send image to StreamWeaver", "send image to streamweaver", "POST", "/api/mountainview/image-relay", { source: "meta-glasses", imageBase64: "{{imageBase64}}", metadata: "{{metadata}}" }],
       ["cmd_stream_start", "streamweaver", "Start stream workflow", "start stream workflow", "POST", "/api/stream/start", { source: "mountainview-ai", payload: "{{payload}}" }],
+      ["cmd_stream_stop", "streamweaver", "Stop stream workflow", "stop stream workflow", "POST", "/api/stream/stop", { source: "mountainview-ai", payload: "{{payload}}" }],
+      ["cmd_stream_audio", "streamweaver", "Start glasses audio relay", "start glasses audio", "POST", "/api/glasses/audio-stream/start", { source: "mountainview-ai", device: "{{device}}", roomId: "{{roomId}}", payload: "{{payload}}" }],
+      ["cmd_stream_video", "streamweaver", "Start glasses video relay", "start glasses video", "POST", "/api/glasses/video-stream/start", { source: "mountainview-ai", device: "{{device}}", roomId: "{{roomId}}", payload: "{{payload}}" }],
+      ["cmd_stream_overlay", "streamweaver", "Trigger stream overlay/event", "trigger stream overlay", "POST", "/api/stream/overlay", { source: "mountainview-ai", event: "{{payload}}" }],
+      ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/voice-commander/trigger", { source: "mountainview-ai", transcript: "{{transcript}}", payload: "{{payload}}" }],
       ["cmd_discord_event", "discordstreamhub", "Push event to DiscordStreamHub", "push event to discord", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
+      ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub message", "send discord stream message", "POST", "/api/messages", { source: "mountainview-ai", message: "{{message}}", payload: "{{payload}}" }],
       ["cmd_chat_tag", "chat-tag", "Trigger Chat-Tag workflow", "trigger chat tag", "POST", "/api/tags/events", { source: "mountainview-ai", tag: "{{payload}}" }],
-      ["cmd_hearmeout", "hearmeout", "Trigger HearMeOut workflow", "trigger hear me out", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }]
+      ["cmd_chat_tag_qr", "chat-tag", "Trigger QR tag workflow", "scan qr trigger", "POST", "/api/tags/qr", { source: "mountainview-ai", qr: "{{qr}}", payload: "{{payload}}" }],
+      ["cmd_hearmeout", "hearmeout", "Trigger HearMeOut workflow", "trigger hear me out", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
+      ["cmd_hearmeout_voice_room", "hearmeout", "Join HearMeOut voice room", "join voice room", "POST", "/api/rooms/join", { source: "mountainview-ai", roomId: "{{roomId}}", payload: "{{payload}}" }],
+      ["cmd_hearmeout_watch_party", "hearmeout", "Start HearMeOut watch party", "start watch party", "POST", "/api/watch-party/start", { source: "mountainview-ai", media: "{{payload}}" }],
+      ["cmd_eden_scene", "edenai", "Analyze current scene with EdenAI", "ask ai what am i looking at", "POST", "/v2/image/explicit_content", { source: "mountainview-ai", image: "{{imageBase64}}", providers: "{{providers}}" }],
+      ["cmd_eden_image_generation", "edenai", "Generate image from glasses context", "generate image from what i see", "POST", "/v2/image/generation", { source: "mountainview-ai", prompt: "{{prompt}}", contextImage: "{{imageBase64}}", providers: "{{providers}}" }],
+      ["cmd_person_memory_note", "streamweaver", "Save consent-based person memory note", "save note about this person", "POST", "/api/memory/person-note", { source: "mountainview-ai", personId: "{{personId}}", note: "{{note}}", consent: "{{consent}}", payload: "{{payload}}" }]
     ] as const;
     for (const command of defaults) {
       this.db.prepare(`
@@ -657,7 +709,7 @@ function renderMountainViewHtml(): string {
 
     <section id="commands" class="screen">
       <div class="split">
-        <div class="panel"><div class="label">Command center</div><div id="commandList" class="timeline"></div></div>
+        <div class="panel"><div class="label">Command center</div><div id="commandGroups" class="timeline"></div><div id="commandList" class="timeline"></div></div>
         <div class="panel">
           <div class="label">Create command</div>
           <div class="row"><span>Name</span><input id="cmdName" value="Ask MountainView AI"></div>
@@ -691,8 +743,8 @@ function renderMountainViewHtml(): string {
 
     <section id="stream" class="screen">
       <div class="panel"><div class="label">Live stream controls</div><div class="cards">
-        <button onclick="runSystemCommand('cmd_stream_start')">Start stream</button><button class="secondary" onclick="appendLog('Stop stream requested')">Stop stream</button><button class="secondary" onclick="sendImage()">Send current image/frame</button><button class="secondary" onclick="appendLog('Push to stream requested')">Push to stream</button><button class="secondary" onclick="appendLog('Overlay event triggered')">Trigger stream overlay/event</button>
-      </div><p class="sub">Direct glasses live streaming is SDK/API gated. This control plane is ready for camera/audio event ingestion once available.</p></div>
+        <button onclick="runSystemCommand('cmd_stream_start')">Start stream</button><button class="secondary" onclick="runSystemCommand('cmd_stream_stop')">Stop stream</button><button class="secondary" onclick="runSystemCommand('cmd_stream_audio')">Start glasses audio relay</button><button class="secondary" onclick="runSystemCommand('cmd_stream_video')">Start glasses video relay</button><button class="secondary" onclick="sendImage()">Send current image/frame</button><button class="secondary" onclick="runSystemCommand('cmd_stream_overlay')">Trigger stream overlay/event</button>
+      </div><p class="sub">Glasses audio/video are treated as input streams. StreamWeaver, HearMeOut, DiscordStreamHub, Chat-Tag, and EdenAI do the workflow work behind the bridge.</p></div>
     </section>
 
     <section id="settings" class="screen">
@@ -709,7 +761,7 @@ function renderMountainViewHtml(): string {
     async function login(){ const password = prompt('MountainView owner password'); if(!password) return; const data = await api('/login',{method:'POST',body:JSON.stringify({email:'owner@spacemountain.live',password})}); token=data.token; localStorage.mvToken=token; await load(); }
     async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderLogs(); }
     function show(id, btn){ document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active')); document.getElementById(id).classList.add('active'); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); if(id==='memory') loadMemory(); }
-    function renderCommands(){ const html = (state.commands||[]).map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+' • '+esc(c.method)+' '+esc(c.url_template)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); commandList.innerHTML=html; quickCommands.innerHTML=html; }
+    function renderCommands(){ const commands=state.commands||[]; const html = commands.map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+' • '+esc(c.method)+' '+esc(c.url_template)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); commandList.innerHTML=html; quickCommands.innerHTML=commands.slice(0,8).map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); const groups={StreamWeaver:commands.filter(c=>c.app_id==='streamweaver'),HearMeOut:commands.filter(c=>c.app_id==='hearmeout'),DiscordStreamHub:commands.filter(c=>c.app_id==='discordstreamhub'),'Chat-Tag':commands.filter(c=>c.app_id==='chat-tag'),EdenAI:commands.filter(c=>c.app_id==='edenai')}; commandGroups.innerHTML=Object.entries(groups).map(([name,items])=>'<div class="memory"><strong>'+esc(name)+'</strong><div class="sub">'+items.length+' commands ready</div></div>').join(''); }
     async function runSystemCommand(id){ const message = prompt('Payload message', 'MountainView trigger') || ''; const data = await api('/commands/execute',{method:'POST',body:JSON.stringify({commandId:id,payload:{message,payload:{message},metadata:{source:'dashboard'}}})}); appendLog(JSON.stringify(data,null,2)); await load(); }
     async function saveCommand(){ await api('/commands',{method:'POST',body:JSON.stringify({name:cmdName.value,appId:cmdApp.value,method:cmdMethod.value,urlTemplate:cmdUrl.value,payloadTemplate:JSON.parse(cmdPayload.value),phrase:cmdName.value.toLowerCase()})}); await load(); }
     async function sendImage(){ relayStatus.textContent='Uploading...'; const data = await api('/media/streamweaver',{method:'POST',body:JSON.stringify({imageBase64:imageBase64.value,imageUrl:imageUrl.value,metadata:{sentAt:new Date().toISOString(),source:'mountainview-dashboard'}})}); relayStatus.textContent=JSON.stringify(data,null,2); await load(); }
