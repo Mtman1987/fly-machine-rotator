@@ -10,6 +10,7 @@ import { getRepoConfigForApp } from "./repoMap.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
+import { handleMountainViewRequest } from "./mountainView.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -31,6 +32,10 @@ export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
 async function routeRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv): Promise<void> {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+  if (await handleMountainViewRequest(request, response, env)) {
+    return;
+  }
 
   if (method === "GET" && url.pathname === "/healthz") {
     response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });

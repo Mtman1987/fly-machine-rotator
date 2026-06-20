@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "MountainView AI",
+    "slug": "mountainview-ai",
+    "scheme": "mountainviewai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "live.spacemountain.mountainviewai",
+      "infoPlist": {
+        "NSCameraUsageDescription": "MountainView AI can relay user-selected images to StreamWeaver.",
+        "NSMicrophoneUsageDescription": "MountainView AI can receive voice command input for configured workflows."
+      }
+    },
+    "android": {
+      "package": "live.spacemountain.mountainviewai",
+      "permissions": ["CAMERA", "RECORD_AUDIO"],
+      "config": {
+        "metaWearablesAndroidAppId": "${MOUNTAINVIEW_META_APP_ID}"
+      }
+    },
+    "plugins": [
+      [
+        "./plugins/withMetaWearablesAndroid",
+        {
+          "mwdatVersion": "0.7.0",
+          "applicationId": "${MOUNTAINVIEW_META_APP_ID}",
+          "analyticsOptOut": true
+        }
+      ]
+    ],
+    "extra": {
+      "mountainViewApiBaseUrl": "https://mtman-machine-rotator.fly.dev/mountainview/api"
+    }
+  }
+}

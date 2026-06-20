@@ -1,0 +1,28 @@
+{
+  "name": "mountainview-ai-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "prebuild:android": "expo prebuild --platform android",
+    "ios": "expo run:ios",
+    "android": "expo run:android"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^14.0.4",
+    "expo": "^52.0.0",
+    "expo-constants": "^56.0.18",
+    "expo-dev-client": "~5.0.20",
+    "expo-image-picker": "~16.0.6",
+    "expo-secure-store": "~14.0.1",
+    "expo-speech": "~13.0.1",
+    "react": "18.3.1",
+    "react-native": "0.76.9"
+  },
+  "devDependencies": {
+    "@expo/config-plugins": "^9.0.17",
+    "@types/react": "~18.3.12",
+    "typescript": "^5.8.3"
+  }
+}

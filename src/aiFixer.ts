@@ -430,10 +430,13 @@ async function collectRepoContext(
   return contexts.slice(0, 10);
 }
 
-function deriveSearchTerms(event: StoredErrorEvent): string[] {
+export function deriveSearchTerms(event: StoredErrorEvent): string[] {
   const terms = new Set<string>();
   const routeMatches = event.message.match(/\/api\/[a-z0-9/_-]+/gi) ?? [];
   for (const route of routeMatches) terms.add(route.toLowerCase());
+
+  const hostRouteMatches = event.message.match(/[A-Za-z0-9.-]+(?:\.fly\.dev)?\/api\/[a-z0-9/_-]+/gi) ?? [];
+  for (const route of hostRouteMatches) terms.add(route.toLowerCase());
 
   const pathMatches = `${event.message}\n${event.context.join("\n")}`.match(/[A-Za-z0-9/_-]+\.(?:ts|tsx|js|jsx)/g) ?? [];
   for (const filePath of pathMatches) terms.add(filePath.toLowerCase());
@@ -466,7 +469,7 @@ function deriveSearchTerms(event: StoredErrorEvent): string[] {
   return [...terms];
 }
 
-function derivePriorityPaths(event: StoredErrorEvent): string[] {
+export function derivePriorityPaths(event: StoredErrorEvent): string[] {
   const message = event.message.toLowerCase();
   const paths = new Set<string>();
 
@@ -479,12 +482,22 @@ function derivePriorityPaths(event: StoredErrorEvent): string[] {
 
   if (event.appName === "discord-stream-hub-new") {
     paths.add("src/app/api/discord/chat/route.ts");
+    if (message.includes("discordcleanup") || message.includes("failed to fetch messages")) {
+      paths.add("src/lib/discord-orphan-cleanup-service.ts");
+      paths.add("src/lib/discord-sync-service.ts");
+      paths.add("src/app/api/admin/access/route.ts");
+    }
   }
 
   if (event.appName === "chat-tag-bot-new" || event.appName === "chat-tag-new") {
     paths.add("bot.js");
     paths.add("src/app/api/tag/route.ts");
     paths.add("src/lib/chat-tag-discord.ts");
+    if (message.includes("login authentication failed")) {
+      paths.add("bot.js");
+      paths.add("src/app/api/twitch/oauth/status/route.ts");
+      paths.add("src/app/api/twitch/oauth/callback/route.ts");
+    }
   }
 
   if (event.appName === "streamweaver-new") {
@@ -492,6 +505,23 @@ function derivePriorityPaths(event: StoredErrorEvent): string[] {
     paths.add("src/services/tts-provider.ts");
     paths.add("src/ai/flows/text-to-speech.ts");
     paths.add("src/services/checkin-sources.ts");
+    if (message.includes("login authentication failed")) {
+      paths.add("src/services/twitch.ts");
+      paths.add("src/lib/twitch-oauth-service.ts");
+      paths.add("src/lib/twitch-bot-oauth-storage.ts");
+      paths.add("src/app/api/twitch/bot-oauth/callback/route.ts");
+    }
+    if (message.includes("discord public chat activity") || message.includes("unknown channel")) {
+      paths.add("src/services/chat-monitor.ts");
+      paths.add("src/lib/runtime-config.ts");
+      paths.add("src/app/api/runtime-config/route.ts");
+    }
+    if (message.includes("admin access check failed") || message.includes("/api/admin/access")) {
+      paths.add("src/lib/application-access.ts");
+      paths.add("src/app/api/admin/access/route.ts");
+      paths.add("src/app/(app)/applications/page.tsx");
+      paths.add("src/app/api/discord/interactions/route.ts");
+    }
   }
 
   if (event.appName === "hearmeout-main" || event.appName === "hmo-dj-worker") {
@@ -616,6 +646,11 @@ function scoreCandidate(path: string, content: string, matchedTerms: string[]): 
   if (normalizedPath.includes("/lib/")) score += 6;
   if (normalizedPath.includes("/worker")) score += 7;
   if (normalizedPath.endsWith("/bot.js") || normalizedPath === "bot.js") score += 10;
+  if (normalizedPath.endsWith("/route.ts")) score += 10;
+  if (normalizedPath.includes("oauth")) score += 5;
+  if (normalizedPath.includes("runtime-config")) score += 5;
+  if (normalizedPath.includes("application-access")) score += 8;
+  if (normalizedPath.includes("chat-monitor")) score += 8;
   if (normalizedPath.includes("/test") || normalizedPath.endsWith(".test.ts")) score -= 8;
   if (normalizedPath.includes("/ai/flows/")) score -= 6;
   if (normalizedPath.includes("/components/")) score -= 4;

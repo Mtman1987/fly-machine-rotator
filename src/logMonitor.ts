@@ -260,11 +260,14 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\/api\/quackverse\/pack:\s*429\b.*(?:Daily pack limit reached|"packsRemaining":0|"dailyLimit":\d+)/i,
     /"packsRemaining":0.*"dailyLimit":\d+/i,
     /\/api\/tag:\s*400\b.*You are not it!/i,
+    /\/api\/tag:\s*400\b.*"error":"You are not it![^"]+ is it\."/i,
     /\/api\/tag:\s*400\b.*"error":"[^"]+ is immune \((?:20-min cooldown|no-tagback)\)"/i,
     /\/api\/tag:\s*400\b.*"error":"[^"]+ is away\/offline"/i,
+    /\[Bot\] Tag API response:.*"error":"You are not it![^"]+ is it\.".+"__status":400/i,
     /\[Bot\] Tag API response:.*"__status":400.*You are not it!/i,
     /\[Bot\] Tag API response:.*"error":"[^"]+ is immune \((?:20-min cooldown|no-tagback)\)".*"__status":400/i,
     /\[Bot\] Tag API response:.*"error":"[^"]+ is away\/offline".*"__status":400/i,
+    /\[Bot\] Tag error: You are not it![^:]+ is it\./i,
     /\[Bot\] Tag error: You are not it!/i,
     /\[Bot\] Tag error: [^:]+ is immune \((?:20-min cooldown|no-tagback)\)/i,
     /\[Bot\] Tag error: [^:]+ is away\/offline/i,
@@ -375,6 +378,18 @@ function normalizeErrorMessage(message: string): string {
 
 function suggestFix(message: string): string {
   const lower = message.toLowerCase();
+  if (lower.includes("admin access check failed") && lower.includes("/api/admin/access") && lower.includes("404")) {
+    return "StreamWeaver is calling DiscordStreamHub /api/admin/access and getting a Next.js 404 page back. Check that the route exists in the deployed DSH app, verify the base URL points at the correct deployment, and fail closed with a compact error instead of logging the full HTML 404 response.";
+  }
+  if (lower.includes("discord public chat activity") && lower.includes("unknown channel")) {
+    return "The stored Discord public-chat channel ID is stale or inaccessible. Remove or replace that channel mapping, and treat Discord 404 Unknown Channel for optional activity polling as a handled config warning instead of a repeating hard error.";
+  }
+  if (lower.includes("[discordcleanup] failed to fetch messages:") && lower.includes("500")) {
+    return "Discord returned a transient 500 while the cleanup job was reading channel history. Add retry/backoff for Discord 5XX responses and downgrade a single failed channel scan to a warning so one flaky read does not stay in the live error queue.";
+  }
+  if (lower.includes("login authentication failed")) {
+    return "A Twitch IRC login failed during reconnect. Check the token refresh and reconnect path for that app, verify the refreshed token is persisted before reconnect, and only surface this as a hard error if the retry path also fails.";
+  }
   if (lower.includes("failed to get needed list: 502")) {
     return "The clip worker could not fetch /api/clips/needed because the upstream DSH route returned 502. Check the DSH route and add retry/backoff around the worker fetch so a transient upstream error does not poison the queue.";
   }
