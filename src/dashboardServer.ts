@@ -786,6 +786,8 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         <a href="#ops">Ops Deck</a>
         <a href="#fixes">Fix Queue</a>
         <a href="#noise">Noise Filters</a>
+        <a href="/mountainview">MountainView</a>
+        <a href="https://github.com/Mtman1987/fly-machine-rotator/releases/download/mountainview-latest/app-release.apk">Download APK</a>
         <a href="/logs/errors.txt">Download Logs</a>
       </nav>
     </header>
@@ -798,6 +800,8 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         <div class="hero-note">Discord now only needs the dashboard link. The log download stays here, the review targets stay here, and the app keeps the same star-field language as the rest of the suite without losing its own control-room identity.</div>
         <div class="hero-actions">
           <a class="link-btn" href="${escapeHtml(dashboardUrl)}">Open public dashboard URL</a>
+          <a class="link-btn" href="/mountainview">Go to MountainView</a>
+          <a class="link-btn" href="https://github.com/Mtman1987/fly-machine-rotator/releases/download/mountainview-latest/app-release.apk">Download MountainView APK</a>
           <a class="link-btn secondary" href="/logs/errors.txt">Download 24h error log</a>
         </div>
         <div class="feature-list">

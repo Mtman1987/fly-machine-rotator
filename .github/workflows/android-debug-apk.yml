@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   debug:
@@ -73,3 +73,11 @@ jobs:
         with:
           name: mountainview-ai-release-apk
           path: mobile/android/app/build/outputs/apk/release/*.apk
+      - name: Publish latest APK release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mountainview-latest
+          name: MountainView AI Latest Android APK
+          body: Latest installable MountainView AI Android APK for development testing.
+          prerelease: true
+          files: mobile/android/app/build/outputs/apk/release/app-release.apk
