@@ -137,3 +137,39 @@ primary_region = "ord"
 - The old active Machine is not stopped until the new Machine passes health verification.
 - Discord reports include success/failure, before/after Machine states, and handoff IDs.
 - If health checks are not configured and `REQUIRE_HEALTH_CHECKS=false`, a started Machine is considered healthy. For chat bots, configure Fly health checks and set `REQUIRE_HEALTH_CHECKS=true`.
+
+## MountainView AI
+
+The same deployed rotator app also serves the MountainView AI bridge at:
+
+```text
+https://mtman-machine-rotator.fly.dev/mountainview
+```
+
+MountainView AI adds a phone/mobile control layer for Meta glasses events and the Spacemountain.live apps:
+
+- StreamWeaver image relay, with no face recognition in MountainView AI.
+- Configurable GET/POST API commands for StreamWeaver, DiscordStreamHub, Chat-Tag, and HearMeOut.
+- Encrypted per-service token storage.
+- AI memory records with tags and timeline/search.
+- Command execution logs and media upload records.
+- Admin-editable integrations and endpoint templates.
+- Live stream controls prepared for future direct glasses media support.
+- Flash control placeholder until the available Meta SDK/API exposes that capability.
+
+Runtime storage follows the workspace config policy:
+
+- Secrets: `MOUNTAINVIEW_OWNER_PASSWORD`, `MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY`, and stored service tokens. Set these as Fly secrets.
+- Public runtime config: `/data/mountainview-config.json`, seeded on first boot from built-in Spacemountain defaults.
+- App state: `/data/mountainview.db`.
+- Local-only debug: temporary `MOUNTAINVIEW_DB_FILE` or `MOUNTAINVIEW_CONFIG_FILE` overrides.
+
+Recommended Fly secrets:
+
+```bash
+fly secrets set \
+  MOUNTAINVIEW_OWNER_PASSWORD='use-a-long-owner-password' \
+  MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY='use-a-long-random-encryption-key'
+```
+
+Native iOS/Android app source lives in `mobile/`. It is an Expo app that points at the deployed rotator MountainView API by default.
