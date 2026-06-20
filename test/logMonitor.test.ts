@@ -4,6 +4,8 @@ import { looksLikeError } from "../src/logMonitor.js";
 describe("looksLikeError", () => {
   it.each([
     '[API Error] /api/tag: 400 {"error":"tigerflakes420 is immune (20-min cooldown)"}',
+    '[API Error] /api/tag: 400 {"error":"You are not it! chronic_medusa is it."}',
+    '[Bot] Tag API response: {"error":"You are not it! lippyyybish is it.","__ok":false,"__status":400}',
     '[Bot] Tag API response: {"error":"fultztrain420 is immune (no-tagback)","__ok":false,"__status":400}',
     "[Bot] Tag error: mtman1987 is away/offline",
     "[Bot] Auto-rotate failed (1/3): no other live eligible players",
