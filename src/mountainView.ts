@@ -49,6 +49,11 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
   const apiPath = url.pathname.replace(/^\/mountainview\/api/, "/api");
   const context = await MountainViewContext.create(env);
 
+  if (method === "GET" && (url.pathname === "/mountainview/apk" || url.pathname === "/mountainview/download-apk")) {
+    await streamLatestMountainViewApk(response, env);
+    return true;
+  }
+
   if (method === "GET" && (url.pathname === "/mountainview" || url.pathname === "/mountainview/")) {
     html(response, renderMountainViewHtml());
     return true;
@@ -993,6 +998,42 @@ function html(response: ServerResponse, value: string): void {
   response.end(value);
 }
 
+async function streamLatestMountainViewApk(response: ServerResponse, env: NodeJS.ProcessEnv): Promise<void> {
+  const token = env.GITHUB_TOKEN;
+  if (!token) throw new HttpError(503, "GITHUB_TOKEN is not configured for APK downloads.");
+
+  const release = await fetch("https://api.github.com/repos/Mtman1987/fly-machine-rotator/releases/tags/mountainview-latest", {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "mountainview-ai"
+    }
+  });
+  if (!release.ok) throw new HttpError(502, `GitHub release lookup failed: ${release.status}`);
+
+  const releaseJson = await release.json() as { assets?: Array<{ name?: string; url?: string; size?: number }> };
+  const asset = releaseJson.assets?.find((item) => item.name === "app-release.apk");
+  if (!asset?.url) throw new HttpError(404, "MountainView APK release asset was not found.");
+
+  const apk = await fetch(asset.url, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/octet-stream",
+      "user-agent": "mountainview-ai"
+    }
+  });
+  if (!apk.ok) throw new HttpError(502, `GitHub APK download failed: ${apk.status}`);
+
+  const body = Buffer.from(await apk.arrayBuffer());
+  response.writeHead(200, {
+    "content-type": "application/vnd.android.package-archive",
+    "content-disposition": 'attachment; filename="mountainview-ai.apk"',
+    "content-length": String(body.length),
+    "cache-control": "no-store"
+  });
+  response.end(body);
+}
+
 class HttpError extends Error {
   constructor(
     readonly statusCode: number,
@@ -1022,7 +1063,7 @@ function renderMountainViewHtml(): string {
     <div class="top">
       <div class="brand"><div class="mark"></div><div><h1>MountainView AI</h1><div class="sub">Spacemountain.live mobile command bridge</div></div></div>
       <div class="top-actions">
-        <a class="link-btn" href="https://github.com/Mtman1987/fly-machine-rotator/releases/download/mountainview-latest/app-release.apk">Download APK</a>
+        <a class="link-btn" href="/mountainview/apk">Download APK</a>
         <a class="link-btn secondary" href="/">Rotator dashboard</a>
         <button class="secondary" onclick="login()">Connect owner</button>
       </div>
