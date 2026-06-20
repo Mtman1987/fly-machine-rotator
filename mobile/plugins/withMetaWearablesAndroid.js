@@ -191,7 +191,7 @@ class MountainViewMetaWearablesModule(
     activity.requestPermissions(permissions.toTypedArray(), 4107, this)
   }
 
-  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean {
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray): Boolean {
     if (requestCode != 4107) return false
     val result = WritableNativeMap()
     result.putBoolean("androidNativeBridge", true)
