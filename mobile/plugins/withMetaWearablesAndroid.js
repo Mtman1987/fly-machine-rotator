@@ -17,36 +17,41 @@ function withMetaWearablesAndroid(config, props = {}) {
   const mwdatVersion = props.mwdatVersion || "0.7.0";
   const applicationId = props.applicationId || "${MOUNTAINVIEW_META_APP_ID}";
   const analyticsOptOut = props.analyticsOptOut !== false;
+  const enableMetaDat = props.enableMetaDat === true;
 
-  config = withSettingsGradle(config, (mod) => {
-    if (!mod.modResults.contents.includes(META_MAVEN)) {
-      mod.modResults.contents = mod.modResults.contents.replace(
-        /dependencyResolutionManagement\s*\{/,
-        `dependencyResolutionManagement {\n  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n  repositories {\n    google()\n    mavenCentral()\n    maven {\n      url = uri("${META_MAVEN}")\n      credentials {\n        username = ""\n        password = System.getenv("GITHUB_TOKEN") ?: providers.gradleProperty("github_token").orNull\n      }\n    }\n  }`
-      );
-    }
-    return mod;
-  });
-
-  config = withAppBuildGradle(config, (mod) => {
-    const lines = [
-      `implementation("com.meta.wearable:mwdat-core:${mwdatVersion}")`,
-      `implementation("com.meta.wearable:mwdat-camera:${mwdatVersion}")`,
-      `debugImplementation("com.meta.wearable:mwdat-mockdevice:${mwdatVersion}")`
-    ];
-    for (const line of lines) {
-      if (!mod.modResults.contents.includes(line)) {
-        mod.modResults.contents = mod.modResults.contents.replace(/dependencies\s*\{/, `dependencies {\n    ${line}`);
+  if (enableMetaDat) {
+    config = withSettingsGradle(config, (mod) => {
+      if (!mod.modResults.contents.includes(META_MAVEN)) {
+        mod.modResults.contents = mod.modResults.contents.replace(
+          /dependencyResolutionManagement\s*\{/,
+          `dependencyResolutionManagement {\n  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n  repositories {\n    google()\n    mavenCentral()\n    maven {\n      url = uri("${META_MAVEN}")\n      credentials {\n        username = ""\n        password = System.getenv("GITHUB_TOKEN") ?: providers.gradleProperty("github_token").orNull\n      }\n    }\n  }`
+        );
       }
-    }
-    return mod;
-  });
+      return mod;
+    });
+
+    config = withAppBuildGradle(config, (mod) => {
+      const lines = [
+        `implementation("com.meta.wearable:mwdat-core:${mwdatVersion}")`,
+        `implementation("com.meta.wearable:mwdat-camera:${mwdatVersion}")`,
+        `debugImplementation("com.meta.wearable:mwdat-mockdevice:${mwdatVersion}")`
+      ];
+      for (const line of lines) {
+        if (!mod.modResults.contents.includes(line)) {
+          mod.modResults.contents = mod.modResults.contents.replace(/dependencies\s*\{/, `dependencies {\n    ${line}`);
+        }
+      }
+      return mod;
+    });
+  }
 
   config = withAndroidManifest(config, (mod) => {
     const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(mod.modResults);
     mainApplication["meta-data"] = mainApplication["meta-data"] || [];
-    upsertMetaData(mainApplication, "com.meta.wearable.mwdat.APPLICATION_ID", applicationId);
-    upsertMetaData(mainApplication, "com.meta.wearable.mwdat.ANALYTICS_OPT_OUT", String(analyticsOptOut));
+    if (enableMetaDat) {
+      upsertMetaData(mainApplication, "com.meta.wearable.mwdat.APPLICATION_ID", applicationId);
+      upsertMetaData(mainApplication, "com.meta.wearable.mwdat.ANALYTICS_OPT_OUT", String(analyticsOptOut));
+    }
     return mod;
   });
 
