@@ -66,6 +66,14 @@ type QrTrigger = {
   action_type: string;
 };
 
+type BleScanDevice = {
+  address: string;
+  name?: string;
+  rssi?: number;
+  kindHint?: string;
+  serviceUuids?: string[];
+};
+
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
 
 export default function App() {
@@ -87,6 +95,7 @@ export default function App() {
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
   const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
   const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
+  const [bleDevices, setBleDevices] = useState<BleScanDevice[]>([]);
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -265,6 +274,57 @@ export default function App() {
     }
   }
 
+  async function requestBleResearchPermissions() {
+    try {
+      const result = await metaWearables.requestBleResearchPermissions();
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function scanGenericBleDevices() {
+    try {
+      const result = await metaWearables.scanGenericBleDevices();
+      const devices = Array.isArray(result.devices) ? result.devices as BleScanDevice[] : [];
+      setBleDevices(devices);
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function connectGenericBleDevice(address: string) {
+    try {
+      const result = await metaWearables.connectGenericBleDevice(address);
+      setLog(JSON.stringify(result, null, 2));
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({ kind: "ble-connect", source: "rdglass-research", targetApp: "streamweaver", metadata: result })
+      });
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function discoverGenericBleServices() {
+    try {
+      const result = await metaWearables.discoverGenericBleServices();
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function loadGenericBleLog() {
+    try {
+      const result = await metaWearables.getGenericBleLog();
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function askStreamWeaverVoiceCommander() {
     await runCommand("cmd_streamweaver_voice_commander", voicePrompt);
   }
@@ -366,6 +426,24 @@ export default function App() {
                 <Pressable style={styles.secondaryButton} onPress={registerGlasses}><Text style={styles.secondaryButtonText}>Register glasses</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={captureGlassesPhoto}><Text style={styles.secondaryButtonText}>Capture glasses photo</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Request flashlight</Text></Pressable>
+              </View>
+              <View style={styles.panel}>
+                <Text style={styles.label}>RDGlass / AiMB research</Text>
+                <Text style={styles.note}>Scan for the knockoff glasses path first. The RDGlass export points to BLE, 16 kHz mono voice events, Microsoft speech libraries, and Nordic UART-like UUIDs; this screen discovers what your actual glasses expose.</Text>
+                <Pressable style={styles.primaryButton} onPress={requestBleResearchPermissions}><Text style={styles.primaryButtonText}>Grant BLE permissions</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={scanGenericBleDevices}><Text style={styles.secondaryButtonText}>Scan nearby BLE devices</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={discoverGenericBleServices}><Text style={styles.secondaryButtonText}>Discover connected services</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={loadGenericBleLog}><Text style={styles.secondaryButtonText}>Load BLE research log</Text></Pressable>
+                <View style={styles.hintBox}>
+                  <Text style={styles.memoryBody}>Known UUID leads: 6E40AB01/02/03-B5A3-F393-E0A9-E50E24DCCA9E, 0000FFD0-FFD8, 0000FFF1/FFF2/FFF3/FFF6, battery/device/HID services.</Text>
+                </View>
+                {bleDevices.map((device) => (
+                  <Pressable key={device.address} style={styles.memoryRow} onPress={() => connectGenericBleDevice(device.address)}>
+                    <Text style={styles.memoryTitle}>{device.name ?? "Unnamed BLE device"}</Text>
+                    <Text style={styles.memoryBody}>{device.address} • RSSI {device.rssi ?? "?"} • {device.kindHint ?? "unknown"}</Text>
+                    <Text style={styles.memoryBody}>{(device.serviceUuids ?? []).slice(0, 3).join(", ")}</Text>
+                  </Pressable>
+                ))}
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Athena wake bridge</Text>
@@ -606,6 +684,7 @@ const styles = StyleSheet.create({
   commandGroup: { gap: 6, marginTop: 10 },
   commandGroupTitle: { color: "#20d5ff", fontSize: 14, fontWeight: "900", marginTop: 4 },
   memoryRow: { borderLeftWidth: 2, borderLeftColor: "#20d5ff", paddingLeft: 12, paddingVertical: 8, marginTop: 8 },
+  hintBox: { padding: 12, borderRadius: 8, backgroundColor: "rgba(117,80,255,.12)", borderWidth: 1, borderColor: "rgba(117,80,255,.32)" },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },
   log: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 12 },

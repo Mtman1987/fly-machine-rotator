@@ -13,7 +13,18 @@ module.exports = () => {
           "POST_NOTIFICATIONS",
           "FOREGROUND_SERVICE",
           "FOREGROUND_SERVICE_MICROPHONE",
-          "WAKE_LOCK"
+          "FOREGROUND_SERVICE_CONNECTED_DEVICE",
+          "WAKE_LOCK",
+          "BLUETOOTH",
+          "BLUETOOTH_ADMIN",
+          "BLUETOOTH_SCAN",
+          "BLUETOOTH_CONNECT",
+          "BLUETOOTH_ADVERTISE",
+          "ACCESS_FINE_LOCATION",
+          "ACCESS_COARSE_LOCATION",
+          "NEARBY_WIFI_DEVICES",
+          "CAMERA",
+          "FLASHLIGHT"
         ])
       ],
       config: {

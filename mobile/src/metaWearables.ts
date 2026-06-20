@@ -7,6 +7,11 @@ type MetaWearablesModule = {
   startAudioStream(): Promise<Record<string, unknown>>;
   startVideoStream(): Promise<Record<string, unknown>>;
   requestVoiceWakePermissions(): Promise<Record<string, unknown>>;
+  requestBleResearchPermissions(): Promise<Record<string, unknown>>;
+  scanGenericBleDevices(): Promise<Record<string, unknown>>;
+  connectGenericBleDevice(address: string): Promise<Record<string, unknown>>;
+  discoverGenericBleServices(): Promise<Record<string, unknown>>;
+  getGenericBleLog(): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
 };
 
@@ -29,5 +34,10 @@ export const metaWearables: MetaWearablesModule = {
   startAudioStream: () => nativeModule?.startAudioStream?.() ?? unavailable("startAudioStream"),
   startVideoStream: () => nativeModule?.startVideoStream?.() ?? unavailable("startVideoStream"),
   requestVoiceWakePermissions: () => nativeModule?.requestVoiceWakePermissions?.() ?? unavailable("requestVoiceWakePermissions"),
+  requestBleResearchPermissions: () => nativeModule?.requestBleResearchPermissions?.() ?? unavailable("requestBleResearchPermissions"),
+  scanGenericBleDevices: () => nativeModule?.scanGenericBleDevices?.() ?? unavailable("scanGenericBleDevices"),
+  connectGenericBleDevice: (address: string) => nativeModule?.connectGenericBleDevice?.(address) ?? unavailable(`connectGenericBleDevice:${address}`),
+  discoverGenericBleServices: () => nativeModule?.discoverGenericBleServices?.() ?? unavailable("discoverGenericBleServices"),
+  getGenericBleLog: () => nativeModule?.getGenericBleLog?.() ?? unavailable("getGenericBleLog"),
   setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
 };

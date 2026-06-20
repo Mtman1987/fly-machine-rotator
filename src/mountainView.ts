@@ -35,7 +35,8 @@ const defaultConfig: MountainViewConfig = {
     notes: [
       "MountainView AI does not run face recognition.",
       "Image analysis is delegated to StreamWeaver or configured Spacemountain services.",
-      "Direct glasses live streaming and flash control are capability-gated until exposed by the Meta SDK/API available to this app."
+      "Direct glasses live streaming and flash control are capability-gated until exposed by the Meta SDK/API available to this app.",
+      "RDGlass/AiMB research mode can scan BLE, discover GATT services, and log characteristics without sending unknown control packets."
     ]
   }
 };
@@ -575,6 +576,7 @@ class MountainViewContext {
       { title: "Twitch Screen Assist", status: "test-bed", description: "When a Twitch logo is detected, MountainView can route speech-to-text, posting, and stream actions through StreamWeaver or another token-owning app." },
       { title: "StreamWeaver Flow Runner", status: "available", description: "Run StreamWeaver commands and flow endpoints from glasses voice or snapshot events." },
       { title: "HearMeOut Voice Bridge", status: "available", description: "Route glasses audio events toward rooms, chats, song requests, audiobooks, and watch-party controls." },
+      { title: "RDGlass / AiMB BLE Discovery", status: "test-bed", description: "Android research mode scans candidate glasses, connects by MAC, discovers services, and logs BLE characteristics for the direct connection path." },
       { title: "EdenAI Vision Lab", status: "coming-soon", description: "Provider picker for scene analysis, OCR, image editing, avatar insertion, and generation." },
       { title: "On-Device Recognition", status: "coming-soon", description: "Local device/person/context matching with explicit profile controls." },
       { title: "Glasses Flashlight", status: "sdk-gated", description: "UI is ready, but current public DAT docs do not expose glasses torch control." },
@@ -785,6 +787,7 @@ class MountainViewContext {
     }
     const devices = [
       ["device_phone", "MountainView Phone", "phone", "phone-companion", "local", ["display", "camera", "commands", "notifications"]],
+      ["device_rdglass_aimb", "AiMB / RDGlass Glasses", "glasses", "ble-scan", "android-ble-research", ["ble-scan", "gatt-discovery", "voice-event-research", "image-event-research"]],
       ["device_tablet", "Companion Tablet", "tablet", "tablet-hud", "qr", ["display", "companion-hud", "commands"]],
       ["device_pc", "Stream PC", "computer", "stream-pc", "qr-bluetooth", ["obs", "streamweaver", "browser-display"]],
       ["device_obs", "OBS / Stream Machine", "stream-machine", "obs-control", "local-network", ["obs-scenes", "overlays", "stream-control"]]
