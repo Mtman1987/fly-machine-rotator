@@ -351,6 +351,21 @@ export default function App() {
       const devices = Array.isArray(result.devices) ? result.devices as BleScanDevice[] : [];
       setBleDevices(devices);
       setLog(JSON.stringify(result, null, 2));
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "ble-scan",
+          source: "rdglass-research",
+          targetApp: "streamweaver",
+          status: devices.length > 0 ? "devices-found" : "no-devices",
+          metadata: {
+            scannedAt: new Date().toISOString(),
+            deviceCount: devices.length,
+            devices,
+            nativeResult: result
+          }
+        })
+      });
       setStatusMessage(devices.length > 0 ? `Found ${devices.length} BLE devices. Tap the glasses row to connect.` : "No BLE devices found. Put glasses in pairing mode and scan again.");
     } catch (error) {
       reportError("BLE scan", error);
