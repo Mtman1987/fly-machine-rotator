@@ -34,6 +34,7 @@ module.exports = () => {
       }
     },
     plugins: [
+      "expo-asset",
       "expo-dev-client",
       [
         "./plugins/withMetaWearablesAndroid",
