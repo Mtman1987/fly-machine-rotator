@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import QRCode from "qrcode";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -81,6 +82,8 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       mediaEvents: context.listGlassesMediaEvents(user.id),
       devices: context.listDevices(user.id),
       pollingProfiles: context.listPollingProfiles(user.id),
+      logoProfiles: context.listLogoProfiles(user.id),
+      qrTriggers: await context.listQrTriggers(user.id),
       roadmap: context.listRoadmap(),
       logs: context.listLogs(user.id)
     });
@@ -156,6 +159,34 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     const user = context.requireAuth(request);
     const body = await readJson(request);
     return json(response, context.savePollingProfile(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/logo-profiles") {
+    const user = context.requireAuth(request);
+    return json(response, { logoProfiles: context.listLogoProfiles(user.id) });
+  }
+
+  if (method === "POST" && apiPath === "/api/logo-profiles") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.saveLogoProfile(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/logo-profiles/match") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.matchLogoProfile(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/qr-triggers") {
+    const user = context.requireAuth(request);
+    return json(response, { qrTriggers: await context.listQrTriggers(user.id) });
+  }
+
+  if (method === "POST" && apiPath === "/api/qr-triggers") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, { ok: true, qrTrigger: await context.saveQrTrigger(user.id, body) });
   }
 
   if (method === "GET" && apiPath === "/api/roadmap") {
@@ -444,13 +475,105 @@ class MountainViewContext {
     return { ok: true, pollingProfile: normalizeRow(this.db.prepare("SELECT * FROM visual_polling_profiles WHERE id = ?").get(id) as JsonRecord) };
   }
 
+  listLogoProfiles(userId: string): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM app_logo_profiles WHERE user_id IN (?, 'system') ORDER BY app_id, name").all(userId) as JsonRecord[];
+    return rows.map(normalizeRow);
+  }
+
+  saveLogoProfile(userId: string, input: JsonRecord): JsonRecord {
+    const id = String(input.id ?? `logo_${Date.now()}`);
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO app_logo_profiles (id, user_id, app_id, name, aliases_json, command_id, confidence_threshold, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        app_id = excluded.app_id,
+        name = excluded.name,
+        aliases_json = excluded.aliases_json,
+        command_id = excluded.command_id,
+        confidence_threshold = excluded.confidence_threshold,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      String(input.appId ?? input.app_id ?? "streamweaver"),
+      String(input.name ?? "App logo"),
+      JSON.stringify(normalizeTags(input.aliases ?? input.aliases_json ?? [])),
+      String(input.commandId ?? input.command_id ?? ""),
+      Number(input.confidenceThreshold ?? input.confidence_threshold ?? 0.78),
+      now
+    );
+    return { ok: true, logoProfile: normalizeRow(this.db.prepare("SELECT * FROM app_logo_profiles WHERE id = ?").get(id) as JsonRecord) };
+  }
+
+  matchLogoProfile(userId: string, input: JsonRecord): JsonRecord {
+    const observedText = String(input.observedText ?? input.text ?? input.label ?? "").toLowerCase();
+    const requestedApp = String(input.appId ?? input.app_id ?? "").toLowerCase();
+    const profiles = this.listLogoProfiles(userId);
+    const match = profiles.find((profile) => {
+      const aliases = Array.isArray(profile.aliases) ? profile.aliases.map((alias) => String(alias).toLowerCase()) : [];
+      const names = [String(profile.name ?? "").toLowerCase(), String(profile.app_id ?? "").toLowerCase(), ...aliases].filter(Boolean);
+      return names.some((name) => (observedText && observedText.includes(name)) || (requestedApp && requestedApp === name));
+    });
+    const now = new Date().toISOString();
+    this.logCommand(userId, "logo-recognition-test", String(match?.app_id ?? "mountainview"), "EVENT", "visual-polling", match ? "success" : "miss", 0, 0, JSON.stringify({ observedText, requestedApp, match }).slice(0, 4000), "");
+    return {
+      ok: Boolean(match),
+      matched: Boolean(match),
+      profile: match ?? null,
+      route: match ? { appId: match.app_id, commandId: match.command_id, reason: "logo-profile-match" } : null,
+      created_at: now
+    };
+  }
+
+  async listQrTriggers(userId: string): Promise<JsonRecord[]> {
+    const rows = this.db.prepare("SELECT * FROM qr_triggers WHERE user_id IN (?, 'system') ORDER BY updated_at DESC").all(userId) as JsonRecord[];
+    return Promise.all(rows.map(async (row) => this.withQrSvg(normalizeRow(row))));
+  }
+
+  async saveQrTrigger(userId: string, input: JsonRecord): Promise<JsonRecord> {
+    const id = String(input.id ?? `qr_${Date.now()}`);
+    const now = new Date().toISOString();
+    const payload = String(input.payload ?? `mountainview://trigger/${id}`);
+    this.db.prepare(`
+      INSERT INTO qr_triggers (id, user_id, name, target_app, command_id, payload, action_type, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        target_app = excluded.target_app,
+        command_id = excluded.command_id,
+        payload = excluded.payload,
+        action_type = excluded.action_type,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      String(input.name ?? "MountainView QR trigger"),
+      String(input.targetApp ?? input.target_app ?? "streamweaver"),
+      String(input.commandId ?? input.command_id ?? "cmd_chat_tag_qr"),
+      payload,
+      String(input.actionType ?? input.action_type ?? "command"),
+      now
+    );
+    return this.withQrSvg(normalizeRow(this.db.prepare("SELECT * FROM qr_triggers WHERE id = ?").get(id) as JsonRecord));
+  }
+
+  private async withQrSvg(row: JsonRecord): Promise<JsonRecord> {
+    const payload = String(row.payload ?? "");
+    const qrSvg = await QRCode.toString(payload, { type: "svg", margin: 1, width: 180, color: { dark: "#050712", light: "#f8fbff" } });
+    return { ...row, qr_svg: qrSvg };
+  }
+
   listRoadmap(): JsonRecord[] {
     return [
       { title: "Companion HUD", status: "available", description: "Phone/tablet/browser display for glasses results, commands, memory, and transcripts." },
       { title: "Device Mesh", status: "available", description: "QR/Bluetooth/Wi-Fi pairing records for phone, tablet, PC, OBS, and stream machines." },
       { title: "Visual Polling", status: "available-config", description: "Battery-aware snapshot schedules for QR, device, and scene triggers without 24/7 streaming." },
+      { title: "App Logo Recognition", status: "test-bed", description: "Polling snapshots can route detected app logos to StreamWeaver, HearMeOut, DiscordStreamHub, or Chat-Tag commands." },
+      { title: "QR Trigger Maker", status: "available", description: "Create scannable QR commands for AR avatars, phone/tablet pairing, stream overlays, tags, and room actions." },
+      { title: "Screen Read", status: "test-bed", description: "Route a glasses/phone snapshot to StreamWeaver or EdenAI OCR so the app can read visible screen text." },
       { title: "StreamWeaver Flow Runner", status: "available", description: "Run StreamWeaver commands and flow endpoints from glasses voice or snapshot events." },
-      { title: "HearMeOut Voice Bridge", status: "available", description: "Route glasses audio events toward rooms, chats, song requests, and watch-party controls." },
+      { title: "HearMeOut Voice Bridge", status: "available", description: "Route glasses audio events toward rooms, chats, song requests, audiobooks, and watch-party controls." },
       { title: "EdenAI Vision Lab", status: "coming-soon", description: "Provider picker for scene analysis, OCR, image editing, avatar insertion, and generation." },
       { title: "On-Device Recognition", status: "coming-soon", description: "Local device/person/context matching with explicit profile controls." },
       { title: "Glasses Flashlight", status: "sdk-gated", description: "UI is ready, but current public DAT docs do not expose glasses torch control." },
@@ -597,6 +720,26 @@ class MountainViewContext {
         enabled INTEGER NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS app_logo_profiles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        app_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        aliases_json TEXT NOT NULL,
+        command_id TEXT NOT NULL,
+        confidence_threshold REAL NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS qr_triggers (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        target_app TEXT NOT NULL,
+        command_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -624,7 +767,10 @@ class MountainViewContext {
       ["cmd_hearmeout", "hearmeout", "Trigger HearMeOut workflow", "trigger hear me out", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
       ["cmd_hearmeout_voice_room", "hearmeout", "Join HearMeOut voice room", "join voice room", "POST", "/api/rooms/join", { source: "mountainview-ai", roomId: "{{roomId}}", payload: "{{payload}}" }],
       ["cmd_hearmeout_watch_party", "hearmeout", "Start HearMeOut watch party", "start watch party", "POST", "/api/watch-party/start", { source: "mountainview-ai", media: "{{payload}}" }],
+      ["cmd_hearmeout_song_request", "hearmeout", "Request HearMeOut song", "request song", "POST", "/api/song-requests", { source: "mountainview-ai", query: "{{payload}}", roomId: "{{roomId}}" }],
+      ["cmd_hearmeout_audiobook_request", "hearmeout", "Request HearMeOut audiobook", "request audiobook", "POST", "/api/media-requests/audiobook", { source: "mountainview-ai", query: "{{payload}}", roomId: "{{roomId}}", mediaType: "audiobook" }],
       ["cmd_eden_scene", "edenai", "Analyze current scene with EdenAI", "ask ai what am i looking at", "POST", "/v2/image/explicit_content", { source: "mountainview-ai", image: "{{imageBase64}}", providers: "{{providers}}" }],
+      ["cmd_eden_screen_read", "edenai", "Read visible screen text", "read my screen", "POST", "/v2/ocr/ocr", { source: "mountainview-ai", file: "{{imageBase64}}", providers: "{{providers}}", fallbackRoute: "streamweaver" }],
       ["cmd_eden_image_generation", "edenai", "Generate image from glasses context", "generate image from what i see", "POST", "/v2/image/generation", { source: "mountainview-ai", prompt: "{{prompt}}", contextImage: "{{imageBase64}}", providers: "{{providers}}" }],
       ["cmd_person_memory_note", "streamweaver", "Save consent-based person memory note", "save note about this person", "POST", "/api/memory/person-note", { source: "mountainview-ai", personId: "{{personId}}", note: "{{note}}", consent: "{{consent}}", payload: "{{payload}}" }]
     ] as const;
@@ -649,8 +795,8 @@ class MountainViewContext {
       `).run(device[0], device[1], device[2], device[3], device[4], JSON.stringify(device[5]), now, now);
     }
     const pollingProfiles = [
-      ["poll_balanced_qr", "Balanced QR/device scan", 60, "balanced", ["qr", "device-marker", "screen-marker"]],
-      ["poll_fast_trigger", "Fast command trigger scan", 15, "high-power", ["qr", "scene-change", "stream-overlay"]],
+      ["poll_balanced_qr", "Balanced QR/device scan", 60, "balanced", ["qr", "device-marker", "screen-marker", "app-logo"]],
+      ["poll_fast_trigger", "Fast command trigger scan", 15, "high-power", ["qr", "scene-change", "stream-overlay", "screen-read"]],
       ["poll_low_power_memory", "Low power memory assist", 180, "battery-saver", ["person-card", "place", "meeting-context"]]
     ] as const;
     for (const profile of pollingProfiles) {
@@ -659,6 +805,33 @@ class MountainViewContext {
         VALUES (?, 'owner', ?, ?, ?, ?, 1, ?)
         ON CONFLICT(id) DO NOTHING
       `).run(profile[0], profile[1], profile[2], profile[3], JSON.stringify(profile[4]), now);
+    }
+    const logoProfiles = [
+      ["logo_streamweaver", "streamweaver", "StreamWeaver", ["streamweaver", "stream weaver", "spacemountain stream"], "cmd_streamweaver_voice_commander", 0.78],
+      ["logo_hearmeout", "hearmeout", "HearMeOut", ["hearmeout", "hear me out", "voice room"], "cmd_hearmeout_voice_room", 0.78],
+      ["logo_discordstreamhub", "discordstreamhub", "DiscordStreamHub", ["discordstreamhub", "discord stream hub", "discord"], "cmd_discord_event", 0.78],
+      ["logo_chattag", "chat-tag", "Chat-Tag", ["chat-tag", "chat tag", "tag trigger"], "cmd_chat_tag", 0.78],
+      ["logo_edenai", "edenai", "EdenAI", ["edenai", "eden ai", "ai router"], "cmd_eden_scene", 0.78]
+    ] as const;
+    for (const logo of logoProfiles) {
+      this.db.prepare(`
+        INSERT INTO app_logo_profiles (id, user_id, app_id, name, aliases_json, command_id, confidence_threshold, updated_at)
+        VALUES (?, 'system', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+      `).run(logo[0], logo[1], logo[2], JSON.stringify(logo[3]), logo[4], logo[5], now);
+    }
+    const qrTriggers = [
+      ["qr_stream_overlay", "Stream overlay trigger", "streamweaver", "cmd_stream_overlay", "mountainview://streamweaver/overlay/default", "stream-overlay"],
+      ["qr_ar_avatar", "AR avatar room anchor", "streamweaver", "cmd_eden_image_generation", "mountainview://avatar/room-anchor/default", "ar-avatar"],
+      ["qr_hearmeout_audiobook", "HearMeOut audiobook request", "hearmeout", "cmd_hearmeout_audiobook_request", "mountainview://hearmeout/audiobook/request", "media-request"],
+      ["qr_chat_tag_event", "Chat-Tag event trigger", "chat-tag", "cmd_chat_tag_qr", "mountainview://chat-tag/event/default", "tag-event"]
+    ] as const;
+    for (const trigger of qrTriggers) {
+      this.db.prepare(`
+        INSERT INTO qr_triggers (id, user_id, name, target_app, command_id, payload, action_type, updated_at)
+        VALUES (?, 'system', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+      `).run(trigger[0], trigger[1], trigger[2], trigger[3], trigger[4], trigger[5], now);
     }
   }
 
@@ -833,7 +1006,7 @@ function renderMountainViewHtml(): string {
     *{box-sizing:border-box} body{margin:0;min-height:100vh;background:radial-gradient(circle at 15% 0%,rgba(32,213,255,.18),transparent 26%),radial-gradient(circle at 88% 10%,rgba(139,92,246,.2),transparent 30%),linear-gradient(180deg,#050712,#090d1c 60%,#050712);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Arial,sans-serif}
     body:before{content:"";position:fixed;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.2) 1px,transparent 1px);background-size:38px 38px;opacity:.16;pointer-events:none}
     button,input,textarea,select{font:inherit} button{border:0;border-radius:8px;padding:10px 12px;color:#00131a;background:linear-gradient(135deg,var(--blue),#b9f4ff);font-weight:800;cursor:pointer} button.secondary{background:rgba(255,255,255,.07);color:var(--text);border:1px solid var(--line)} button.danger{background:rgba(255,107,138,.16);color:#ffdce4;border:1px solid rgba(255,107,138,.35)}
-    .shell{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:20px 14px 90px}.top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--violet),var(--blue));box-shadow:0 0 34px rgba(32,213,255,.35)}h1{margin:0;font-size:24px;letter-spacing:0} .sub{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.panel{background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:0 18px 60px rgba(0,0,0,.28);backdrop-filter:blur(12px)}.hero{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}.stat{border:1px solid var(--line);border-radius:8px;padding:13px;background:rgba(255,255,255,.045)}.label{text-transform:uppercase;letter-spacing:.13em;color:var(--muted);font-size:10px}.value{font-size:24px;font-weight:900;margin-top:4px}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cmd{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:8px;padding:12px;background:rgba(255,255,255,.045)}.cmd strong{display:block}.cmd span{font-size:12px;color:var(--muted)}.tabs{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:5;display:flex;gap:6px;background:rgba(8,12,25,.86);border:1px solid var(--line);padding:6px;border-radius:12px;backdrop-filter:blur(14px)}.tabs button{padding:9px 10px;background:transparent;color:var(--muted);border-radius:8px}.tabs button.active{background:rgba(32,213,255,.16);color:white}.screen{display:none}.screen.active{display:block}.row{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;margin:8px 0}input,textarea,select{width:100%;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:10px}textarea{min-height:88px}.log{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;white-space:pre-wrap;color:#d9e8ff;background:rgba(0,0,0,.25);border-radius:8px;border:1px solid var(--line);padding:12px;max-height:260px;overflow:auto}.timeline{display:grid;gap:10px}.memory{border-left:2px solid var(--blue);padding:8px 0 8px 12px;background:rgba(255,255,255,.035);border-radius:0 8px 8px 0}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:820px){.grid,.hero,.split{grid-template-columns:1fr}.cards{grid-template-columns:1fr}.top{align-items:flex-start}.tabs{width:calc(100% - 20px);overflow:auto}.tabs button{white-space:nowrap}.row{grid-template-columns:1fr}}
+    .shell{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:20px 14px 90px}.top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--violet),var(--blue));box-shadow:0 0 34px rgba(32,213,255,.35)}h1{margin:0;font-size:24px;letter-spacing:0} .sub{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.panel{background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:0 18px 60px rgba(0,0,0,.28);backdrop-filter:blur(12px)}.hero{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}.stat{border:1px solid var(--line);border-radius:8px;padding:13px;background:rgba(255,255,255,.045)}.label{text-transform:uppercase;letter-spacing:.13em;color:var(--muted);font-size:10px}.value{font-size:24px;font-weight:900;margin-top:4px}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cmd{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:8px;padding:12px;background:rgba(255,255,255,.045)}.cmd strong{display:block}.cmd span{font-size:12px;color:var(--muted)}.qr{display:grid;grid-template-columns:180px 1fr;gap:12px;align-items:start}.qr svg{width:180px;height:180px;border-radius:8px;background:#f8fbff}.tabs{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:5;display:flex;gap:6px;background:rgba(8,12,25,.86);border:1px solid var(--line);padding:6px;border-radius:12px;backdrop-filter:blur(14px)}.tabs button{padding:9px 10px;background:transparent;color:var(--muted);border-radius:8px}.tabs button.active{background:rgba(32,213,255,.16);color:white}.screen{display:none}.screen.active{display:block}.row{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;margin:8px 0}input,textarea,select{width:100%;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:10px}textarea{min-height:88px}.log{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;white-space:pre-wrap;color:#d9e8ff;background:rgba(0,0,0,.25);border-radius:8px;border:1px solid var(--line);padding:12px;max-height:260px;overflow:auto}.timeline{display:grid;gap:10px}.memory{border-left:2px solid var(--blue);padding:8px 0 8px 12px;background:rgba(255,255,255,.035);border-radius:0 8px 8px 0}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:820px){.grid,.hero,.split,.qr{grid-template-columns:1fr}.cards{grid-template-columns:1fr}.top{align-items:flex-start}.tabs{width:calc(100% - 20px);overflow:auto}.tabs button{white-space:nowrap}.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -865,6 +1038,8 @@ function renderMountainViewHtml(): string {
       <div class="grid" style="margin-top:14px;">
         <div class="panel"><div class="label">Companion HUD</div><div class="value">Phone / tablet / browser display</div><p class="sub">Use paired devices as the display your glasses do not have: memory cards, command output, transcripts, QR targets, and stream controls.</p><button class="secondary" onclick="show('devices', document.querySelector('[data-tab=devices]'))">Open device mesh</button></div>
         <div class="panel"><div class="label">Visual trigger polling</div><div class="value">Snapshot mode</div><p class="sub">Battery-aware scheduled photo checks for QR codes, device markers, scene changes, and memory prompts without continuous video streaming.</p><button class="secondary" onclick="show('polling', document.querySelector('[data-tab=polling]'))">Configure polling</button></div>
+        <div class="panel"><div class="label">App logo recognition</div><div class="value">Screen routing</div><p class="sub">Use polling snapshots to identify Spacemountain app logos on screens and link to the right command flow.</p><button class="secondary" onclick="show('logos', document.querySelector('[data-tab=logos]'))">Open logo tests</button></div>
+        <div class="panel"><div class="label">QR trigger maker</div><div class="value">AR actions</div><p class="sub">Generate scannable triggers for avatars, tags, stream overlays, rooms, and audiobook requests.</p><button class="secondary" onclick="show('qr', document.querySelector('[data-tab=qr]'))">Make QR triggers</button></div>
       </div>
     </section>
 
@@ -935,6 +1110,38 @@ function renderMountainViewHtml(): string {
       </div>
     </section>
 
+    <section id="logos" class="screen">
+      <div class="split">
+        <div class="panel"><div class="label">App logo recognition profiles</div><div id="logoProfileList" class="timeline"></div></div>
+        <div class="panel">
+          <div class="label">Add logo route</div>
+          <div class="row"><span>Name</span><input id="logoName" value="StreamWeaver"></div>
+          <div class="row"><span>Target app</span><select id="logoApp"><option value="streamweaver">StreamWeaver</option><option value="hearmeout">HearMeOut</option><option value="discordstreamhub">DiscordStreamHub</option><option value="chat-tag">Chat-Tag</option><option value="edenai">EdenAI</option></select></div>
+          <div class="row"><span>Aliases</span><input id="logoAliases" value="streamweaver,stream weaver"></div>
+          <div class="row"><span>Command</span><input id="logoCommand" value="cmd_streamweaver_voice_commander"></div>
+          <button onclick="saveLogoProfile()">Save logo route</button>
+          <div class="row"><span>Test text</span><input id="logoObserved" value="I see the StreamWeaver logo on my tablet"></div>
+          <button class="secondary" onclick="testLogoMatch()">Test polling match</button>
+          <div class="log" id="logoMatchStatus">Waiting for logo test.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="qr" class="screen">
+      <div class="split">
+        <div class="panel"><div class="label">QR trigger maker</div><div id="qrTriggerList" class="timeline"></div></div>
+        <div class="panel">
+          <div class="label">Create QR trigger</div>
+          <div class="row"><span>Name</span><input id="qrName" value="AR avatar room anchor"></div>
+          <div class="row"><span>Target app</span><select id="qrApp"><option value="streamweaver">StreamWeaver</option><option value="hearmeout">HearMeOut</option><option value="discordstreamhub">DiscordStreamHub</option><option value="chat-tag">Chat-Tag</option><option value="edenai">EdenAI</option></select></div>
+          <div class="row"><span>Command</span><input id="qrCommand" value="cmd_eden_image_generation"></div>
+          <div class="row"><span>Action</span><input id="qrAction" value="ar-avatar"></div>
+          <div class="row"><span>Payload</span><input id="qrPayload" value="mountainview://avatar/room-anchor/default"></div>
+          <button onclick="saveQrTrigger()">Generate QR trigger</button>
+        </div>
+      </div>
+    </section>
+
     <section id="roadmap" class="screen">
       <div class="panel"><div class="label">Coming soon and test beds</div><div id="roadmapList" class="cards"></div></div>
     </section>
@@ -946,12 +1153,12 @@ function renderMountainViewHtml(): string {
       </div>
     </section>
   </main>
-  <nav class="tabs"><button data-tab="home" class="active" onclick="show('home',this)">Home</button><button data-tab="commands" onclick="show('commands',this)">Commands</button><button data-tab="relay" onclick="show('relay',this)">Relay</button><button data-tab="memory" onclick="show('memory',this)">Memory</button><button data-tab="stream" onclick="show('stream',this)">Stream</button><button data-tab="devices" onclick="show('devices',this)">Devices</button><button data-tab="polling" onclick="show('polling',this)">Polling</button><button data-tab="roadmap" onclick="show('roadmap',this)">Roadmap</button><button data-tab="settings" onclick="show('settings',this)">Settings</button></nav>
+  <nav class="tabs"><button data-tab="home" class="active" onclick="show('home',this)">Home</button><button data-tab="commands" onclick="show('commands',this)">Commands</button><button data-tab="relay" onclick="show('relay',this)">Relay</button><button data-tab="memory" onclick="show('memory',this)">Memory</button><button data-tab="stream" onclick="show('stream',this)">Stream</button><button data-tab="devices" onclick="show('devices',this)">Devices</button><button data-tab="polling" onclick="show('polling',this)">Polling</button><button data-tab="logos" onclick="show('logos',this)">Logos</button><button data-tab="qr" onclick="show('qr',this)">QR</button><button data-tab="roadmap" onclick="show('roadmap',this)">Roadmap</button><button data-tab="settings" onclick="show('settings',this)">Settings</button></nav>
   <script>
     let token = localStorage.mvToken || ""; let state = {commands:[], memory:[], logs:[]};
     const api = async (path, options={}) => { const res = await fetch('/mountainview/api' + path, { ...options, headers: { 'content-type':'application/json', authorization: token ? 'Bearer '+token : '', ...(options.headers||{}) } }); const data = await res.json(); if(!res.ok || data.error) throw new Error(data.error || 'Request failed'); return data; };
     async function login(){ const password = prompt('MountainView owner password'); if(!password) return; const data = await api('/login',{method:'POST',body:JSON.stringify({email:'owner@spacemountain.live',password})}); token=data.token; localStorage.mvToken=token; await load(); }
-    async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderDevices(); renderPolling(); renderRoadmap(); renderLogs(); }
+    async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderDevices(); renderPolling(); renderLogoProfiles(); renderQrTriggers(); renderRoadmap(); renderLogs(); }
     function show(id, btn){ document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active')); document.getElementById(id).classList.add('active'); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); if(id==='memory') loadMemory(); }
     function renderCommands(){ const commands=state.commands||[]; const html = commands.map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+' • '+esc(c.method)+' '+esc(c.url_template)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); commandList.innerHTML=html; quickCommands.innerHTML=commands.slice(0,8).map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); const groups={StreamWeaver:commands.filter(c=>c.app_id==='streamweaver'),HearMeOut:commands.filter(c=>c.app_id==='hearmeout'),DiscordStreamHub:commands.filter(c=>c.app_id==='discordstreamhub'),'Chat-Tag':commands.filter(c=>c.app_id==='chat-tag'),EdenAI:commands.filter(c=>c.app_id==='edenai')}; commandGroups.innerHTML=Object.entries(groups).map(([name,items])=>'<div class="memory"><strong>'+esc(name)+'</strong><div class="sub">'+items.length+' commands ready</div></div>').join(''); }
     async function runSystemCommand(id){ const message = prompt('Payload message', 'MountainView trigger') || ''; const data = await api('/commands/execute',{method:'POST',body:JSON.stringify({commandId:id,payload:{message,payload:{message},metadata:{source:'dashboard'}}})}); appendLog(JSON.stringify(data,null,2)); await load(); }
@@ -964,8 +1171,13 @@ function renderMountainViewHtml(): string {
     async function saveToken(){ await api('/settings/token',{method:'POST',body:JSON.stringify({serviceId:tokenService.value,token:serviceToken.value})}); serviceToken.value=''; appendLog('Stored encrypted token for '+tokenService.value); }
     async function saveDevice(){ await api('/devices',{method:'POST',body:JSON.stringify({name:deviceName.value,kind:deviceKind.value,pairingCode:devicePairing.value,capabilities:['display','commands','companion-hud']})}); await load(); }
     async function savePollingProfile(){ await api('/polling-profiles',{method:'POST',body:JSON.stringify({name:pollName.value,intervalSeconds:Number(pollInterval.value),batteryMode:pollBattery.value,triggerTargets:pollTargets.value.split(',').map(x=>x.trim()).filter(Boolean)})}); await load(); }
+    async function saveLogoProfile(){ await api('/logo-profiles',{method:'POST',body:JSON.stringify({name:logoName.value,appId:logoApp.value,aliases:logoAliases.value,commandId:logoCommand.value})}); await load(); }
+    async function testLogoMatch(){ const data = await api('/logo-profiles/match',{method:'POST',body:JSON.stringify({observedText:logoObserved.value})}); logoMatchStatus.textContent=JSON.stringify(data,null,2); await load(); }
+    async function saveQrTrigger(){ await api('/qr-triggers',{method:'POST',body:JSON.stringify({name:qrName.value,targetApp:qrApp.value,commandId:qrCommand.value,actionType:qrAction.value,payload:qrPayload.value})}); await load(); }
     function renderDevices(){ deviceList.innerHTML=(state.devices||[]).map(d=>'<div class="memory"><strong>'+esc(d.name)+'</strong><div class="sub">'+esc(d.kind)+' • '+esc(d.status)+' • '+esc(d.connection_hint)+'</div><div class="sub">Pairing: '+esc(d.pairing_code||'local')+'</div><div class="sub">'+esc((d.capabilities||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No devices registered.</p>'; }
     function renderPolling(){ pollingList.innerHTML=(state.pollingProfiles||[]).map(p=>'<div class="memory"><strong>'+esc(p.name)+'</strong><div class="sub">'+esc(p.interval_seconds)+'s • '+esc(p.battery_mode)+' • '+(p.enabled ? 'enabled' : 'paused')+'</div><div class="sub">'+esc((p.trigger_targets||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No polling profiles yet.</p>'; }
+    function renderLogoProfiles(){ logoProfileList.innerHTML=(state.logoProfiles||[]).map(p=>'<div class="memory"><strong>'+esc(p.name)+'</strong><div class="sub">'+esc(p.app_id)+' • '+esc(p.command_id)+' • threshold '+esc(p.confidence_threshold)+'</div><div class="sub">'+esc((p.aliases||[]).join(', '))+'</div></div>').join('') || '<p class="sub">No logo profiles yet.</p>'; }
+    function renderQrTriggers(){ qrTriggerList.innerHTML=(state.qrTriggers||[]).map(q=>'<div class="memory qr"><div>'+String(q.qr_svg||'')+'</div><div><strong>'+esc(q.name)+'</strong><div class="sub">'+esc(q.target_app)+' • '+esc(q.command_id)+' • '+esc(q.action_type)+'</div><div class="sub">'+esc(q.payload)+'</div></div></div>').join('') || '<p class="sub">No QR triggers yet.</p>'; }
     function renderRoadmap(){ roadmapList.innerHTML=(state.roadmap||[]).map(r=>'<div class="stat"><div class="label">'+esc(r.status)+'</div><div class="value" style="font-size:18px">'+esc(r.title)+'</div><p class="sub">'+esc(r.description)+'</p></div>').join(''); }
     function appendLog(text){ activityLog.textContent = new Date().toISOString()+' '+text+'\\n\\n'+activityLog.textContent; }
     function esc(v){ return String(v ?? '').replace(/[&<>"]/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }

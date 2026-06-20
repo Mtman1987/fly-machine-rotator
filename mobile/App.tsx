@@ -48,6 +48,24 @@ type RoadmapItem = {
   description: string;
 };
 
+type LogoProfile = {
+  id: string;
+  app_id: string;
+  name: string;
+  command_id: string;
+  confidence_threshold: number;
+  aliases?: string[];
+};
+
+type QrTrigger = {
+  id: string;
+  name: string;
+  target_app: string;
+  command_id: string;
+  payload: string;
+  action_type: string;
+};
+
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
 
 export default function App() {
@@ -58,11 +76,15 @@ export default function App() {
   const [memory, setMemory] = useState<MemoryRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [pollingProfiles, setPollingProfiles] = useState<PollingProfile[]>([]);
+  const [logoProfiles, setLogoProfiles] = useState<LogoProfile[]>([]);
+  const [qrTriggers, setQrTriggers] = useState<QrTrigger[]>([]);
   const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
   const [note, setNote] = useState("");
   const [deviceName, setDeviceName] = useState("Companion Tablet");
   const [pollInterval, setPollInterval] = useState("60");
+  const [logoTestText, setLogoTestText] = useState("I see the StreamWeaver logo on my tablet");
+  const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -114,6 +136,8 @@ export default function App() {
     setMemory(data.memory ?? []);
     setDevices(data.devices ?? []);
     setPollingProfiles(data.pollingProfiles ?? []);
+    setLogoProfiles(data.logoProfiles ?? []);
+    setQrTriggers(data.qrTriggers ?? []);
     setRoadmap(data.roadmap ?? []);
     setLog((data.logs ?? []).map((item: Record<string, string>) => `${item.created_at} ${item.app_id} ${item.status}`).join("\n") || "No activity yet.");
   }
@@ -240,7 +264,44 @@ export default function App() {
         name: "Visual trigger scan",
         intervalSeconds: Number(pollInterval),
         batteryMode: Number(pollInterval) <= 15 ? "high-power" : "balanced",
-        triggerTargets: ["qr", "device-marker", "scene-change"]
+        triggerTargets: ["qr", "device-marker", "scene-change", "app-logo", "screen-read"]
+      })
+    });
+    await load();
+  }
+
+  async function testLogoMatch() {
+    const data = await request("/logo-profiles/match", {
+      method: "POST",
+      body: JSON.stringify({ observedText: logoTestText })
+    });
+    setLog(JSON.stringify(data, null, 2));
+    Speech.speak(data.matched ? "Logo route matched." : "No logo route matched.");
+    await load();
+  }
+
+  async function saveLogoProfile() {
+    await request("/logo-profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "MountainView app logo",
+        appId: "streamweaver",
+        aliases: "streamweaver,stream weaver,spacemountain stream",
+        commandId: "cmd_streamweaver_voice_commander"
+      })
+    });
+    await load();
+  }
+
+  async function saveQrTrigger() {
+    await request("/qr-triggers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "AR avatar room anchor",
+        targetApp: "streamweaver",
+        commandId: "cmd_eden_image_generation",
+        actionType: "ar-avatar",
+        payload: qrPayload
       })
     });
     await load();
@@ -285,6 +346,8 @@ export default function App() {
                 <Text style={styles.note}>Use your phone, tablet, PC, or browser as the display layer for glasses commands, memory, QR triggers, and StreamWeaver/HearMeOut status.</Text>
                 <Pressable style={styles.secondaryButton} onPress={() => setTab("devices")}><Text style={styles.secondaryButtonText}>Open device mesh</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={() => setTab("polling")}><Text style={styles.secondaryButtonText}>Configure visual polling</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setTab("logos")}><Text style={styles.secondaryButtonText}>Test app logo routes</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setTab("qr")}><Text style={styles.secondaryButtonText}>Make QR triggers</Text></Pressable>
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Quick commands</Text>
@@ -352,7 +415,7 @@ export default function App() {
           {tab === "polling" && (
             <View style={styles.panel}>
               <Text style={styles.label}>Visual trigger polling</Text>
-              <Text style={styles.note}>Snapshot polling checks for QR codes, device markers, scene changes, and memory prompts without continuous video streaming.</Text>
+              <Text style={styles.note}>Snapshot polling checks for QR codes, app logos, device markers, screen text, scene changes, and memory prompts without continuous video streaming.</Text>
               <View style={styles.inlineOptions}>
                 {["15", "60", "180", "300"].map((value) => (
                   <Pressable key={value} style={[styles.optionChip, pollInterval === value && styles.optionChipActive]} onPress={() => setPollInterval(value)}>
@@ -366,6 +429,39 @@ export default function App() {
                   <Text style={styles.memoryTitle}>{profile.name}</Text>
                   <Text style={styles.memoryBody}>{profile.interval_seconds}s • {profile.battery_mode} • {profile.enabled ? "enabled" : "paused"}</Text>
                   <Text style={styles.memoryBody}>{(profile.trigger_targets ?? []).join(", ")}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {tab === "logos" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>App logo recognition</Text>
+              <Text style={styles.note}>Use this as the first polling test: detected screen labels or vision results route to the matching Spacemountain app command.</Text>
+              <TextInput value={logoTestText} onChangeText={setLogoTestText} placeholder="Detected logo or OCR text" placeholderTextColor="#7f8ca8" style={styles.input} />
+              <Pressable style={styles.primaryButton} onPress={testLogoMatch}><Text style={styles.primaryButtonText}>Test logo route</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={saveLogoProfile}><Text style={styles.secondaryButtonText}>Add StreamWeaver logo profile</Text></Pressable>
+              {logoProfiles.map((profile) => (
+                <View key={profile.id} style={styles.memoryRow}>
+                  <Text style={styles.memoryTitle}>{profile.name}</Text>
+                  <Text style={styles.memoryBody}>{profile.app_id} • {profile.command_id}</Text>
+                  <Text style={styles.memoryBody}>{(profile.aliases ?? []).join(", ")}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {tab === "qr" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>QR trigger maker</Text>
+              <Text style={styles.note}>Create QR payloads for AR avatars, stream overlays, Chat-Tag events, device pairing, and HearMeOut audiobook requests.</Text>
+              <TextInput value={qrPayload} onChangeText={setQrPayload} placeholder="mountainview://..." placeholderTextColor="#7f8ca8" style={styles.input} />
+              <Pressable style={styles.primaryButton} onPress={saveQrTrigger}><Text style={styles.primaryButtonText}>Save QR trigger</Text></Pressable>
+              {qrTriggers.map((trigger) => (
+                <View key={trigger.id} style={styles.memoryRow}>
+                  <Text style={styles.memoryTitle}>{trigger.name}</Text>
+                  <Text style={styles.memoryBody}>{trigger.target_app} • {trigger.command_id} • {trigger.action_type}</Text>
+                  <Text style={styles.memoryBody}>{trigger.payload}</Text>
                 </View>
               ))}
             </View>
@@ -394,6 +490,8 @@ export default function App() {
           ["stream", "radio"],
           ["devices", "phone-portrait"],
           ["polling", "scan"],
+          ["logos", "apps"],
+          ["qr", "qr-code"],
           ["roadmap", "rocket"],
           ["logs", "terminal"]
         ].map(([id, icon]) => (
