@@ -5,6 +5,7 @@ import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { metaWearables } from "./src/metaWearables";
 
 type Command = {
   id: string;
@@ -32,6 +33,10 @@ export default function App() {
   const [memory, setMemory] = useState<MemoryRecord[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
   const [note, setNote] = useState("");
+  const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
+    state: "not checked",
+    flashControlSupported: false
+  });
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -121,6 +126,40 @@ export default function App() {
     await load();
   }
 
+  async function checkGlassesSdk() {
+    const status = await metaWearables.getSdkStatus();
+    setGlassesStatus(status);
+    setLog(JSON.stringify(status, null, 2));
+  }
+
+  async function registerGlasses() {
+    try {
+      const result = await metaWearables.startRegistration();
+      setGlassesStatus(result);
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function captureGlassesPhoto() {
+    try {
+      const result = await metaWearables.capturePhoto();
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function requestGlassesFlashlight() {
+    try {
+      const result = await metaWearables.setFlashlight(true);
+      setLog(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setLog(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
     <View style={styles.app}>
       <View style={styles.header}>
@@ -142,10 +181,18 @@ export default function App() {
           {tab === "home" && (
             <>
               <View style={styles.grid}>
-                <StatusCard label="Glasses" value="SDK gated" tone="warn" detail="Phone-side bridge ready for Meta Wearables events." />
+                <StatusCard label="Glasses" value={String(glassesStatus.state ?? "SDK gated")} tone="warn" detail="Android DAT bridge prepared for Meta Wearables events." />
                 <StatusCard label="Image AI" value="Relay only" tone="good" detail="No face recognition in MountainView AI." />
                 <StatusCard label="Streaming" value="Control ready" detail="Start/stop/overlay triggers are prepared." />
-                <StatusCard label="Flash" value="Not exposed" tone="bad" detail="Waiting on SDK/API support." />
+                <StatusCard label="Flash" value={glassesStatus.flashControlSupported ? "Supported" : "Not exposed"} tone={glassesStatus.flashControlSupported ? "good" : "bad"} detail="Current public DAT docs do not list glasses torch control." />
+              </View>
+              <View style={styles.panel}>
+                <Text style={styles.label}>Meta glasses</Text>
+                <Text style={styles.note}>Android SDK integration is native. Use a dev client build with GITHUB_TOKEN and MOUNTAINVIEW_META_APP_ID configured.</Text>
+                <Pressable style={styles.primaryButton} onPress={checkGlassesSdk}><Text style={styles.primaryButtonText}>SDK status</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={registerGlasses}><Text style={styles.secondaryButtonText}>Register glasses</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={captureGlassesPhoto}><Text style={styles.secondaryButtonText}>Capture glasses photo</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Request flashlight</Text></Pressable>
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Quick commands</Text>

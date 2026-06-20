@@ -14,8 +14,21 @@
     },
     "android": {
       "package": "live.spacemountain.mountainviewai",
-      "permissions": ["CAMERA", "RECORD_AUDIO"]
+      "permissions": ["CAMERA", "RECORD_AUDIO"],
+      "config": {
+        "metaWearablesAndroidAppId": "${MOUNTAINVIEW_META_APP_ID}"
+      }
     },
+    "plugins": [
+      [
+        "./plugins/withMetaWearablesAndroid",
+        {
+          "mwdatVersion": "0.7.0",
+          "applicationId": "${MOUNTAINVIEW_META_APP_ID}",
+          "analyticsOptOut": true
+        }
+      ]
+    ],
     "extra": {
       "mountainViewApiBaseUrl": "https://mtman-machine-rotator.fly.dev/mountainview/api"
     }

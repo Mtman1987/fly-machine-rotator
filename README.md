@@ -173,3 +173,29 @@ fly secrets set \
 ```
 
 Native iOS/Android app source lives in `mobile/`. It is an Expo app that points at the deployed rotator MountainView API by default.
+
+### Android Meta Wearables SDK
+
+The Android app is set up for an Expo Dev Client / prebuild workflow with Meta Wearables Device Access Toolkit dependencies injected by `mobile/plugins/withMetaWearablesAndroid.js`.
+
+Build-time requirements:
+
+- Java/JDK with `JAVA_HOME` set.
+- Android SDK / Android Studio.
+- `GITHUB_TOKEN` with GitHub Packages `read:packages` access, or `github_token=...` in `mobile/android/local.properties` after prebuild.
+- `MOUNTAINVIEW_META_APP_ID` from the Meta Wearables Developer Center.
+
+Android build flow:
+
+```bash
+cd mobile
+npm install
+$env:GITHUB_TOKEN='github_pat_or_classic_token_with_read_packages'
+$env:MOUNTAINVIEW_META_APP_ID='your_meta_wearables_app_id'
+npm run prebuild:android
+npm run android
+```
+
+The config plugin adds the GitHub Packages Maven repository, `mwdat-core`, `mwdat-camera`, and `mwdat-mockdevice`, plus the required Android manifest metadata. The current native bridge exposes SDK status, registration, photo capture, video stream, and flashlight method stubs to JavaScript. The next implementation step is binding those methods to the exact DAT session and camera APIs after Gradle resolves the SDK artifacts locally.
+
+The public DAT Android setup documents video streaming, photo capture, mock device testing, session lifecycle, permissions, and registration. It does not currently document direct glasses flash/torch control, so MountainView keeps the flashlight button but reports that capability as unsupported until Meta exposes an API.
