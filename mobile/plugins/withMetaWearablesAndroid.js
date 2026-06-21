@@ -116,6 +116,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableNativeArray
 import com.facebook.react.bridge.WritableNativeMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import android.Manifest
@@ -130,10 +131,14 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import java.util.Locale
 
 class MountainViewMetaWearablesModule(
@@ -144,7 +149,9 @@ class MountainViewMetaWearablesModule(
   private val mainHandler = Handler(Looper.getMainLooper())
   private val discoveredDevices = linkedMapOf<String, WritableNativeMap>()
   private val researchLog = mutableListOf<String>()
+  private val mediaButtonLog = mutableListOf<String>()
   private var activeGatt: BluetoothGatt? = null
+  private var mediaSession: MediaSession? = null
 
   override fun getName(): String = "MountainViewMetaWearables"
 
@@ -163,6 +170,94 @@ class MountainViewMetaWearablesModule(
     result.putString("rdGlassVersionObserved", "1.2.6")
     result.putString("rdGlassAudioHint", "16 kHz mono PCM voice events were observed in the exported RDGlass assets.")
     result.putString("genericBleHint", "Look for AiMB/RDGlass/MA08/MA15 devices and Nordic UART-like UUIDs 6E40AB01/02/03-B5A3-F393-E0A9-E50E24DCCA9E.")
+    result.putBoolean("mediaButtonCommandModeSupported", true)
+    result.putString("mediaButtonNote", "Glasses media/headset buttons can be captured while MountainView command mode owns an Android MediaSession.")
+    promise.resolve(result)
+  }
+
+  @ReactMethod
+  fun addListener(eventName: String) {
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Int) {
+  }
+
+  @ReactMethod
+  fun startMediaButtonCommandMode(promise: Promise) {
+    try {
+      val session = mediaSession ?: MediaSession(reactContext, "MountainViewAiGlassesCommand").also { mediaSession = it }
+      session.setCallback(object : MediaSession.Callback() {
+        override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
+          val keyEvent = if (Build.VERSION.SDK_INT >= 33) {
+            mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+          } else {
+            @Suppress("DEPRECATION")
+            mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+          }
+          if (keyEvent != null) {
+            recordMediaButton("media-button", keyEvent.keyCode, keyEvent.action, keyEvent.repeatCount)
+          }
+          return true
+        }
+
+        override fun onPlay() {
+          recordMediaButton("media-session-play", KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.ACTION_DOWN, 0)
+        }
+
+        override fun onPause() {
+          recordMediaButton("media-session-pause", KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.ACTION_DOWN, 0)
+        }
+
+        override fun onSkipToNext() {
+          recordMediaButton("media-session-next", KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_DOWN, 0)
+        }
+
+        override fun onSkipToPrevious() {
+          recordMediaButton("media-session-previous", KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.ACTION_DOWN, 0)
+        }
+      })
+      session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+      session.setPlaybackState(
+        PlaybackState.Builder()
+          .setActions(
+            PlaybackState.ACTION_PLAY or
+              PlaybackState.ACTION_PAUSE or
+              PlaybackState.ACTION_PLAY_PAUSE or
+              PlaybackState.ACTION_SKIP_TO_NEXT or
+              PlaybackState.ACTION_SKIP_TO_PREVIOUS
+          )
+          .setState(PlaybackState.STATE_PLAYING, 0L, 1.0f)
+          .build()
+      )
+      session.isActive = true
+      appendMediaButtonLog("command mode active")
+      val result = WritableNativeMap()
+      result.putBoolean("androidNativeBridge", true)
+      result.putString("state", "media-button-command-mode-active")
+      result.putString("note", "Press play/pause or headset buttons on the glasses while MountainView is active. Events are logged and emitted to React Native.")
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("MEDIA_BUTTON_MODE_FAILED", error.message ?: "Could not start media button command mode.")
+    }
+  }
+
+  @ReactMethod
+  fun stopMediaButtonCommandMode(promise: Promise) {
+    mediaSession?.isActive = false
+    appendMediaButtonLog("command mode inactive")
+    val result = WritableNativeMap()
+    result.putBoolean("androidNativeBridge", true)
+    result.putString("state", "media-button-command-mode-inactive")
+    promise.resolve(result)
+  }
+
+  @ReactMethod
+  fun getMediaButtonLog(promise: Promise) {
+    val result = WritableNativeMap()
+    result.putBoolean("androidNativeBridge", true)
+    result.putString("state", "media-button-log")
+    result.putArray("entries", stringArray(mediaButtonLog.takeLast(160)))
     promise.resolve(result)
   }
 
@@ -445,6 +540,27 @@ class MountainViewMetaWearablesModule(
   private fun appendResearchLog(message: String) {
     researchLog.add(System.currentTimeMillis().toString() + " " + message)
     if (researchLog.size > 300) researchLog.removeAt(0)
+  }
+
+  private fun recordMediaButton(source: String, keyCode: Int, action: Int, repeatCount: Int) {
+    val keyName = KeyEvent.keyCodeToString(keyCode)
+    appendMediaButtonLog(source + " " + keyName + " action " + action + " repeat " + repeatCount)
+    if (action != KeyEvent.ACTION_DOWN || repeatCount > 0) return
+    val event = WritableNativeMap()
+    event.putString("source", source)
+    event.putString("keyName", keyName)
+    event.putInt("keyCode", keyCode)
+    event.putInt("action", action)
+    event.putInt("repeatCount", repeatCount)
+    event.putDouble("timestamp", System.currentTimeMillis().toDouble())
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit("MountainViewMediaButton", event)
+  }
+
+  private fun appendMediaButtonLog(message: String) {
+    mediaButtonLog.add(System.currentTimeMillis().toString() + " " + message)
+    if (mediaButtonLog.size > 300) mediaButtonLog.removeAt(0)
   }
 
   private fun mapValues(values: List<WritableNativeMap>): WritableNativeArray {

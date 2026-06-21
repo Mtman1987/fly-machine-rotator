@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from "react-native";
+import { EmitterSubscription, NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 type MetaWearablesModule = {
   getSdkStatus(): Promise<Record<string, unknown>>;
@@ -13,10 +13,14 @@ type MetaWearablesModule = {
   connectGenericBleDevice(address: string): Promise<Record<string, unknown>>;
   discoverGenericBleServices(): Promise<Record<string, unknown>>;
   getGenericBleLog(): Promise<Record<string, unknown>>;
+  startMediaButtonCommandMode(): Promise<Record<string, unknown>>;
+  stopMediaButtonCommandMode(): Promise<Record<string, unknown>>;
+  getMediaButtonLog(): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
 };
 
 const nativeModule = NativeModules.MountainViewMetaWearables as MetaWearablesModule | undefined;
+const nativeEvents = nativeModule ? new NativeEventEmitter(NativeModules.MountainViewMetaWearables) : undefined;
 
 function unavailable(method: string): Promise<Record<string, unknown>> {
   return Promise.resolve({
@@ -41,5 +45,12 @@ export const metaWearables: MetaWearablesModule = {
   connectGenericBleDevice: (address: string) => nativeModule?.connectGenericBleDevice?.(address) ?? unavailable(`connectGenericBleDevice:${address}`),
   discoverGenericBleServices: () => nativeModule?.discoverGenericBleServices?.() ?? unavailable("discoverGenericBleServices"),
   getGenericBleLog: () => nativeModule?.getGenericBleLog?.() ?? unavailable("getGenericBleLog"),
+  startMediaButtonCommandMode: () => nativeModule?.startMediaButtonCommandMode?.() ?? unavailable("startMediaButtonCommandMode"),
+  stopMediaButtonCommandMode: () => nativeModule?.stopMediaButtonCommandMode?.() ?? unavailable("stopMediaButtonCommandMode"),
+  getMediaButtonLog: () => nativeModule?.getMediaButtonLog?.() ?? unavailable("getMediaButtonLog"),
   setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
 };
+
+export function addMediaButtonListener(listener: (event: Record<string, unknown>) => void): EmitterSubscription | { remove: () => void } {
+  return nativeEvents?.addListener("MountainViewMediaButton", listener) ?? { remove: () => undefined };
+}

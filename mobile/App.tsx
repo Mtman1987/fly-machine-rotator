@@ -3,9 +3,9 @@ import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
 import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { metaWearables } from "./src/metaWearables";
+import { addMediaButtonListener, metaWearables } from "./src/metaWearables";
 
 type Command = {
   id: string;
@@ -99,10 +99,15 @@ export default function App() {
   const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
   const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
   const [bleDevices, setBleDevices] = useState<BleScanDevice[]>([]);
+  const [mediaCommandMode, setMediaCommandMode] = useState(false);
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
   });
+  const mediaCommandModeRef = useRef(false);
+  const tokenRef = useRef("");
+  const voicePromptRef = useRef(voicePrompt);
+  const lastMediaTriggerRef = useRef(0);
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -126,6 +131,25 @@ export default function App() {
         void load(stored);
       }
     });
+  }, []);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  useEffect(() => {
+    mediaCommandModeRef.current = mediaCommandMode;
+  }, [mediaCommandMode]);
+
+  useEffect(() => {
+    voicePromptRef.current = voicePrompt;
+  }, [voicePrompt]);
+
+  useEffect(() => {
+    const subscription = addMediaButtonListener((event) => {
+      void handleMediaButtonEvent(event);
+    });
+    return () => subscription.remove();
   }, []);
 
   async function request(path: string, options: RequestInit = {}, authToken = token) {
@@ -202,6 +226,86 @@ export default function App() {
       Speech.speak(data.ok ? "Command sent." : "Command failed.");
     } catch (error) {
       reportError("Command", error);
+    }
+  }
+
+  async function trackMobileEvent(kind: string, metadata: Record<string, unknown>, status = "captured") {
+    if (!tokenRef.current) return;
+    try {
+      await request("/glasses/media-event", {
+        method: "POST",
+        body: JSON.stringify({
+          kind,
+          source: "mountainview-mobile",
+          targetApp: "streamweaver",
+          status,
+          metadata: {
+            capturedAt: new Date().toISOString(),
+            ...metadata
+          }
+        })
+      }, tokenRef.current);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLog((current) => `${current}\nTelemetry save failed: ${message}`);
+    }
+  }
+
+  async function handleMediaButtonEvent(event: Record<string, unknown>) {
+    const keyName = String(event.keyName ?? "UNKNOWN_BUTTON");
+    const now = Date.now();
+    const triggerKeys = new Set([
+      "KEYCODE_MEDIA_PLAY_PAUSE",
+      "KEYCODE_MEDIA_PLAY",
+      "KEYCODE_MEDIA_PAUSE",
+      "KEYCODE_HEADSETHOOK",
+      "KEYCODE_MEDIA_NEXT",
+      "KEYCODE_MEDIA_PREVIOUS"
+    ]);
+    setLog((current) => `Glasses button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
+    await trackMobileEvent("media-button", { event, commandMode: mediaCommandModeRef.current }, mediaCommandModeRef.current ? "command-mode" : "observed");
+    if (!mediaCommandModeRef.current || !triggerKeys.has(keyName)) return;
+    if (now - lastMediaTriggerRef.current < 1500) return;
+    lastMediaTriggerRef.current = now;
+    setStatusMessage(`${keyName.replace("KEYCODE_", "")} captured. Asking Athena through StreamWeaver...`);
+    await runCommand("cmd_streamweaver_voice_commander", `Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`);
+  }
+
+  async function startMediaButtonCommandMode() {
+    try {
+      announce("Starting glasses media button command mode...");
+      const result = await metaWearables.startMediaButtonCommandMode();
+      setMediaCommandMode(true);
+      setLog(JSON.stringify(result, null, 2));
+      await trackMobileEvent("media-button-command-mode", result, "active");
+      setStatusMessage("Command mode active. Press the glasses play/pause button to talk to Athena.");
+    } catch (error) {
+      reportError("Media button command mode", error);
+    }
+  }
+
+  async function stopMediaButtonCommandMode() {
+    try {
+      announce("Stopping glasses media button command mode...");
+      const result = await metaWearables.stopMediaButtonCommandMode();
+      setMediaCommandMode(false);
+      setLog(JSON.stringify(result, null, 2));
+      await trackMobileEvent("media-button-command-mode", result, "inactive");
+      setStatusMessage("Command mode stopped.");
+    } catch (error) {
+      reportError("Stop command mode", error);
+    }
+  }
+
+  async function loadMediaButtonLog() {
+    try {
+      announce("Loading glasses media button log...");
+      const result = await metaWearables.getMediaButtonLog();
+      setLog(JSON.stringify(result, null, 2));
+      await trackMobileEvent("media-button-log", result, "loaded");
+      setStatusMessage("Media button log loaded.");
+    } catch (error) {
+      reportError("Media button log", error);
     }
   }
 
@@ -608,6 +712,10 @@ export default function App() {
                   ))}
                 </View>
                 <Pressable style={styles.primaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.primaryButtonText}>Ask StreamWeaver AI</Text></Pressable>
+                <Pressable style={mediaCommandMode ? styles.dangerButton : styles.primaryButton} onPress={mediaCommandMode ? stopMediaButtonCommandMode : startMediaButtonCommandMode}>
+                  <Text style={mediaCommandMode ? styles.dangerButtonText : styles.primaryButtonText}>{mediaCommandMode ? "Stop glasses command mode" : "Start glasses command mode"}</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryButton} onPress={loadMediaButtonLog}><Text style={styles.secondaryButtonText}>Load glasses button log</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={requestVoiceWakePermissions}><Text style={styles.secondaryButtonText}>Request wake permissions</Text></Pressable>
               </View>
               <View style={styles.panel}>
@@ -830,6 +938,8 @@ const styles = StyleSheet.create({
   textArea: { minHeight: 110, textAlignVertical: "top" },
   primaryButton: { backgroundColor: "#20d5ff", borderRadius: 8, padding: 12, alignItems: "center" },
   primaryButtonText: { color: "#00131a", fontWeight: "900" },
+  dangerButton: { backgroundColor: "#ff6b8a", borderRadius: 8, padding: 12, alignItems: "center" },
+  dangerButtonText: { color: "#1f0610", fontWeight: "900" },
   secondaryButton: { borderRadius: 8, padding: 12, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,.14)" },
   secondaryButtonText: { color: "#f8fbff", fontWeight: "800" },
   commandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", marginTop: 8 },
