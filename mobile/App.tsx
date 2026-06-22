@@ -248,10 +248,12 @@ export default function App() {
             transcript: message,
             destination,
             wakeWord: message.toLowerCase().startsWith("hey annie") ? "hey annie" : "hey athena",
+            tenantId: "94371378",
             username: "mtman1987",
+            channel: "mtman1987",
             source: "mountainview-mobile",
             dispatch: destination === "twitch",
-            payload: { message, transcript: message, destination, dispatch: destination === "twitch", source: "mountainview-mobile" }
+            payload: { message, transcript: message, destination, tenantId: "94371378", username: "mtman1987", channel: "mtman1987", dispatch: destination === "twitch", source: "mountainview-mobile" }
           }
         })
       });

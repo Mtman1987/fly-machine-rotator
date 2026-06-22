@@ -7,6 +7,9 @@ import { IncomingMessage, ServerResponse } from "node:http";
 
 type JsonRecord = Record<string, unknown>;
 
+const DEFAULT_STREAMWEAVER_TENANT_ID = "94371378";
+const DEFAULT_STREAMWEAVER_USERNAME = "mtman1987";
+
 type MountainViewConfig = {
   services: Array<{
     id: string;
@@ -331,10 +334,11 @@ class MountainViewContext {
       .get(commandId, userId) as JsonRecord | undefined;
     if (!command) throw new HttpError(404, "Command not found.");
     if (Number(command.enabled) !== 1) throw new HttpError(400, "Command is disabled.");
+    const effectivePayload = withCommandDefaults(commandId, payload);
     const integration = this.getIntegration(String(command.app_id));
-    const url = new URL(renderTemplate(String(command.url_template), payload), integration.baseUrl).toString();
+    const url = new URL(renderTemplate(String(command.url_template), effectivePayload), integration.baseUrl).toString();
     const method = String(command.method);
-    const bodyPayload = renderJsonTemplate(String(command.payload_template ?? "{}"), payload);
+    const bodyPayload = renderJsonTemplate(String(command.payload_template ?? "{}"), effectivePayload);
     const started = Date.now();
     const retries = Math.max(0, Number(command.retry_count ?? 1));
     let lastError = "";
@@ -947,6 +951,26 @@ function readBody(request: IncomingMessage, limit: number): Promise<string> {
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord {
+  if (commandId !== "cmd_streamweaver_voice_commander") return payload;
+  const nestedPayload = asRecord(payload.payload);
+  const tenantId = String(payload.tenantId || nestedPayload.tenantId || DEFAULT_STREAMWEAVER_TENANT_ID);
+  const username = String(payload.username || nestedPayload.username || DEFAULT_STREAMWEAVER_USERNAME);
+  const channel = String(payload.channel || nestedPayload.channel || username);
+  return {
+    ...payload,
+    tenantId,
+    username,
+    channel,
+    payload: {
+      ...nestedPayload,
+      tenantId,
+      username,
+      channel
+    }
+  };
 }
 
 function normalizeRow(row: JsonRecord): JsonRecord {
