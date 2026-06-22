@@ -12,6 +12,7 @@ type MetaWearablesModule = {
   getBondedBluetoothDevices(): Promise<Record<string, unknown>>;
   connectGenericBleDevice(address: string): Promise<Record<string, unknown>>;
   discoverGenericBleServices(): Promise<Record<string, unknown>>;
+  subscribeGenericBleNotifications(): Promise<Record<string, unknown>>;
   getGenericBleLog(): Promise<Record<string, unknown>>;
   startMediaButtonCommandMode(): Promise<Record<string, unknown>>;
   stopMediaButtonCommandMode(): Promise<Record<string, unknown>>;
@@ -45,6 +46,7 @@ export const metaWearables: MetaWearablesModule = {
   getBondedBluetoothDevices: () => nativeModule?.getBondedBluetoothDevices?.() ?? unavailable("getBondedBluetoothDevices"),
   connectGenericBleDevice: (address: string) => nativeModule?.connectGenericBleDevice?.(address) ?? unavailable(`connectGenericBleDevice:${address}`),
   discoverGenericBleServices: () => nativeModule?.discoverGenericBleServices?.() ?? unavailable("discoverGenericBleServices"),
+  subscribeGenericBleNotifications: () => nativeModule?.subscribeGenericBleNotifications?.() ?? unavailable("subscribeGenericBleNotifications"),
   getGenericBleLog: () => nativeModule?.getGenericBleLog?.() ?? unavailable("getGenericBleLog"),
   startMediaButtonCommandMode: () => nativeModule?.startMediaButtonCommandMode?.() ?? unavailable("startMediaButtonCommandMode"),
   stopMediaButtonCommandMode: () => nativeModule?.stopMediaButtonCommandMode?.() ?? unavailable("stopMediaButtonCommandMode"),

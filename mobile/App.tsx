@@ -561,6 +561,17 @@ export default function App() {
     }
   }
 
+  async function subscribeGenericBleNotifications() {
+    try {
+      announce("Subscribing to BLE button/audio notifications...");
+      const result = await metaWearables.subscribeGenericBleNotifications();
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage("BLE notifications subscribed. Press the glasses AI/talk button, then load the BLE log.");
+    } catch (error) {
+      reportError("BLE notification subscribe", error);
+    }
+  }
+
   async function loadGenericBleLog() {
     try {
       announce("Loading BLE research log...");
@@ -819,6 +830,7 @@ export default function App() {
                 <Pressable style={styles.secondaryButton} onPress={loadBondedBluetoothDevices}><Text style={styles.secondaryButtonText}>Load paired Bluetooth devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={scanGenericBleDevices}><Text style={styles.secondaryButtonText}>Scan nearby BLE devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={discoverGenericBleServices}><Text style={styles.secondaryButtonText}>Discover connected services</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={subscribeGenericBleNotifications}><Text style={styles.secondaryButtonText}>Subscribe BLE notifications</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={loadGenericBleLog}><Text style={styles.secondaryButtonText}>Load BLE research log</Text></Pressable>
                 <View style={styles.hintBox}>
                   <Text style={styles.memoryBody}>Known UUID leads: 6E40AB01/02/03-B5A3-F393-E0A9-E50E24DCCA9E, 0000FFD0-FFD8, 0000FFF1/FFF2/FFF3/FFF6, battery/device/HID services.</Text>
