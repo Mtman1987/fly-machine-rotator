@@ -102,6 +102,7 @@ export default function App() {
   const [mediaCommandMode, setMediaCommandMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [wakeListenerActive, setWakeListenerActive] = useState(false);
+  const [streamCommandListenerActive, setStreamCommandListenerActive] = useState(false);
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -111,6 +112,7 @@ export default function App() {
   const voicePromptRef = useRef(voicePrompt);
   const lastMediaTriggerRef = useRef(0);
   const wakeListenerActiveRef = useRef(false);
+  const streamCommandListenerActiveRef = useRef(false);
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -225,7 +227,7 @@ export default function App() {
     setStatusMessage("Dashboard data loaded.");
   }
 
-  async function runCommand(commandId: string, message = "MountainView mobile trigger") {
+  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination = voiceDestination) {
     try {
       announce(`Sending command ${commandId}...`);
       const command = commandMap.get(commandId);
@@ -236,11 +238,12 @@ export default function App() {
           payload: {
             message,
             transcript: message,
-            destination: voiceDestination,
+            destination,
             wakeWord: message.toLowerCase().startsWith("hey annie") ? "hey annie" : "hey athena",
             username: "mtman1987",
             source: "mountainview-mobile",
-            payload: { message, transcript: message, destination: voiceDestination, source: "mountainview-mobile" }
+            dispatch: destination === "twitch",
+            payload: { message, transcript: message, destination, dispatch: destination === "twitch", source: "mountainview-mobile" }
           }
         })
       });
@@ -638,6 +641,44 @@ export default function App() {
     setIsListening(false);
   }
 
+  async function startStreamWeaverCommandListener() {
+    if (streamCommandListenerActiveRef.current) return;
+    streamCommandListenerActiveRef.current = true;
+    setStreamCommandListenerActive(true);
+    setStatusMessage("StreamWeaver command listener active. Spoken phrases will be routed like trusted stream commands.");
+    setLog("StreamWeaver command listener active. Try: be right back, !brb, shoutout mtman, or Athena plus a question.");
+
+    while (streamCommandListenerActiveRef.current) {
+      try {
+        setIsListening(true);
+        const speech = await metaWearables.recognizeSpeechOnce();
+        const transcript = String(speech.transcript ?? "").trim();
+        if (transcript) {
+          setVoicePrompt(transcript);
+          await trackMobileEvent("streamweaver-command-listener-speech", speech, "recognized");
+          setStatusMessage(`Sending spoken command: ${transcript}`);
+          await runCommand("cmd_streamweaver_voice_commander", transcript, "twitch");
+        } else {
+          setStatusMessage("StreamWeaver command listener active...");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLog((current) => `StreamWeaver command listener cycle failed: ${message}\n${current}`);
+        setStatusMessage("StreamWeaver command listener still active; retrying...");
+      } finally {
+        setIsListening(false);
+      }
+      await delay(800);
+    }
+    setStatusMessage("StreamWeaver command listener stopped.");
+  }
+
+  function stopStreamWeaverCommandListener() {
+    streamCommandListenerActiveRef.current = false;
+    setStreamCommandListenerActive(false);
+    setIsListening(false);
+  }
+
   async function saveDevice() {
     try {
       announce("Registering companion device...");
@@ -808,6 +849,9 @@ export default function App() {
                 </Pressable>
                 <Pressable style={wakeListenerActive ? styles.dangerButton : styles.primaryButton} onPress={wakeListenerActive ? stopWakeListener : startWakeListener}>
                   <Text style={wakeListenerActive ? styles.dangerButtonText : styles.primaryButtonText}>{wakeListenerActive ? "Stop Hey Athena listener" : "Start Hey Athena listener"}</Text>
+                </Pressable>
+                <Pressable style={streamCommandListenerActive ? styles.dangerButton : styles.primaryButton} onPress={streamCommandListenerActive ? stopStreamWeaverCommandListener : startStreamWeaverCommandListener}>
+                  <Text style={streamCommandListenerActive ? styles.dangerButtonText : styles.primaryButtonText}>{streamCommandListenerActive ? "Stop StreamWeaver command listener" : "Start StreamWeaver command listener"}</Text>
                 </Pressable>
                 <Pressable style={mediaCommandMode ? styles.dangerButton : styles.primaryButton} onPress={mediaCommandMode ? stopMediaButtonCommandMode : startMediaButtonCommandMode}>
                   <Text style={mediaCommandMode ? styles.dangerButtonText : styles.primaryButtonText}>{mediaCommandMode ? "Stop glasses command mode" : "Start glasses command mode"}</Text>
