@@ -246,6 +246,14 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function playTone(name: string) {
+    try {
+      await metaWearables.playTone(name);
+    } catch {
+      // Tone feedback is best-effort; command flow should keep working without it.
+    }
+  }
+
   function speakText(text: string) {
     return new Promise<void>((resolve) => {
       const spokenText = text.trim();
@@ -338,6 +346,8 @@ export default function App() {
       setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
       setStatusMessage(`${command?.name ?? commandId} sent.`);
       const reply = commandReplyText(data);
+      if (data.command) await playTone("command");
+      else if (data.dispatched) await playTone("dispatch");
       if (options.speakReply ?? true) {
         await speakText(reply || (data.ok ? "Command sent." : "Command failed."));
       }
@@ -475,6 +485,7 @@ export default function App() {
     lastBleAiTriggerRef.current = now;
     if (action === "ai-talk-long-start") {
       setStatusMessage("Glasses long press captured. Toggling StreamWeaver command gate...");
+      if (voiceMode === "reply") setVoiceMode("dictation");
       if (streamCommandListenerActiveRef.current) stopStreamWeaverCommandListener();
       else void startStreamWeaverCommandListener();
       return;
@@ -772,14 +783,17 @@ export default function App() {
     try {
       setIsListening(true);
       announce("Listening for Athena command...");
+      await playTone("listen");
       const speech = await metaWearables.recognizeSpeechOnce();
       setLog(JSON.stringify(speech, null, 2));
       const transcript = String(speech.transcript ?? "").trim();
       if (!transcript) {
         setStatusMessage("No speech recognized. Sending the typed prompt instead.");
+        await playTone("stop");
         await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt);
         return;
       }
+      await playTone("capture");
       setVoicePrompt(transcript);
       await trackMobileEvent("speech-recognition", speech, "recognized");
       await runCommand("cmd_streamweaver_voice_commander", transcript);
@@ -805,13 +819,16 @@ export default function App() {
         setIsListening(true);
         const pauseHint = turns === 0 ? "Listening for your first message..." : "Listening for your reply...";
         setStatusMessage(pauseHint);
+        await playTone(turns === 0 ? "listen" : "ready");
         const speech = await metaWearables.recognizeSpeechOnce();
         const transcript = String(speech.transcript ?? "").trim();
         setLog((current) => `Reply loop turn ${turns + 1}\n${JSON.stringify(speech, null, 2)}\n\n${current}`);
         if (!transcript) {
           setStatusMessage(turns === 0 ? "No speech recognized. Reply loop stopped." : "No reply heard. Reply loop stopped.");
+          await playTone("stop");
           break;
         }
+        await playTone("capture");
         setVoicePrompt(transcript);
         await trackMobileEvent("reply-loop-speech", { source, turn: turns + 1, ...speech }, "recognized");
         setStatusMessage("Sending to Athena...");
@@ -819,6 +836,7 @@ export default function App() {
         turns += 1;
         if (!replyLoopActiveRef.current) break;
         setStatusMessage("Athena finished. Reply when ready, or stay quiet to stop.");
+        await playTone("ready");
         await delay(turns === 1 ? 1200 : 2200);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -840,6 +858,7 @@ export default function App() {
     setReplyLoopActive(false);
     setIsListening(false);
     Speech.stop();
+    void playTone("stop");
     setStatusMessage("Reply loop stopped.");
   }
 
@@ -856,6 +875,7 @@ export default function App() {
         const speech = await metaWearables.recognizeSpeechOnce();
         const transcript = String(speech.transcript ?? "").trim();
         if (transcript) {
+          await playTone("capture");
           setVoicePrompt(transcript);
           await trackMobileEvent("wake-listener-speech", speech, "recognized");
           const command = wakeCommandFromTranscript(transcript);
@@ -896,9 +916,11 @@ export default function App() {
     while (streamCommandListenerActiveRef.current) {
       try {
         setIsListening(true);
+        await playTone("listen");
         const speech = await metaWearables.recognizeSpeechOnce();
         const transcript = String(speech.transcript ?? "").trim();
         if (transcript) {
+          await playTone("capture");
           setVoicePrompt(transcript);
           await trackMobileEvent("streamweaver-command-listener-speech", speech, "recognized");
           setStatusMessage(`Sending spoken command: ${transcript}`);

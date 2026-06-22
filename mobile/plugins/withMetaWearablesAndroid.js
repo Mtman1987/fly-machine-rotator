@@ -134,8 +134,10 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -165,6 +167,35 @@ class MountainViewMetaWearablesModule(
   private var descriptorWriteInFlight = false
 
   override fun getName(): String = "MountainViewMetaWearables"
+
+  @ReactMethod
+  fun playTone(name: String, promise: Promise) {
+    try {
+      val tone = when (name.lowercase(Locale.US)) {
+        "listen" -> ToneGenerator.TONE_PROP_BEEP
+        "capture" -> ToneGenerator.TONE_PROP_ACK
+        "ready" -> ToneGenerator.TONE_PROP_PROMPT
+        "command" -> ToneGenerator.TONE_PROP_BEEP2
+        "dispatch" -> ToneGenerator.TONE_PROP_ACK
+        "stop" -> ToneGenerator.TONE_PROP_NACK
+        else -> ToneGenerator.TONE_PROP_BEEP
+      }
+      val durationMs = when (name.lowercase(Locale.US)) {
+        "ready" -> 180
+        "stop" -> 160
+        else -> 120
+      }
+      val generator = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+      generator.startTone(tone, durationMs)
+      mainHandler.postDelayed({ generator.release() }, (durationMs + 80).toLong())
+      val result = WritableNativeMap()
+      result.putString("state", "played")
+      result.putString("tone", name)
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("MW_TONE_FAILED", error.message, error)
+    }
+  }
 
   @ReactMethod
   fun getSdkStatus(promise: Promise) {
