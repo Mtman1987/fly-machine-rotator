@@ -138,6 +138,10 @@ import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.view.KeyEvent
 import java.util.Locale
 
@@ -152,6 +156,8 @@ class MountainViewMetaWearablesModule(
   private val mediaButtonLog = mutableListOf<String>()
   private var activeGatt: BluetoothGatt? = null
   private var mediaSession: MediaSession? = null
+  private var speechRecognizer: SpeechRecognizer? = null
+  private var speechPromise: Promise? = null
 
   override fun getName(): String = "MountainViewMetaWearables"
 
@@ -264,6 +270,78 @@ class MountainViewMetaWearablesModule(
   @ReactMethod
   fun requestVoiceWakePermissions(promise: Promise) {
     requestPermissions(promise, "voice", voicePermissions())
+  }
+
+  @ReactMethod
+  fun recognizeSpeechOnce(promise: Promise) {
+    if (reactContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+      promise.reject("VOICE_PERMISSION_REQUIRED", "Grant microphone permission before speech recognition.")
+      return
+    }
+    if (!SpeechRecognizer.isRecognitionAvailable(reactContext)) {
+      promise.reject("SPEECH_RECOGNIZER_UNAVAILABLE", "Android speech recognition is not available on this device.")
+      return
+    }
+    if (speechPromise != null) {
+      promise.reject("SPEECH_RECOGNITION_ACTIVE", "Speech recognition is already active.")
+      return
+    }
+    speechPromise = promise
+    mainHandler.post {
+      try {
+        val recognizer = speechRecognizer ?: SpeechRecognizer.createSpeechRecognizer(reactContext).also { speechRecognizer = it }
+        recognizer.setRecognitionListener(object : RecognitionListener {
+          override fun onReadyForSpeech(params: Bundle?) {
+            appendMediaButtonLog("speech ready")
+          }
+
+          override fun onBeginningOfSpeech() {
+            appendMediaButtonLog("speech started")
+          }
+
+          override fun onRmsChanged(rmsdB: Float) {}
+          override fun onBufferReceived(buffer: ByteArray?) {}
+
+          override fun onEndOfSpeech() {
+            appendMediaButtonLog("speech ended")
+          }
+
+          override fun onError(error: Int) {
+            val result = WritableNativeMap()
+            result.putBoolean("androidNativeBridge", true)
+            result.putString("state", "speech-error")
+            result.putInt("errorCode", error)
+            result.putString("error", speechErrorName(error))
+            appendMediaButtonLog("speech error " + speechErrorName(error))
+            speechPromise?.resolve(result)
+            speechPromise = null
+          }
+
+          override fun onResults(results: Bundle?) {
+            resolveSpeechResults("speech-result", results)
+          }
+
+          override fun onPartialResults(partialResults: Bundle?) {
+            appendMediaButtonLog("speech partial")
+          }
+
+          override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+          putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+          putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Athena")
+        }
+        appendMediaButtonLog("speech listening")
+        recognizer.startListening(intent)
+      } catch (error: Exception) {
+        val pending = speechPromise
+        speechPromise = null
+        pending?.reject("SPEECH_RECOGNITION_FAILED", error.message ?: "Speech recognition failed.")
+      }
+    }
   }
 
   @ReactMethod
@@ -556,6 +634,35 @@ class MountainViewMetaWearablesModule(
     reactContext
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
       .emit("MountainViewMediaButton", event)
+  }
+
+  private fun resolveSpeechResults(state: String, results: Bundle?) {
+    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
+    val array = WritableNativeArray()
+    matches.forEach { array.pushString(it) }
+    val result = WritableNativeMap()
+    result.putBoolean("androidNativeBridge", true)
+    result.putString("state", state)
+    result.putString("transcript", matches.firstOrNull() ?: "")
+    result.putArray("matches", array)
+    appendMediaButtonLog("speech result " + (matches.firstOrNull() ?: "empty"))
+    speechPromise?.resolve(result)
+    speechPromise = null
+  }
+
+  private fun speechErrorName(error: Int): String {
+    return when (error) {
+      SpeechRecognizer.ERROR_AUDIO -> "audio"
+      SpeechRecognizer.ERROR_CLIENT -> "client"
+      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "insufficient-permissions"
+      SpeechRecognizer.ERROR_NETWORK -> "network"
+      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "network-timeout"
+      SpeechRecognizer.ERROR_NO_MATCH -> "no-match"
+      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "recognizer-busy"
+      SpeechRecognizer.ERROR_SERVER -> "server"
+      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "speech-timeout"
+      else -> "unknown-" + error
+    }
   }
 
   private fun appendMediaButtonLog(message: String) {

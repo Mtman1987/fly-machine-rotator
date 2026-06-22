@@ -16,6 +16,7 @@ type MetaWearablesModule = {
   startMediaButtonCommandMode(): Promise<Record<string, unknown>>;
   stopMediaButtonCommandMode(): Promise<Record<string, unknown>>;
   getMediaButtonLog(): Promise<Record<string, unknown>>;
+  recognizeSpeechOnce(): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
 };
 
@@ -48,6 +49,7 @@ export const metaWearables: MetaWearablesModule = {
   startMediaButtonCommandMode: () => nativeModule?.startMediaButtonCommandMode?.() ?? unavailable("startMediaButtonCommandMode"),
   stopMediaButtonCommandMode: () => nativeModule?.stopMediaButtonCommandMode?.() ?? unavailable("stopMediaButtonCommandMode"),
   getMediaButtonLog: () => nativeModule?.getMediaButtonLog?.() ?? unavailable("getMediaButtonLog"),
+  recognizeSpeechOnce: () => nativeModule?.recognizeSpeechOnce?.() ?? unavailable("recognizeSpeechOnce"),
   setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
 };
 

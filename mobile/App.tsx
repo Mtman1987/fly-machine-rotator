@@ -100,6 +100,8 @@ export default function App() {
   const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
   const [bleDevices, setBleDevices] = useState<BleScanDevice[]>([]);
   const [mediaCommandMode, setMediaCommandMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [wakeListenerActive, setWakeListenerActive] = useState(false);
   const [glassesStatus, setGlassesStatus] = useState<Record<string, unknown>>({
     state: "not checked",
     flashControlSupported: false
@@ -108,6 +110,7 @@ export default function App() {
   const tokenRef = useRef("");
   const voicePromptRef = useRef(voicePrompt);
   const lastMediaTriggerRef = useRef(0);
+  const wakeListenerActiveRef = useRef(false);
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -146,6 +149,10 @@ export default function App() {
   }, [voicePrompt]);
 
   useEffect(() => {
+    wakeListenerActiveRef.current = wakeListenerActive;
+  }, [wakeListenerActive]);
+
+  useEffect(() => {
     const subscription = addMediaButtonListener((event) => {
       void handleMediaButtonEvent(event);
     });
@@ -170,6 +177,22 @@ export default function App() {
     }
     if (!response.ok || data.error) throw new Error(data.error ?? "Request failed");
     return data;
+  }
+
+  function commandReplyText(data: Record<string, any>) {
+    const reply = data.response?.response ?? data.response?.message ?? data.response?.reply ?? data.response;
+    return typeof reply === "string" && reply.trim() ? reply.trim() : "";
+  }
+
+  function wakeCommandFromTranscript(transcript: string) {
+    const normalized = transcript.trim();
+    const match = normalized.match(/\b(?:hey\s+)?(?:athena|annie)\b[:,]?\s*(.*)$/i);
+    if (!match) return "";
+    return match[1]?.trim() || normalized;
+  }
+
+  function delay(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async function login() {
@@ -223,9 +246,12 @@ export default function App() {
       });
       setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
       setStatusMessage(`${command?.name ?? commandId} sent.`);
-      Speech.speak(data.ok ? "Command sent." : "Command failed.");
+      const reply = commandReplyText(data);
+      Speech.speak(reply || (data.ok ? "Command sent." : "Command failed."));
+      return data;
     } catch (error) {
       reportError("Command", error);
+      return undefined;
     }
   }
 
@@ -267,8 +293,8 @@ export default function App() {
     if (!mediaCommandModeRef.current || !triggerKeys.has(keyName)) return;
     if (now - lastMediaTriggerRef.current < 1500) return;
     lastMediaTriggerRef.current = now;
-    setStatusMessage(`${keyName.replace("KEYCODE_", "")} captured. Asking Athena through StreamWeaver...`);
-    await runCommand("cmd_streamweaver_voice_commander", `Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`);
+    setStatusMessage(`${keyName.replace("KEYCODE_", "")} captured. Listening for Athena command...`);
+    await listenAndRunVoiceCommander(`Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`);
   }
 
   async function startMediaButtonCommandMode() {
@@ -547,6 +573,71 @@ export default function App() {
     await runCommand("cmd_streamweaver_voice_commander", voicePrompt);
   }
 
+  async function listenAndRunVoiceCommander(fallbackPrompt = voicePrompt) {
+    try {
+      setIsListening(true);
+      announce("Listening for Athena command...");
+      const speech = await metaWearables.recognizeSpeechOnce();
+      setLog(JSON.stringify(speech, null, 2));
+      const transcript = String(speech.transcript ?? "").trim();
+      if (!transcript) {
+        setStatusMessage("No speech recognized. Sending the typed prompt instead.");
+        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt);
+        return;
+      }
+      setVoicePrompt(transcript);
+      await trackMobileEvent("speech-recognition", speech, "recognized");
+      await runCommand("cmd_streamweaver_voice_commander", transcript);
+    } catch (error) {
+      reportError("Listen and ask Athena", error);
+    } finally {
+      setIsListening(false);
+    }
+  }
+
+  async function startWakeListener() {
+    if (wakeListenerActiveRef.current) return;
+    wakeListenerActiveRef.current = true;
+    setWakeListenerActive(true);
+    setStatusMessage("Hey Athena listener active. Keep MountainView open.");
+    setLog("Hey Athena listener active. Say: Hey Athena, followed by your command.");
+
+    while (wakeListenerActiveRef.current) {
+      try {
+        setIsListening(true);
+        const speech = await metaWearables.recognizeSpeechOnce();
+        const transcript = String(speech.transcript ?? "").trim();
+        if (transcript) {
+          setVoicePrompt(transcript);
+          await trackMobileEvent("wake-listener-speech", speech, "recognized");
+          const command = wakeCommandFromTranscript(transcript);
+          if (command) {
+            setStatusMessage("Wake phrase captured. Sending to Athena...");
+            await runCommand("cmd_streamweaver_voice_commander", command);
+          } else {
+            setStatusMessage(`Listening for Hey Athena. Heard: ${transcript}`);
+          }
+        } else {
+          setStatusMessage("Listening for Hey Athena...");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLog((current) => `Wake listener cycle failed: ${message}\n${current}`);
+        setStatusMessage("Wake listener still active; retrying...");
+      } finally {
+        setIsListening(false);
+      }
+      await delay(800);
+    }
+    setStatusMessage("Hey Athena listener stopped.");
+  }
+
+  function stopWakeListener() {
+    wakeListenerActiveRef.current = false;
+    setWakeListenerActive(false);
+    setIsListening(false);
+  }
+
   async function saveDevice() {
     try {
       announce("Registering companion device...");
@@ -702,7 +793,7 @@ export default function App() {
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Athena wake bridge</Text>
-                <Text style={styles.note}>Test Hey Athena or Hey Annie by sending the transcript to StreamWeaver voice commander. Android permissions prepare mic and foreground wake testing; always-on wake still needs a foreground listener or glasses wake event.</Text>
+                <Text style={styles.note}>Send the typed prompt or use one-shot Android speech recognition. If RDGlass says connect to its app, that button press was intercepted before MountainView received it.</Text>
                 <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
                 <View style={styles.inlineOptions}>
                   {(["ai", "private", "twitch"] as const).map((value) => (
@@ -711,7 +802,13 @@ export default function App() {
                     </Pressable>
                   ))}
                 </View>
-                <Pressable style={styles.primaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.primaryButtonText}>Ask StreamWeaver AI</Text></Pressable>
+                <Pressable style={styles.primaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.primaryButtonText}>Send typed prompt to Athena</Text></Pressable>
+                <Pressable style={styles.primaryButton} onPress={() => listenAndRunVoiceCommander()}>
+                  <Text style={styles.primaryButtonText}>{isListening ? "Listening..." : "Listen then ask Athena"}</Text>
+                </Pressable>
+                <Pressable style={wakeListenerActive ? styles.dangerButton : styles.primaryButton} onPress={wakeListenerActive ? stopWakeListener : startWakeListener}>
+                  <Text style={wakeListenerActive ? styles.dangerButtonText : styles.primaryButtonText}>{wakeListenerActive ? "Stop Hey Athena listener" : "Start Hey Athena listener"}</Text>
+                </Pressable>
                 <Pressable style={mediaCommandMode ? styles.dangerButton : styles.primaryButton} onPress={mediaCommandMode ? stopMediaButtonCommandMode : startMediaButtonCommandMode}>
                   <Text style={mediaCommandMode ? styles.dangerButtonText : styles.primaryButtonText}>{mediaCommandMode ? "Stop glasses command mode" : "Start glasses command mode"}</Text>
                 </Pressable>
