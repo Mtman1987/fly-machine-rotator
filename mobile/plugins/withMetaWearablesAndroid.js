@@ -360,6 +360,18 @@ class MountainViewMetaWearablesModule(
       promise.reject("NO_PERMISSION_ACTIVITY", "Current activity cannot request Android runtime permissions.")
       return
     }
+    val alreadyGranted = permissions.all {
+      reactContext.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+    }
+    if (alreadyGranted) {
+      val result = WritableNativeMap()
+      result.putBoolean("androidNativeBridge", true)
+      result.putString("state", "permissions-result")
+      result.putString("scope", label)
+      permissions.forEach { permission -> result.putBoolean(permission, true) }
+      promise.resolve(result)
+      return
+    }
     if (pendingPermissionPromise != null) {
       promise.reject("PERMISSION_REQUEST_ACTIVE", "A permission request is already active.")
       return

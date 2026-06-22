@@ -77,6 +77,8 @@ type BleScanDevice = {
 };
 
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
+const bleLastDeviceKey = "mountainview_last_ble_device";
+const defaultAimbAddress = "C8:47:8C:15:60:01";
 
 export default function App() {
   const [token, setToken] = useState("");
@@ -99,6 +101,7 @@ export default function App() {
   const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
   const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
   const [bleDevices, setBleDevices] = useState<BleScanDevice[]>([]);
+  const [bleAutoConnectState, setBleAutoConnectState] = useState("Not armed");
   const [mediaCommandMode, setMediaCommandMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [wakeListenerActive, setWakeListenerActive] = useState(false);
@@ -112,6 +115,7 @@ export default function App() {
   const voicePromptRef = useRef(voicePrompt);
   const lastMediaTriggerRef = useRef(0);
   const lastBleAiTriggerRef = useRef(0);
+  const autoBleAttemptedRef = useRef(false);
   const wakeListenerActiveRef = useRef(false);
   const streamCommandListenerActiveRef = useRef(false);
 
@@ -130,6 +134,12 @@ export default function App() {
     Alert.alert(`${action} failed`, message);
   }
 
+  function reportSoftError(action: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatusMessage(`${action} failed: ${message}`);
+    setLog((current) => `${action} failed\n${message}\n\n${current}`);
+  }
+
   useEffect(() => {
     SecureStore.getItemAsync("mountainview_token").then((stored) => {
       if (stored) {
@@ -137,6 +147,13 @@ export default function App() {
         void load(stored);
       }
     });
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void autoArmGlassesBridge("startup");
+    }, 1200);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -287,6 +304,81 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setLog((current) => `${current}\nTelemetry save failed: ${message}`);
+    }
+  }
+
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function chooseGlassesDevice(devices: BleScanDevice[], preferredAddress?: string) {
+    const normalizedPreferred = preferredAddress?.trim().toUpperCase();
+    return devices.find((device) => device.address?.toUpperCase() === normalizedPreferred)
+      ?? devices.find((device) => device.address?.toUpperCase() === defaultAimbAddress)
+      ?? devices.find((device) => `${device.name ?? ""} ${device.kindHint ?? ""}`.toLowerCase().includes("aimb"))
+      ?? devices.find((device) => `${device.name ?? ""} ${device.kindHint ?? ""}`.toLowerCase().includes("glass"));
+  }
+
+  async function armBleDevice(address: string, reason: string, showAlerts = false) {
+    try {
+      setBleAutoConnectState(`Connecting ${address}`);
+      setStatusMessage(`Arming glasses bridge: ${reason}`);
+      const connect = await metaWearables.connectGenericBleDevice(address);
+      await SecureStore.setItemAsync(bleLastDeviceKey, address);
+      setGlassesStatus((current) => ({
+        ...current,
+        state: "ble-connecting",
+        bleAddress: address,
+        bleReason: reason
+      }));
+      setLog(JSON.stringify({ reason, connect }, null, 2));
+      await sleep(1800);
+      const services = await metaWearables.discoverGenericBleServices().catch((error) => ({ state: "discover-skipped", error: String(error) }));
+      await sleep(1200);
+      const notifications = await metaWearables.subscribeGenericBleNotifications().catch((error) => ({ state: "subscribe-skipped", error: String(error) }));
+      setGlassesStatus((current) => ({
+        ...current,
+        state: "ble-armed",
+        bleAddress: address,
+        notifications
+      }));
+      setBleAutoConnectState("AiMB bridge armed");
+      setStatusMessage("AiMB bridge armed. Glasses button events are subscribed.");
+      setLog(JSON.stringify({ reason, connect, services, notifications }, null, 2));
+      await trackMobileEvent("ble-auto-arm", { reason, address, connect, services, notifications }, "armed");
+      return true;
+    } catch (error) {
+      setBleAutoConnectState("Auto-arm failed");
+      if (showAlerts) reportError("Arm glasses bridge", error);
+      else reportSoftError("Auto arm glasses bridge", error);
+      return false;
+    }
+  }
+
+  async function autoArmGlassesBridge(reason = "manual") {
+    if (reason === "startup" && autoBleAttemptedRef.current) return;
+    if (reason === "startup") autoBleAttemptedRef.current = true;
+    try {
+      setBleAutoConnectState("Checking Bluetooth");
+      setStatusMessage("Checking for paired AiMB glasses...");
+      const permission = await metaWearables.requestBleResearchPermissions();
+      const bonded = await metaWearables.getBondedBluetoothDevices();
+      const devices = Array.isArray(bonded.devices) ? bonded.devices as BleScanDevice[] : [];
+      setBleDevices(devices);
+      const storedAddress = await SecureStore.getItemAsync(bleLastDeviceKey);
+      const candidate = chooseGlassesDevice(devices, storedAddress ?? defaultAimbAddress);
+      const address = candidate?.address ?? storedAddress ?? defaultAimbAddress;
+      setLog(JSON.stringify({ reason, permission, pairedCount: devices.length, candidate, address }, null, 2));
+      if (!address) {
+        setBleAutoConnectState("No glasses found");
+        setStatusMessage("No paired AiMB glasses found. Pair once, then MountainView can auto-arm.");
+        return false;
+      }
+      return await armBleDevice(address, reason, false);
+    } catch (error) {
+      setBleAutoConnectState("Auto-arm unavailable");
+      reportSoftError("Auto arm glasses bridge", error);
+      return false;
     }
   }
 
@@ -559,14 +651,12 @@ export default function App() {
 
   async function connectGenericBleDevice(address: string) {
     try {
-      announce(`Connecting to BLE device ${address}...`);
-      const result = await metaWearables.connectGenericBleDevice(address);
-      setLog(JSON.stringify(result, null, 2));
+      announce(`Connecting and arming BLE device ${address}...`);
+      const armed = await armBleDevice(address, "manual", true);
       await request("/glasses/media-event", {
         method: "POST",
-        body: JSON.stringify({ kind: "ble-connect", source: "rdglass-research", targetApp: "streamweaver", metadata: result })
+        body: JSON.stringify({ kind: "ble-connect", source: "rdglass-research", targetApp: "streamweaver", metadata: { address, armed } })
       });
-      setStatusMessage(`BLE connect result: ${String(result.state ?? result.status ?? "complete")}`);
     } catch (error) {
       reportError("BLE connect", error);
     }
@@ -847,7 +937,13 @@ export default function App() {
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>RDGlass / AiMB research</Text>
-                <Text style={styles.note}>Scan for the knockoff glasses path first. The RDGlass export points to BLE, 16 kHz mono voice events, Microsoft speech libraries, and Nordic UART-like UUIDs; this screen discovers what your actual glasses expose.</Text>
+                <Text style={styles.note}>MountainView now auto-arms the last AiMB glasses connection on app open. These controls are for recovery and button-mapping research.</Text>
+                <View style={styles.hintBox}>
+                  <Text style={styles.memoryTitle}>Bridge status</Text>
+                  <Text style={styles.memoryBody}>{bleAutoConnectState}</Text>
+                  <Text style={styles.memoryBody}>{String(glassesStatus.bleAddress ?? defaultAimbAddress)}</Text>
+                </View>
+                <Pressable style={styles.primaryButton} onPress={() => autoArmGlassesBridge("manual")}><Text style={styles.primaryButtonText}>Auto-connect AiMB glasses</Text></Pressable>
                 <Pressable style={styles.primaryButton} onPress={requestBleResearchPermissions}><Text style={styles.primaryButtonText}>Grant BLE permissions</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={loadBondedBluetoothDevices}><Text style={styles.secondaryButtonText}>Load paired Bluetooth devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={scanGenericBleDevices}><Text style={styles.secondaryButtonText}>Scan nearby BLE devices</Text></Pressable>
