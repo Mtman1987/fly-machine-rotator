@@ -788,7 +788,17 @@ class MountainViewContext {
       this.db.prepare(`
         INSERT INTO command_definitions (id, user_id, app_id, name, phrase, method, url_template, payload_template, retry_count, enabled, updated_at)
         VALUES (?, 'system', ?, ?, ?, ?, ?, ?, 2, 1, ?)
-        ON CONFLICT(id) DO NOTHING
+        ON CONFLICT(id) DO UPDATE SET
+          app_id = excluded.app_id,
+          name = excluded.name,
+          phrase = excluded.phrase,
+          method = excluded.method,
+          url_template = excluded.url_template,
+          payload_template = excluded.payload_template,
+          retry_count = excluded.retry_count,
+          enabled = excluded.enabled,
+          updated_at = excluded.updated_at
+        WHERE command_definitions.user_id = 'system'
       `).run(command[0], command[1], command[2], command[3], command[4], command[5], JSON.stringify(command[6]), now);
     }
     const devices = [
@@ -967,7 +977,11 @@ function renderTemplate(template: string, payload: JsonRecord): string {
 }
 
 function renderJsonTemplate(template: string, payload: JsonRecord): unknown {
-  return parseMaybeJson(template.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => {
+  const withRawJsonValues = template.replace(/"\{\{([a-zA-Z0-9_.-]+)\}\}"/g, (_match, key: string) => {
+    const value = readPath(payload, key);
+    return typeof value === "string" ? JSON.stringify(value) : JSON.stringify(value ?? "");
+  });
+  return parseMaybeJson(withRawJsonValues.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => {
     const value = readPath(payload, key);
     return typeof value === "string" ? value : JSON.stringify(value ?? "");
   }));
