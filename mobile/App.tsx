@@ -7,6 +7,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { addBleButtonListener, addMediaButtonListener, metaWearables } from "./src/metaWearables";
 
+(Text as any).defaultProps = (Text as any).defaultProps ?? {};
+(Text as any).defaultProps.maxFontSizeMultiplier = 1.15;
+(TextInput as any).defaultProps = (TextInput as any).defaultProps ?? {};
+(TextInput as any).defaultProps.maxFontSizeMultiplier = 1.15;
+
 type Command = {
   id: string;
   app_id: string;
@@ -76,9 +81,24 @@ type BleScanDevice = {
   serviceUuids?: string[];
 };
 
+type VoiceDestination = "ai" | "private" | "twitch" | "discord";
+type VoiceCommanderMode = "reply" | "dictation" | "translation";
+
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
 const bleLastDeviceKey = "mountainview_last_ble_device";
 const defaultAimbAddress = "C8:47:8C:15:60:01";
+const voiceRoutes: { id: VoiceDestination; label: string; detail: string }[] = [
+  { id: "ai", label: "AI", detail: "Athena replies by voice" },
+  { id: "private", label: "Private", detail: "Save to owner memory" },
+  { id: "twitch", label: "Twitch", detail: "Send through StreamWeaver" },
+  { id: "discord", label: "Discord", detail: "Post through Discord routes" }
+];
+const voiceModes: { id: VoiceCommanderMode; label: string; detail: string }[] = [
+  { id: "reply", label: "Reply loop", detail: "Listen, answer, reopen mic" },
+  { id: "dictation", label: "Dictation", detail: "Long press sends speech" },
+  { id: "translation", label: "Translation", detail: "Route live translated speech" }
+];
+const translationLanguages = ["Spanish", "French", "Japanese", "German"];
 
 export default function App() {
   const [token, setToken] = useState("");
@@ -99,7 +119,10 @@ export default function App() {
   const [logoTestText, setLogoTestText] = useState("I see the StreamWeaver logo on my tablet");
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
   const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
-  const [voiceDestination, setVoiceDestination] = useState<"ai" | "private" | "twitch">("ai");
+  const [voiceDestination, setVoiceDestination] = useState<VoiceDestination>("ai");
+  const [voiceMode, setVoiceMode] = useState<VoiceCommanderMode>("reply");
+  const [translationLanguage, setTranslationLanguage] = useState("Spanish");
+  const [replyLoopActive, setReplyLoopActive] = useState(false);
   const [bleDevices, setBleDevices] = useState<BleScanDevice[]>([]);
   const [bleAutoConnectState, setBleAutoConnectState] = useState("Not armed");
   const [mediaCommandMode, setMediaCommandMode] = useState(false);
@@ -118,6 +141,7 @@ export default function App() {
   const autoBleAttemptedRef = useRef(false);
   const wakeListenerActiveRef = useRef(false);
   const streamCommandListenerActiveRef = useRef(false);
+  const replyLoopActiveRef = useRef(false);
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -222,6 +246,33 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function speakText(text: string) {
+    return new Promise<void>((resolve) => {
+      const spokenText = text.trim();
+      if (!spokenText) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      try {
+        Speech.stop();
+        Speech.speak(spokenText, {
+          onDone: finish,
+          onStopped: finish,
+          onError: finish
+        });
+        setTimeout(finish, Math.max(2500, Math.min(18000, spokenText.length * 75)));
+      } catch {
+        finish();
+      }
+    });
+  }
+
   async function login() {
     try {
       announce("Connecting to MountainView backend...");
@@ -252,32 +303,44 @@ export default function App() {
     setStatusMessage("Dashboard data loaded.");
   }
 
-  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination = voiceDestination) {
+  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean } = {}) {
     try {
       announce(`Sending command ${commandId}...`);
       const command = commandMap.get(commandId);
+      const translationEnabled = voiceMode === "translation";
+      const voicePayload = {
+        message,
+        transcript: message,
+        destination,
+        tenantId: "94371378",
+        username: "mtman1987",
+        channel: "mtman1987",
+        dispatch: destination === "twitch",
+        source: "mountainview-mobile",
+        voiceMode,
+        translation: {
+          enabled: translationEnabled,
+          language: translationLanguage
+        }
+      };
       const data = await request("/commands/execute", {
         method: "POST",
         body: JSON.stringify({
           commandId,
           payload: {
-            message,
-            transcript: message,
+            ...voicePayload,
             destination,
             wakeWord: message.toLowerCase().startsWith("hey annie") ? "hey annie" : "hey athena",
-            tenantId: "94371378",
-            username: "mtman1987",
-            channel: "mtman1987",
-            source: "mountainview-mobile",
-            dispatch: destination === "twitch",
-            payload: { message, transcript: message, destination, tenantId: "94371378", username: "mtman1987", channel: "mtman1987", dispatch: destination === "twitch", source: "mountainview-mobile" }
+            payload: voicePayload
           }
         })
       });
       setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
       setStatusMessage(`${command?.name ?? commandId} sent.`);
       const reply = commandReplyText(data);
-      Speech.speak(reply || (data.ok ? "Command sent." : "Command failed."));
+      if (options.speakReply ?? true) {
+        await speakText(reply || (data.ok ? "Command sent." : "Command failed."));
+      }
       return data;
     } catch (error) {
       reportError("Command", error);
@@ -410,8 +473,14 @@ export default function App() {
     if (action !== "ai-talk-tap" && action !== "ai-talk-long-start") return;
     if (now - lastBleAiTriggerRef.current < 2500) return;
     lastBleAiTriggerRef.current = now;
-    setStatusMessage("Glasses AI button captured over BLE. Listening for Athena command...");
-    await listenAndRunVoiceCommander(`Hey Athena AiMB glasses ${action} captured. ${voicePromptRef.current}`);
+    if (action === "ai-talk-long-start") {
+      setStatusMessage("Glasses long press captured. Toggling StreamWeaver command gate...");
+      if (streamCommandListenerActiveRef.current) stopStreamWeaverCommandListener();
+      else void startStreamWeaverCommandListener();
+      return;
+    }
+    setStatusMessage("Glasses AI button captured over BLE. Starting Athena reply loop...");
+    void startReplyLoop("glasses-ai-tap");
   }
 
   async function startMediaButtonCommandMode() {
@@ -721,6 +790,59 @@ export default function App() {
     }
   }
 
+  async function startReplyLoop(source = "manual") {
+    if (replyLoopActiveRef.current) return;
+    replyLoopActiveRef.current = true;
+    setReplyLoopActive(true);
+    setVoiceMode("reply");
+    let turns = 0;
+    const maxTurns = 10;
+    setStatusMessage("Reply loop active. Speak after the tone, then pause.");
+    setLog(`Reply loop started from ${source}.`);
+
+    while (replyLoopActiveRef.current && turns < maxTurns) {
+      try {
+        setIsListening(true);
+        const pauseHint = turns === 0 ? "Listening for your first message..." : "Listening for your reply...";
+        setStatusMessage(pauseHint);
+        const speech = await metaWearables.recognizeSpeechOnce();
+        const transcript = String(speech.transcript ?? "").trim();
+        setLog((current) => `Reply loop turn ${turns + 1}\n${JSON.stringify(speech, null, 2)}\n\n${current}`);
+        if (!transcript) {
+          setStatusMessage(turns === 0 ? "No speech recognized. Reply loop stopped." : "No reply heard. Reply loop stopped.");
+          break;
+        }
+        setVoicePrompt(transcript);
+        await trackMobileEvent("reply-loop-speech", { source, turn: turns + 1, ...speech }, "recognized");
+        setStatusMessage("Sending to Athena...");
+        await runCommand("cmd_streamweaver_voice_commander", transcript, voiceDestination, { speakReply: true });
+        turns += 1;
+        if (!replyLoopActiveRef.current) break;
+        setStatusMessage("Athena finished. Reply when ready, or stay quiet to stop.");
+        await delay(turns === 1 ? 1200 : 2200);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLog((current) => `Reply loop failed: ${message}\n${current}`);
+        setStatusMessage("Reply loop hit an error and stopped.");
+        break;
+      } finally {
+        setIsListening(false);
+      }
+    }
+
+    replyLoopActiveRef.current = false;
+    setReplyLoopActive(false);
+    setIsListening(false);
+  }
+
+  function stopReplyLoop() {
+    replyLoopActiveRef.current = false;
+    setReplyLoopActive(false);
+    setIsListening(false);
+    Speech.stop();
+    setStatusMessage("Reply loop stopped.");
+  }
+
   async function startWakeListener() {
     if (wakeListenerActiveRef.current) return;
     wakeListenerActiveRef.current = true;
@@ -921,6 +1043,75 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.content}>
           {tab === "home" && (
             <>
+              <View style={styles.heroPanel}>
+                <View style={styles.kickerRow}>
+                  <Text style={styles.label}>Voice commander</Text>
+                  <View style={[styles.statusPill, replyLoopActive ? styles.statusPillActive : undefined]}>
+                    <Ionicons name={replyLoopActive ? "mic" : "mic-outline"} size={14} color={replyLoopActive ? "#071018" : "#22d3ee"} />
+                    <Text style={[styles.statusPillText, replyLoopActive ? styles.statusPillTextActive : undefined]}>{replyLoopActive ? "Reply loop" : bleAutoConnectState}</Text>
+                  </View>
+                </View>
+                <Text style={styles.heroTitle}>Glasses to Athena command bridge</Text>
+                <Text style={styles.heroCopy}>Tap the AiMB talk button once to speak, hear Athena, then answer back without repeating the wake word. Long press arms the StreamWeaver command gate for dictation, Twitch, Discord, private memory, and translation testing.</Text>
+                <View style={styles.routeGrid}>
+                  {voiceRoutes.map((route) => (
+                    <Pressable key={route.id} style={[styles.routeCard, voiceDestination === route.id && styles.routeCardActive]} onPress={() => setVoiceDestination(route.id)}>
+                      <Text style={styles.routeLabel}>{route.label}</Text>
+                      <Text style={styles.routeDetail}>{route.detail}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.inlineOptions}>
+                  {voiceModes.map((mode) => (
+                    <Pressable key={mode.id} style={[styles.modeChip, voiceMode === mode.id && styles.modeChipActive]} onPress={() => setVoiceMode(mode.id)}>
+                      <Text style={styles.modeChipText}>{mode.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {voiceMode === "translation" && (
+                  <View style={styles.inlineOptions}>
+                    {translationLanguages.map((language) => (
+                      <Pressable key={language} style={[styles.optionChip, translationLanguage === language && styles.optionChipActive]} onPress={() => setTranslationLanguage(language)}>
+                        <Text style={styles.optionChipText}>{language}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+                <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={replyLoopActive ? stopReplyLoop : () => startReplyLoop("manual-button")}>
+                    <Text style={styles.primaryButtonText}>{replyLoopActive ? "Stop reply loop" : "Start reply loop"}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => listenAndRunVoiceCommander()}>
+                    <Text style={styles.secondaryButtonText}>{isListening ? "Listening..." : "Listen once"}</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={askStreamWeaverVoiceCommander}>
+                    <Text style={styles.secondaryButtonText}>Send typed prompt</Text>
+                  </Pressable>
+                  <Pressable style={[streamCommandListenerActive ? styles.dangerButton : styles.secondaryButton, styles.actionButton]} onPress={streamCommandListenerActive ? stopStreamWeaverCommandListener : startStreamWeaverCommandListener}>
+                    <Text style={streamCommandListenerActive ? styles.dangerButtonText : styles.secondaryButtonText}>{streamCommandListenerActive ? "Stop gate" : "Arm command gate"}</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.buttonMap}>
+                  <View style={styles.buttonMapItem}>
+                    <Ionicons name="radio" size={18} color="#22d3ee" />
+                    <Text style={styles.buttonMapTitle}>AI tap</Text>
+                    <Text style={styles.buttonMapText}>Reply loop with Athena</Text>
+                  </View>
+                  <View style={styles.buttonMapItem}>
+                    <Ionicons name="finger-print" size={18} color="#8b5cf6" />
+                    <Text style={styles.buttonMapTitle}>AI long press</Text>
+                    <Text style={styles.buttonMapText}>StreamWeaver command gate</Text>
+                  </View>
+                  <View style={styles.buttonMapItem}>
+                    <Ionicons name="camera" size={18} color="#34d399" />
+                    <Text style={styles.buttonMapTitle}>Image button</Text>
+                    <Text style={styles.buttonMapText}>Next map: image/video relay</Text>
+                  </View>
+                </View>
+              </View>
               <View style={styles.grid}>
                 <StatusCard label="Glasses" value={String(glassesStatus.state ?? "SDK gated")} tone="warn" detail="Android DAT bridge prepared for Meta Wearables events." />
                 <StatusCard label="Image AI" value="Relay only" tone="good" detail="No face recognition in MountainView AI." />
@@ -963,28 +1154,13 @@ export default function App() {
                 ))}
               </View>
               <View style={styles.panel}>
-                <Text style={styles.label}>Athena wake bridge</Text>
-                <Text style={styles.note}>Send the typed prompt or use one-shot Android speech recognition. If RDGlass says connect to its app, that button press was intercepted before MountainView received it.</Text>
-                <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
-                <View style={styles.inlineOptions}>
-                  {(["ai", "private", "twitch"] as const).map((value) => (
-                    <Pressable key={value} style={[styles.optionChip, voiceDestination === value && styles.optionChipActive]} onPress={() => setVoiceDestination(value)}>
-                      <Text style={styles.optionChipText}>{value}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable style={styles.primaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.primaryButtonText}>Send typed prompt to Athena</Text></Pressable>
-                <Pressable style={styles.primaryButton} onPress={() => listenAndRunVoiceCommander()}>
-                  <Text style={styles.primaryButtonText}>{isListening ? "Listening..." : "Listen then ask Athena"}</Text>
-                </Pressable>
+                <Text style={styles.label}>Wake and media debug</Text>
+                <Text style={styles.note}>Keep these controls for testing Android wake permissions, media-button interception, and the older continuous listener while the BLE button map gets filled in.</Text>
                 <Pressable style={wakeListenerActive ? styles.dangerButton : styles.primaryButton} onPress={wakeListenerActive ? stopWakeListener : startWakeListener}>
                   <Text style={wakeListenerActive ? styles.dangerButtonText : styles.primaryButtonText}>{wakeListenerActive ? "Stop Hey Athena listener" : "Start Hey Athena listener"}</Text>
                 </Pressable>
-                <Pressable style={streamCommandListenerActive ? styles.dangerButton : styles.primaryButton} onPress={streamCommandListenerActive ? stopStreamWeaverCommandListener : startStreamWeaverCommandListener}>
-                  <Text style={streamCommandListenerActive ? styles.dangerButtonText : styles.primaryButtonText}>{streamCommandListenerActive ? "Stop StreamWeaver command listener" : "Start StreamWeaver command listener"}</Text>
-                </Pressable>
                 <Pressable style={mediaCommandMode ? styles.dangerButton : styles.primaryButton} onPress={mediaCommandMode ? stopMediaButtonCommandMode : startMediaButtonCommandMode}>
-                  <Text style={mediaCommandMode ? styles.dangerButtonText : styles.primaryButtonText}>{mediaCommandMode ? "Stop glasses command mode" : "Start glasses command mode"}</Text>
+                  <Text style={mediaCommandMode ? styles.dangerButtonText : styles.primaryButtonText}>{mediaCommandMode ? "Stop media button mode" : "Start media button mode"}</Text>
                 </Pressable>
                 <Pressable style={styles.secondaryButton} onPress={loadMediaButtonLog}><Text style={styles.secondaryButtonText}>Load glasses button log</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={requestVoiceWakePermissions}><Text style={styles.secondaryButtonText}>Request wake permissions</Text></Pressable>
@@ -1188,17 +1364,39 @@ function CommandGroup({ title, commands, onRun }: { title: string; commands: Com
 }
 
 const styles = StyleSheet.create({
-  app: { flex: 1, backgroundColor: "#050712", paddingTop: 54 },
+  app: { flex: 1, backgroundColor: "#070812", paddingTop: 54 },
   header: { flexDirection: "row", gap: 12, alignItems: "center", paddingHorizontal: 18, paddingBottom: 16 },
-  mark: { width: 40, height: 40, borderRadius: 10, backgroundColor: "#20d5ff" },
+  mark: { width: 40, height: 40, borderRadius: 10, backgroundColor: "#8b5cf6", borderWidth: 1, borderColor: "rgba(34,211,238,.55)" },
   title: { color: "#f8fbff", fontSize: 24, fontWeight: "900" },
   subtitle: { color: "#9fb1cc", fontSize: 13 },
   statusStrip: { marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(32,213,255,.28)", flexDirection: "row", alignItems: "center", gap: 8 },
   statusStripText: { color: "#d9e8ff", fontSize: 13, lineHeight: 18, flex: 1 },
   content: { padding: 14, paddingBottom: 110, gap: 14 },
-  panel: { margin: 14, padding: 16, borderRadius: 8, backgroundColor: "#10172a", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 12 },
+  panel: { margin: 14, padding: 16, borderRadius: 8, backgroundColor: "#111425", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 12 },
+  heroPanel: { margin: 14, padding: 14, borderRadius: 8, backgroundColor: "#111425", borderWidth: 1, borderColor: "rgba(34,211,238,.22)", gap: 10 },
+  kickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: "rgba(34,211,238,.34)", backgroundColor: "rgba(34,211,238,.08)", maxWidth: "58%" },
+  statusPillActive: { backgroundColor: "#22d3ee", borderColor: "#22d3ee" },
+  statusPillText: { color: "#c9f7ff", fontSize: 11, fontWeight: "900" },
+  statusPillTextActive: { color: "#071018" },
+  heroTitle: { color: "#f8fafc", fontSize: 23, lineHeight: 28, fontWeight: "900" },
+  heroCopy: { color: "#a8b0c3", fontSize: 13, lineHeight: 19 },
+  routeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  routeCard: { width: "48.5%", minHeight: 68, borderRadius: 8, padding: 9, backgroundColor: "#171b31", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
+  routeCardActive: { borderColor: "#22d3ee", backgroundColor: "rgba(34,211,238,.12)" },
+  routeLabel: { color: "#f8fafc", fontSize: 15, fontWeight: "900" },
+  routeDetail: { color: "#a8b0c3", fontSize: 12, lineHeight: 16, marginTop: 4 },
+  modeChip: { borderRadius: 8, paddingVertical: 9, paddingHorizontal: 11, backgroundColor: "#171b31", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
+  modeChipActive: { borderColor: "#8b5cf6", backgroundColor: "rgba(139,92,246,.22)" },
+  modeChipText: { color: "#f8fafc", fontWeight: "900", fontSize: 12 },
+  actionRow: { flexDirection: "row", gap: 8 },
+  actionButton: { flex: 1 },
+  buttonMap: { flexDirection: "row", gap: 8 },
+  buttonMapItem: { flex: 1, minHeight: 92, borderRadius: 8, padding: 9, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 5 },
+  buttonMapTitle: { color: "#f8fafc", fontWeight: "900", fontSize: 12 },
+  buttonMapText: { color: "#a8b0c3", fontSize: 11, lineHeight: 15 },
   grid: { gap: 10 },
-  statusCard: { padding: 14, borderRadius: 8, backgroundColor: "#111c35", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
+  statusCard: { padding: 14, borderRadius: 8, backgroundColor: "#171b31", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   label: { color: "#9fb1cc", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", fontWeight: "700" },
   statusValue: { color: "#f8fbff", fontSize: 24, fontWeight: "900", marginTop: 4 },
   good: { color: "#32d583" },
@@ -1207,7 +1405,7 @@ const styles = StyleSheet.create({
   note: { color: "#9fb1cc", fontSize: 13, lineHeight: 19 },
   input: { color: "#f8fbff", backgroundColor: "#0b1020", borderColor: "rgba(255,255,255,.12)", borderWidth: 1, borderRadius: 8, padding: 12 },
   textArea: { minHeight: 110, textAlignVertical: "top" },
-  primaryButton: { backgroundColor: "#20d5ff", borderRadius: 8, padding: 12, alignItems: "center" },
+  primaryButton: { backgroundColor: "#22d3ee", borderRadius: 8, padding: 12, alignItems: "center" },
   primaryButtonText: { color: "#00131a", fontWeight: "900" },
   dangerButton: { backgroundColor: "#ff6b8a", borderRadius: 8, padding: 12, alignItems: "center" },
   dangerButtonText: { color: "#1f0610", fontWeight: "900" },
@@ -1217,7 +1415,7 @@ const styles = StyleSheet.create({
   commandTitle: { color: "#f8fbff", fontWeight: "800" },
   commandMeta: { color: "#9fb1cc", fontSize: 12, marginTop: 3 },
   commandGroup: { gap: 6, marginTop: 10 },
-  commandGroupTitle: { color: "#20d5ff", fontSize: 14, fontWeight: "900", marginTop: 4 },
+  commandGroupTitle: { color: "#22d3ee", fontSize: 14, fontWeight: "900", marginTop: 4 },
   memoryRow: { borderLeftWidth: 2, borderLeftColor: "#20d5ff", paddingLeft: 12, paddingVertical: 8, marginTop: 8 },
   hintBox: { padding: 12, borderRadius: 8, backgroundColor: "rgba(117,80,255,.12)", borderWidth: 1, borderColor: "rgba(117,80,255,.32)" },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
