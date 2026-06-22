@@ -1314,12 +1314,47 @@ class MountainViewContext {
 
 async function loadRuntimeConfig(file: string): Promise<MountainViewConfig> {
   try {
-    return { ...defaultConfig, ...JSON.parse(await readFile(file, "utf8")) as Partial<MountainViewConfig> };
+    const stored = JSON.parse(await readFile(file, "utf8")) as Partial<MountainViewConfig>;
+    const config = normalizeRuntimeConfig(stored);
+    await writeFile(file, JSON.stringify(config, null, 2));
+    return config;
   } catch {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, JSON.stringify(defaultConfig, null, 2));
     return defaultConfig;
   }
+}
+
+function normalizeRuntimeConfig(stored: Partial<MountainViewConfig>): MountainViewConfig {
+  const storedServices = Array.isArray(stored.services) ? stored.services : [];
+  const services = defaultConfig.services.map((service) => ({
+    ...service,
+    ...(storedServices.find((candidate) => candidate?.id === service.id) ?? {})
+  }));
+  for (const service of storedServices) {
+    if (service?.id && !services.some((candidate) => candidate.id === service.id)) services.push(service);
+  }
+
+  const extraNotes = Array.isArray(stored.metaWearables?.notes)
+    ? stored.metaWearables.notes.filter((note) =>
+      typeof note === "string" &&
+      !note.includes("does not run face recognition") &&
+      !note.includes("Image analysis is delegated to StreamWeaver or configured Spacemountain services")
+    )
+    : [];
+  const notes = [...defaultConfig.metaWearables.notes];
+  for (const note of extraNotes) {
+    if (!notes.includes(note)) notes.push(note);
+  }
+
+  return {
+    services,
+    metaWearables: {
+      ...defaultConfig.metaWearables,
+      ...(stored.metaWearables ?? {}),
+      notes
+    }
+  };
 }
 
 async function readJson(request: IncomingMessage, limit = 1024 * 1024): Promise<JsonRecord> {
