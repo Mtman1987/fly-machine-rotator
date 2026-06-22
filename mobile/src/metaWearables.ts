@@ -58,3 +58,7 @@ export const metaWearables: MetaWearablesModule = {
 export function addMediaButtonListener(listener: (event: Record<string, unknown>) => void): EmitterSubscription | { remove: () => void } {
   return nativeEvents?.addListener("MountainViewMediaButton", listener) ?? { remove: () => undefined };
 }
+
+export function addBleButtonListener(listener: (event: Record<string, unknown>) => void): EmitterSubscription | { remove: () => void } {
+  return nativeEvents?.addListener("MountainViewBleButton", listener) ?? { remove: () => undefined };
+}

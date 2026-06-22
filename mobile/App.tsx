@@ -5,7 +5,7 @@ import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { addMediaButtonListener, metaWearables } from "./src/metaWearables";
+import { addBleButtonListener, addMediaButtonListener, metaWearables } from "./src/metaWearables";
 
 type Command = {
   id: string;
@@ -111,6 +111,7 @@ export default function App() {
   const tokenRef = useRef("");
   const voicePromptRef = useRef(voicePrompt);
   const lastMediaTriggerRef = useRef(0);
+  const lastBleAiTriggerRef = useRef(0);
   const wakeListenerActiveRef = useRef(false);
   const streamCommandListenerActiveRef = useRef(false);
 
@@ -157,6 +158,13 @@ export default function App() {
   useEffect(() => {
     const subscription = addMediaButtonListener((event) => {
       void handleMediaButtonEvent(event);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    const subscription = addBleButtonListener((event) => {
+      void handleBleButtonEvent(event);
     });
     return () => subscription.remove();
   }, []);
@@ -298,6 +306,18 @@ export default function App() {
     lastMediaTriggerRef.current = now;
     setStatusMessage(`${keyName.replace("KEYCODE_", "")} captured. Listening for Athena command...`);
     await listenAndRunVoiceCommander(`Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`);
+  }
+
+  async function handleBleButtonEvent(event: Record<string, unknown>) {
+    const action = String(event.action ?? "unknown");
+    const now = Date.now();
+    setLog((current) => `BLE glasses button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
+    await trackMobileEvent("ble-button", { event }, action);
+    if (action !== "ai-talk-tap" && action !== "ai-talk-long-start") return;
+    if (now - lastBleAiTriggerRef.current < 2500) return;
+    lastBleAiTriggerRef.current = now;
+    setStatusMessage("Glasses AI button captured over BLE. Listening for Athena command...");
+    await listenAndRunVoiceCommander(`Hey Athena AiMB glasses ${action} captured. ${voicePromptRef.current}`);
   }
 
   async function startMediaButtonCommandMode() {

@@ -143,6 +143,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import android.view.KeyEvent
 import java.util.Locale
 import java.util.UUID
@@ -160,6 +161,8 @@ class MountainViewMetaWearablesModule(
   private var mediaSession: MediaSession? = null
   private var speechRecognizer: SpeechRecognizer? = null
   private var speechPromise: Promise? = null
+  private val pendingDescriptorWrites = ArrayDeque<PendingDescriptorWrite>()
+  private var descriptorWriteInFlight = false
 
   override fun getName(): String = "MountainViewMetaWearables"
 
@@ -565,6 +568,13 @@ class MountainViewMetaWearablesModule(
     override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
       recordBleNotification(characteristic.uuid.toString(), value)
     }
+
+    @SuppressLint("MissingPermission")
+    override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+      appendResearchLog("descriptor write complete " + descriptor.characteristic.uuid.toString() + " status " + status)
+      descriptorWriteInFlight = false
+      writeNextPendingDescriptor(gatt)
+    }
   }
 
   private fun voicePermissions(): List<String> {
@@ -647,6 +657,7 @@ class MountainViewMetaWearablesModule(
   }
 
   private fun appendResearchLog(message: String) {
+    Log.d("MountainViewBLE", message)
     researchLog.add(System.currentTimeMillis().toString() + " " + message)
     if (researchLog.size > 300) researchLog.removeAt(0)
   }
@@ -654,6 +665,8 @@ class MountainViewMetaWearablesModule(
   @SuppressLint("MissingPermission")
   private fun subscribeToNotifyCharacteristics(gatt: BluetoothGatt): Int {
     var count = 0
+    pendingDescriptorWrites.clear()
+    descriptorWriteInFlight = false
     gatt.services.forEach { service ->
       service.characteristics.forEach { characteristic ->
         val canNotify = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
@@ -662,16 +675,35 @@ class MountainViewMetaWearablesModule(
         val enabled = gatt.setCharacteristicNotification(characteristic, true)
         val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
         if (descriptor != null) {
-          descriptor.value = if (canNotify) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-          val wrote = gatt.writeDescriptor(descriptor)
-          appendResearchLog("subscribe " + characteristic.uuid.toString() + " enabled " + enabled + " descriptorWrite " + wrote)
+          val value = if (canNotify) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+          pendingDescriptorWrites.add(PendingDescriptorWrite(descriptor, value))
+          appendResearchLog("subscribe queued " + characteristic.uuid.toString() + " enabled " + enabled)
         } else {
           appendResearchLog("subscribe " + characteristic.uuid.toString() + " enabled " + enabled + " no cccd")
         }
         if (enabled) count += 1
       }
     }
+    writeNextPendingDescriptor(gatt)
     return count
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun writeNextPendingDescriptor(gatt: BluetoothGatt) {
+    if (descriptorWriteInFlight) return
+    val next = pendingDescriptorWrites.removeFirstOrNull()
+    if (next == null) {
+      appendResearchLog("descriptor queue drained")
+      return
+    }
+    descriptorWriteInFlight = true
+    next.descriptor.value = next.value
+    val wrote = gatt.writeDescriptor(next.descriptor)
+    appendResearchLog("descriptor write " + next.descriptor.characteristic.uuid.toString() + " started " + wrote)
+    if (!wrote) {
+      descriptorWriteInFlight = false
+      writeNextPendingDescriptor(gatt)
+    }
   }
 
   private fun recordBleNotification(uuid: String, bytes: ByteArray) {
@@ -685,6 +717,34 @@ class MountainViewMetaWearablesModule(
     reactContext
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
       .emit("MountainViewBleNotification", event)
+    val action = classifyBleButtonAction(uuid, hex)
+    if (action != null) {
+      appendResearchLog("ble button ai-talk " + action + " " + hex)
+      val buttonEvent = WritableNativeMap()
+      buttonEvent.putString("source", "ble-notify")
+      buttonEvent.putString("button", "ai-talk")
+      buttonEvent.putString("action", action)
+      buttonEvent.putString("uuid", uuid)
+      buttonEvent.putString("hex", hex)
+      buttonEvent.putInt("byteLength", bytes.size)
+      buttonEvent.putDouble("timestamp", System.currentTimeMillis().toDouble())
+      reactContext
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("MountainViewBleButton", buttonEvent)
+    }
+  }
+
+  private fun classifyBleButtonAction(uuid: String, hex: String): String? {
+    val normalizedUuid = uuid.lowercase(Locale.US)
+    if (!normalizedUuid.startsWith("0000ea01")) return null
+    return when {
+      hex.contains("12 04 00") -> "ai-talk-tap"
+      hex.contains("12 0d 03 02") -> "ai-talk-long-start"
+      hex.contains("12 0d 03 01") -> "ai-talk-long-active"
+      hex.contains("12 0d 00 00") -> "ai-talk-stop"
+      hex.contains("12 03 00 05 00 02 00 01") -> "ai-talk-state"
+      else -> null
+    }
   }
 
   private fun recordMediaButton(source: String, keyCode: Int, action: Int, repeatCount: Int) {
@@ -784,6 +844,11 @@ class MountainViewMetaWearablesModule(
   companion object {
     private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
   }
+
+  data class PendingDescriptorWrite(
+    val descriptor: BluetoothGattDescriptor,
+    val value: ByteArray
+  )
 
   @ReactMethod
   fun startRegistration(promise: Promise) {
