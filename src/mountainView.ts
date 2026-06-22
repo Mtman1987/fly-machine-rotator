@@ -9,6 +9,11 @@ type JsonRecord = Record<string, unknown>;
 
 const DEFAULT_STREAMWEAVER_TENANT_ID = "94371378";
 const DEFAULT_STREAMWEAVER_USERNAME = "mtman1987";
+const DEFAULT_CHAT_TAG_USER_ID = "user_94371378";
+const DEFAULT_DISCORD_GUILD_ID = "1240832965865635881";
+const DEFAULT_DISCORD_CHANNEL_ID = "1463633163673927732";
+const DEFAULT_DISCORD_OWNER_ID = "767875979561009173";
+const DEFAULT_HEARMEOUT_ROOM_ID = "spacemountain";
 
 type MountainViewConfig = {
   services: Array<{
@@ -334,7 +339,7 @@ class MountainViewContext {
       .get(commandId, userId) as JsonRecord | undefined;
     if (!command) throw new HttpError(404, "Command not found.");
     if (Number(command.enabled) !== 1) throw new HttpError(400, "Command is disabled.");
-    const effectivePayload = withCommandDefaults(commandId, payload);
+    const effectivePayload = await this.prepareCommandPayload(userId, commandId, payload);
     const integration = this.getIntegration(String(command.app_id));
     const url = new URL(renderTemplate(String(command.url_template), effectivePayload), integration.baseUrl).toString();
     const method = String(command.method);
@@ -366,7 +371,27 @@ class MountainViewContext {
     }
 
     this.logCommand(userId, commandId, String(command.app_id), method, url, "error", status, Date.now() - started, responseText.slice(0, 4000), lastError);
-    return { ok: false, status, error: lastError, response: parseMaybeJson(responseText) };
+    const fallback = this.recordLocalWorkflowFallback(userId, commandId, command, effectivePayload, {
+      url,
+      method,
+      status,
+      error: lastError,
+      response: parseMaybeJson(responseText)
+    });
+    return {
+      ok: true,
+      localOnly: true,
+      queued: true,
+      command: fallback.event,
+      status,
+      error: lastError,
+      response: {
+        reply: fallback.reply,
+        externalStatus: status,
+        externalError: lastError,
+        externalResponse: parseMaybeJson(responseText)
+      }
+    };
   }
 
   async relayImageToStreamWeaver(userId: string, input: JsonRecord): Promise<JsonRecord> {
@@ -421,6 +446,64 @@ class MountainViewContext {
     `).run(id, userId, kind, source, targetApp, status, JSON.stringify(metadata), now);
     this.logCommand(userId, `glasses-${kind}`, targetApp, "EVENT", source, "success", 0, 0, JSON.stringify(metadata).slice(0, 4000), "");
     return { ok: true, event: { id, kind, source, targetApp, status, metadata, created_at: now } };
+  }
+
+  private async prepareCommandPayload(userId: string, commandId: string, payload: JsonRecord): Promise<JsonRecord> {
+    const next = withCommandDefaults(commandId, payload);
+    if (commandId !== "cmd_chat_tag_tag" || readText(next, "targetUserId")) return next;
+
+    const targetName = readText(next, "targetName")
+      || readText(next, "target")
+      || extractChatTagTarget(readText(next, "message") || readText(next, "transcript"));
+    if (!targetName) return next;
+
+    try {
+      const integration = this.getIntegration("chat-tag");
+      const result = await fetch(new URL("/api/tag", integration.baseUrl).toString(), {
+        method: "GET",
+        headers: await this.authHeaders(userId, "chat-tag", integration.defaultHeaders)
+      });
+      if (!result.ok) return { ...next, targetName, targetLookupError: `Chat-Tag lookup failed: HTTP ${result.status}` };
+      const data = await result.json() as JsonRecord;
+      const player = findChatTagPlayer(data.players, targetName);
+      if (!player) return { ...next, targetName, targetLookupError: `No Chat-Tag player matched ${targetName}` };
+      return {
+        ...next,
+        targetName,
+        targetUserId: readText(player, "id"),
+        targetUsername: readText(player, "twitchUsername") || readText(player, "username") || targetName
+      };
+    } catch (error) {
+      return {
+        ...next,
+        targetName,
+        targetLookupError: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  private recordLocalWorkflowFallback(userId: string, commandId: string, command: JsonRecord, payload: JsonRecord, external: JsonRecord): { event: JsonRecord; reply: string } {
+    const appId = String(command.app_id);
+    const commandName = String(command.name ?? commandId);
+    const now = new Date().toISOString();
+    const id = `local_workflow_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const metadata = {
+      commandId,
+      commandName,
+      payload,
+      external,
+      note: "Remote app endpoint did not complete, so MountainView kept this as a local workflow event for glasses/mobile testing."
+    };
+    this.db.prepare(`
+      INSERT INTO glasses_media_events (id, user_id, kind, source, target_app, status, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, userId, "command-fallback", "mountainview-ai", appId, "queued-local", JSON.stringify(metadata), now);
+    const reply = `${commandName} is queued locally for ${appDisplayName(appId)}. The live app route did not answer, but MountainView captured the action.`;
+    this.logCommand(userId, `${commandId}:local-fallback`, appId, "EVENT", "mountainview-local-workflow", "success", 0, 0, JSON.stringify(metadata).slice(0, 4000), "");
+    return {
+      event: { id, commandId, appId, commandName, status: "queued-local", metadata, created_at: now },
+      reply
+    };
   }
 
   listGlassesMediaEvents(userId: string): JsonRecord[] {
@@ -783,15 +866,23 @@ class MountainViewContext {
       ["cmd_stream_overlay", "streamweaver", "Trigger stream overlay/event", "trigger stream overlay", "POST", "/api/stream/overlay", { source: "mountainview-ai", event: "{{payload}}" }],
       ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "{{destination}}", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", payload: "{{payload}}" }],
       ["cmd_twitch_stream_assist", "streamweaver", "Start Twitch screen assist", "start twitch assist", "POST", "/api/twitch/screen-assist/start", { source: "mountainview-ai", trigger: "twitch-logo", transcript: "{{transcript}}", payload: "{{payload}}" }],
-      ["cmd_discord_event", "discordstreamhub", "Push event to DiscordStreamHub", "push event to discord", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
-      ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub message", "send discord stream message", "POST", "/api/messages", { source: "mountainview-ai", message: "{{message}}", payload: "{{payload}}" }],
-      ["cmd_chat_tag", "chat-tag", "Trigger Chat-Tag workflow", "trigger chat tag", "POST", "/api/tags/events", { source: "mountainview-ai", tag: "{{payload}}" }],
-      ["cmd_chat_tag_qr", "chat-tag", "Trigger QR tag workflow", "scan qr trigger", "POST", "/api/tags/qr", { source: "mountainview-ai", qr: "{{qr}}", payload: "{{payload}}" }],
-      ["cmd_hearmeout", "hearmeout", "Trigger HearMeOut workflow", "trigger hear me out", "POST", "/api/events", { source: "mountainview-ai", event: "{{payload}}" }],
-      ["cmd_hearmeout_voice_room", "hearmeout", "Join HearMeOut voice room", "join voice room", "POST", "/api/rooms/join", { source: "mountainview-ai", roomId: "{{roomId}}", payload: "{{payload}}" }],
-      ["cmd_hearmeout_watch_party", "hearmeout", "Start HearMeOut watch party", "start watch party", "POST", "/api/watch-party/start", { source: "mountainview-ai", media: "{{payload}}" }],
-      ["cmd_hearmeout_song_request", "hearmeout", "Request HearMeOut song", "request song", "POST", "/api/song-requests", { source: "mountainview-ai", query: "{{payload}}", roomId: "{{roomId}}" }],
-      ["cmd_hearmeout_audiobook_request", "hearmeout", "Request HearMeOut audiobook", "request audiobook", "POST", "/api/media-requests/audiobook", { source: "mountainview-ai", query: "{{payload}}", roomId: "{{roomId}}", mediaType: "audiobook" }],
+      ["cmd_discord_event", "discordstreamhub", "Push Twitch event to DiscordStreamHub", "push event to discord", "POST", "/api/twitch/events", { source: "mountainview-ai", type: "{{eventType}}", serverId: "{{serverId}}", twitchLogin: "{{twitchUsername}}", username: "{{username}}", channel: "{{channel}}", message: "{{message}}" }],
+      ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub channel message", "send discord stream message", "POST", "/api/discord/post", { source: "mountainview-ai", channelId: "{{channelId}}", content: "{{message}}" }],
+      ["cmd_dsh_calendar_add_mission", "discordstreamhub", "Add DiscordStreamHub calendar mission", "add calendar mission", "POST", "/api/calendar/add-mission", { source: "mountainview-ai", serverId: "{{serverId}}", userId: "{{discordUserId}}", missionName: "{{missionName}}", missionDate: "{{missionDate}}", missionTime: "{{missionTime}}", missionDescription: "{{missionDescription}}" }],
+      ["cmd_dsh_calendar_post", "discordstreamhub", "Post DiscordStreamHub calendar", "post calendar to discord", "POST", "/api/calendar/post", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}" }],
+      ["cmd_dsh_calendar_generate", "discordstreamhub", "Generate DiscordStreamHub calendar embed", "generate calendar embed", "POST", "/api/calendar/generate", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}", includeButtons: "{{includeButtons}}" }],
+      ["cmd_chat_tag_live_members", "chat-tag", "Ask Chat-Tag who is live", "who is live", "GET", "/api/discord/live-members", {}],
+      ["cmd_chat_tag_state", "chat-tag", "Read Chat-Tag game state", "chat tag status", "GET", "/api/tag", {}],
+      ["cmd_chat_tag_join", "chat-tag", "Join Chat-Tag from glasses", "join chat tag", "POST", "/api/tag", { source: "mountainview-ai", action: "join", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", username: "{{username}}", performedBy: "{{performedBy}}" }],
+      ["cmd_chat_tag_tag", "chat-tag", "Tag a Chat-Tag player from glasses", "tag player", "POST", "/api/tag", { source: "mountainview-ai", action: "tag", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", targetUserId: "{{targetUserId}}", streamerId: "{{streamerId}}", performedBy: "{{performedBy}}", targetLookupError: "{{targetLookupError}}" }],
+      ["cmd_chat_tag", "chat-tag", "Tag a Chat-Tag player from glasses", "trigger chat tag", "POST", "/api/tag", { source: "mountainview-ai", action: "tag", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", targetUserId: "{{targetUserId}}", streamerId: "{{streamerId}}", performedBy: "{{performedBy}}", targetLookupError: "{{targetLookupError}}" }],
+      ["cmd_chat_tag_qr", "chat-tag", "Trigger QR Chat-Tag join/state workflow", "scan qr trigger", "POST", "/api/tag", { source: "mountainview-ai", action: "{{action}}", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", username: "{{username}}", performedBy: "{{performedBy}}" }],
+      ["cmd_hearmeout", "hearmeout", "Read HearMeOut music session", "trigger hear me out", "GET", "/api/music/session/state", {}],
+      ["cmd_hearmeout_voice_room", "hearmeout", "Register MountainView in HearMeOut voice room", "join voice room", "POST", "/api/peer-voice/register", { source: "mountainview-ai", roomId: "{{roomId}}", peerId: "{{peerId}}" }],
+      ["cmd_hearmeout_voice_peers", "hearmeout", "List HearMeOut voice room peers", "who is in hearmeout room", "GET", "/api/peer-voice/peers?roomId={{roomId}}", {}],
+      ["cmd_hearmeout_music_control", "hearmeout", "Control HearMeOut music session", "control hear me out music", "POST", "/api/music/session/control", { source: "mountainview-ai", action: "{{action}}", position: "{{position}}" }],
+      ["cmd_hearmeout_song_request", "hearmeout", "Request HearMeOut song", "request song", "POST", "/api/music/session/request", { source: "mountainview-ai", query: "{{query}}", username: "{{username}}", platform: "{{platform}}" }],
+      ["cmd_hearmeout_audiobook_request", "hearmeout", "Request HearMeOut audiobook/search item", "request audiobook", "POST", "/api/music/session/request", { source: "mountainview-ai", query: "{{query}}", username: "{{username}}", platform: "{{platform}}", mediaType: "audiobook" }],
       ["cmd_eden_scene", "edenai", "Analyze current scene with EdenAI", "ask ai what am i looking at", "POST", "/v2/image/explicit_content", { source: "mountainview-ai", image: "{{imageBase64}}", providers: "{{providers}}" }],
       ["cmd_eden_screen_read", "edenai", "Read visible screen text", "read my screen", "POST", "/v2/ocr/ocr", { source: "mountainview-ai", file: "{{imageBase64}}", providers: "{{providers}}", fallbackRoute: "streamweaver" }],
       ["cmd_eden_image_generation", "edenai", "Generate image from glasses context", "generate image from what i see", "POST", "/v2/image/generation", { source: "mountainview-ai", prompt: "{{prompt}}", contextImage: "{{imageBase64}}", providers: "{{providers}}" }],
@@ -842,9 +933,9 @@ class MountainViewContext {
     }
     const logoProfiles = [
       ["logo_streamweaver", "streamweaver", "StreamWeaver", ["streamweaver", "stream weaver", "spacemountain stream"], "cmd_streamweaver_voice_commander", 0.78],
-      ["logo_hearmeout", "hearmeout", "HearMeOut", ["hearmeout", "hear me out", "voice room"], "cmd_hearmeout_voice_room", 0.78],
-      ["logo_discordstreamhub", "discordstreamhub", "DiscordStreamHub", ["discordstreamhub", "discord stream hub", "discord"], "cmd_discord_event", 0.78],
-      ["logo_chattag", "chat-tag", "Chat-Tag", ["chat-tag", "chat tag", "tag trigger"], "cmd_chat_tag", 0.78],
+      ["logo_hearmeout", "hearmeout", "HearMeOut", ["hearmeout", "hear me out", "voice room"], "cmd_hearmeout", 0.78],
+      ["logo_discordstreamhub", "discordstreamhub", "DiscordStreamHub", ["discordstreamhub", "discord stream hub", "discord"], "cmd_dsh_calendar_add_mission", 0.78],
+      ["logo_chattag", "chat-tag", "Chat-Tag", ["chat-tag", "chat tag", "tag trigger"], "cmd_chat_tag_live_members", 0.78],
       ["logo_edenai", "edenai", "EdenAI", ["edenai", "eden ai", "ai router"], "cmd_eden_scene", 0.78],
       ["logo_twitch", "twitch", "Twitch", ["twitch", "twitch.tv", "purple chat", "live channel"], "cmd_twitch_stream_assist", 0.78],
       ["logo_discord", "discord", "Discord", ["discord", "discord app", "discord chat", "discord server"], "cmd_discord_message", 0.78]
@@ -860,7 +951,8 @@ class MountainViewContext {
       ["qr_stream_overlay", "Stream overlay trigger", "streamweaver", "cmd_stream_overlay", "mountainview://streamweaver/overlay/default", "stream-overlay"],
       ["qr_ar_avatar", "AR avatar room anchor", "streamweaver", "cmd_eden_image_generation", "mountainview://avatar/room-anchor/default", "ar-avatar"],
       ["qr_hearmeout_audiobook", "HearMeOut audiobook request", "hearmeout", "cmd_hearmeout_audiobook_request", "mountainview://hearmeout/audiobook/request", "media-request"],
-      ["qr_chat_tag_event", "Chat-Tag event trigger", "chat-tag", "cmd_chat_tag_qr", "mountainview://chat-tag/event/default", "tag-event"]
+      ["qr_chat_tag_join", "Chat-Tag join trigger", "chat-tag", "cmd_chat_tag_qr", "mountainview://chat-tag/join/default", "tag-join"],
+      ["qr_discord_calendar", "DiscordStreamHub calendar trigger", "discordstreamhub", "cmd_dsh_calendar_add_mission", "mountainview://discordstreamhub/calendar/add", "calendar-event"]
     ] as const;
     for (const trigger of qrTriggers) {
       this.db.prepare(`
@@ -954,23 +1046,199 @@ function asRecord(value: unknown): JsonRecord {
 }
 
 function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord {
-  if (commandId !== "cmd_streamweaver_voice_commander") return payload;
   const nestedPayload = asRecord(payload.payload);
-  const tenantId = String(payload.tenantId || nestedPayload.tenantId || DEFAULT_STREAMWEAVER_TENANT_ID);
-  const username = String(payload.username || nestedPayload.username || DEFAULT_STREAMWEAVER_USERNAME);
-  const channel = String(payload.channel || nestedPayload.channel || username);
-  return {
+  const message = readText(payload, "message") || readText(payload, "transcript") || readText(nestedPayload, "message") || readText(nestedPayload, "transcript");
+  const tenantId = readText(payload, "tenantId") || readText(nestedPayload, "tenantId") || DEFAULT_STREAMWEAVER_TENANT_ID;
+  const username = readText(payload, "username") || readText(nestedPayload, "username") || DEFAULT_STREAMWEAVER_USERNAME;
+  const twitchUsername = readText(payload, "twitchUsername") || readText(nestedPayload, "twitchUsername") || username;
+  const channel = readText(payload, "channel") || readText(nestedPayload, "channel") || username;
+  const base = {
     ...payload,
+    message,
+    transcript: readText(payload, "transcript") || message,
     tenantId,
     username,
+    twitchUsername,
     channel,
     payload: {
       ...nestedPayload,
+      message,
       tenantId,
       username,
+      twitchUsername,
       channel
     }
   };
+
+  if (commandId === "cmd_streamweaver_voice_commander") {
+    return base;
+  }
+
+  if (commandId === "cmd_discord_event") {
+    return {
+      ...base,
+      serverId: readText(base, "serverId") || DEFAULT_DISCORD_GUILD_ID,
+      eventType: readText(base, "eventType") || "chat_activity"
+    };
+  }
+
+  if (commandId === "cmd_discord_message") {
+    return {
+      ...base,
+      channelId: readText(base, "channelId") || DEFAULT_DISCORD_CHANNEL_ID
+    };
+  }
+
+  if (commandId.startsWith("cmd_dsh_calendar_")) {
+    const calendar = extractCalendarFields(message);
+    return {
+      ...base,
+      serverId: readText(base, "serverId") || DEFAULT_DISCORD_GUILD_ID,
+      channelId: readText(base, "channelId") || DEFAULT_DISCORD_CHANNEL_ID,
+      discordUserId: readText(base, "discordUserId") || DEFAULT_DISCORD_OWNER_ID,
+      missionName: readText(base, "missionName") || readText(base, "title") || calendar.title,
+      missionDate: readText(base, "missionDate") || readText(base, "date") || calendar.date,
+      missionTime: readText(base, "missionTime") || readText(base, "time") || calendar.time,
+      missionDescription: readText(base, "missionDescription") || readText(base, "description") || message || calendar.title,
+      includeButtons: payload.includeButtons ?? nestedPayload.includeButtons ?? true
+    };
+  }
+
+  if (commandId === "cmd_chat_tag" || commandId === "cmd_chat_tag_tag" || commandId === "cmd_chat_tag_join" || commandId === "cmd_chat_tag_qr") {
+    const action = commandId === "cmd_chat_tag_join" ? "join" : readText(base, "action") || (commandId === "cmd_chat_tag_qr" ? "join" : "tag");
+    const targetName = readText(base, "targetName") || readText(base, "target") || extractChatTagTarget(message);
+    return {
+      ...base,
+      action,
+      userId: readText(base, "userId") || DEFAULT_CHAT_TAG_USER_ID,
+      twitchUsername,
+      streamerId: readText(base, "streamerId") || DEFAULT_STREAMWEAVER_USERNAME,
+      performedBy: readText(base, "performedBy") || "mountainview-ai",
+      targetName,
+      targetUserId: readText(base, "targetUserId")
+    };
+  }
+
+  if (commandId === "cmd_hearmeout" || commandId === "cmd_hearmeout_song_request" || commandId === "cmd_hearmeout_audiobook_request") {
+    return {
+      ...base,
+      query: readText(base, "query") || message,
+      platform: readText(base, "platform") || "mountainview-glasses"
+    };
+  }
+
+  if (commandId === "cmd_hearmeout_voice_room" || commandId === "cmd_hearmeout_voice_peers") {
+    return {
+      ...base,
+      roomId: readText(base, "roomId") || DEFAULT_HEARMEOUT_ROOM_ID,
+      peerId: readText(base, "peerId") || `mountainview-${username}`
+    };
+  }
+
+  if (commandId === "cmd_hearmeout_music_control") {
+    return {
+      ...base,
+      action: readText(base, "action") || extractMusicAction(message),
+      position: Number(payload.position ?? nestedPayload.position ?? 0)
+    };
+  }
+
+  return {
+    ...base
+  };
+}
+
+function readText(source: JsonRecord, key: string): string {
+  const value = source[key];
+  return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+}
+
+function normalizeLookupName(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/^@+/, "").replace(/[^a-z0-9_]/g, "");
+}
+
+function extractChatTagTarget(message: string): string {
+  const match = message.match(/\b(?:tag|use\s+pass\s+on|pass\s+to)\s+@?([a-z0-9_][a-z0-9_.-]{1,30})/i);
+  return match?.[1]?.replace(/[.,!?]+$/, "") ?? "";
+}
+
+function findChatTagPlayer(players: unknown, targetName: string): JsonRecord | null {
+  if (!Array.isArray(players)) return null;
+  const target = normalizeLookupName(targetName);
+  if (!target) return null;
+  for (const player of players) {
+    const record = asRecord(player);
+    const names = [
+      record.id,
+      record.twitchUsername,
+      record.username,
+      record.displayName,
+      record.discordUsername,
+      record.kickUsername
+    ].map(normalizeLookupName).filter(Boolean);
+    if (names.includes(target)) return record;
+  }
+  return null;
+}
+
+function extractCalendarFields(message: string): { title: string; date: string; time: string } {
+  const now = new Date();
+  const lower = message.toLowerCase();
+  const date = extractIsoDate(message)
+    || formatDateOnly(new Date(now.getTime() + (lower.includes("tomorrow") ? 1 : 0) * 24 * 60 * 60 * 1000));
+  const time = extractClockTime(message);
+  const cleanedTitle = message
+    .replace(/\b(add|create|put|schedule)\b/ig, "")
+    .replace(/\b(to|on|in)\s+(my\s+)?(discord\s+stream\s+hub|discordstreamhub|calendar)\b/ig, "")
+    .replace(/\b(today|tomorrow)\b/ig, "")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "")
+    .replace(/\b\d{1,2}:\d{2}\s*(am|pm)?\b/ig, "")
+    .replace(/\b\d{1,2}\s*(am|pm)\b/ig, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    title: cleanedTitle || "MountainView reminder",
+    date,
+    time
+  };
+}
+
+function extractIsoDate(message: string): string {
+  const iso = message.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (iso) return iso[1];
+  const slash = message.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/);
+  if (!slash) return "";
+  const now = new Date();
+  const month = Number(slash[1]);
+  const day = Number(slash[2]);
+  const year = slash[3] ? Number(slash[3].length === 2 ? `20${slash[3]}` : slash[3]) : now.getFullYear();
+  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+  return formatDateOnly(new Date(year, month - 1, day));
+}
+
+function extractClockTime(message: string): string {
+  const match = message.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  const suffix = match[3]?.toLowerCase();
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function formatDateOnly(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function extractMusicAction(message: string): string {
+  const lower = message.toLowerCase();
+  if (/\b(pause|hold)\b/.test(lower)) return "pause";
+  if (/\b(resume|play|start)\b/.test(lower)) return "play";
+  if (/\b(skip|next)\b/.test(lower)) return "skip";
+  if (/\b(stop|end)\b/.test(lower)) return "stop";
+  return "play";
 }
 
 function normalizeRow(row: JsonRecord): JsonRecord {
@@ -1087,6 +1355,23 @@ class HttpError extends Error {
     message: string
   ) {
     super(message);
+  }
+}
+
+function appDisplayName(appId: string): string {
+  switch (appId) {
+    case "streamweaver":
+      return "StreamWeaver";
+    case "hearmeout":
+      return "HearMeOut";
+    case "discordstreamhub":
+      return "DiscordStreamHub";
+    case "chat-tag":
+      return "Chat-Tag";
+    case "edenai":
+      return "EdenAI";
+    default:
+      return appId;
   }
 }
 

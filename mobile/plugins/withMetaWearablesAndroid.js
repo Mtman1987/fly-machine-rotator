@@ -134,6 +134,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -160,6 +161,8 @@ class MountainViewMetaWearablesModule(
   private val researchLog = mutableListOf<String>()
   private val mediaButtonLog = mutableListOf<String>()
   private var activeGatt: BluetoothGatt? = null
+  private var activeRdGlassWriteCharacteristic: BluetoothGattCharacteristic? = null
+  private var rdGlassSequence: Int = 0
   private var mediaSession: MediaSession? = null
   private var speechRecognizer: SpeechRecognizer? = null
   private var speechPromise: Promise? = null
@@ -198,6 +201,37 @@ class MountainViewMetaWearablesModule(
   }
 
   @ReactMethod
+  fun prepareLocalVoiceOutput(promise: Promise) {
+    try {
+      val audioManager = reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+      @Suppress("DEPRECATION")
+      audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+      @Suppress("DEPRECATION")
+      audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+      @Suppress("DEPRECATION")
+      audioManager.isSpeakerphoneOn = true
+      var selectedDevice = "speakerphone"
+      if (Build.VERSION.SDK_INT >= 31) {
+        val speaker = audioManager.availableCommunicationDevices.firstOrNull {
+          it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        }
+        if (speaker != null && audioManager.setCommunicationDevice(speaker)) {
+          selectedDevice = "built-in-speaker"
+        }
+      }
+      val result = WritableNativeMap()
+      result.putBoolean("androidNativeBridge", true)
+      result.putString("state", "local-voice-output-prepared")
+      result.putString("selectedDevice", selectedDevice)
+      result.putString("note", "Requested phone-local speech output before Athena speaks. Android may still honor the user's active media-output picker for some TTS engines.")
+      appendMediaButtonLog("local voice output prepared " + selectedDevice)
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("LOCAL_VOICE_OUTPUT_FAILED", error.message ?: "Could not prepare local voice output.")
+    }
+  }
+
+  @ReactMethod
   fun getSdkStatus(promise: Promise) {
     val result = WritableNativeMap()
     result.putBoolean("androidNativeBridge", true)
@@ -210,8 +244,10 @@ class MountainViewMetaWearablesModule(
     result.putString("wakePhraseNote", "Android can request microphone/foreground-service permissions, but always-on custom wake phrases require a foreground service or vendor SDK support.")
     result.putString("rdGlassPackage", "com.rd.rdglass")
     result.putString("rdGlassVersionObserved", "1.2.6")
-    result.putString("rdGlassAudioHint", "16 kHz mono PCM voice events were observed in the exported RDGlass assets.")
-    result.putString("genericBleHint", "Look for AiMB/RDGlass/MA08/MA15 devices and Nordic UART-like UUIDs 6E40AB01/02/03-B5A3-F393-E0A9-E50E24DCCA9E.")
+    result.putString("rdGlassProtocol", "Confirmed RDGlass service 0000fa00, notify 0000ea01, write 0000ea02, framed command prefix ED 40.")
+    result.putString("rdGlassAudioHint", "RDGlass APK exposes AI, media trigger, image-data, camera-test, and flashlight-test commands.")
+    result.putString("genericBleHint", "Look for AiMB/RDGlass/MA08/MA15 devices plus service 0000fa00-0000-1000-8000-00805f9b34fb.")
+    result.putBoolean("rdGlassCommandSupported", true)
     result.putBoolean("mediaButtonCommandModeSupported", true)
     result.putString("mediaButtonNote", "Glasses media/headset buttons can be captured while MountainView command mode owns an Android MediaSession.")
     promise.resolve(result)
@@ -515,6 +551,7 @@ class MountainViewMetaWearablesModule(
       }
       appendResearchLog("connect requested: " + safeName(device) + " " + address)
       activeGatt?.close()
+      activeRdGlassWriteCharacteristic = null
       activeGatt = device.connectGatt(reactContext, false, gattCallback)
       val result = WritableNativeMap()
       result.putBoolean("androidNativeBridge", true)
@@ -579,6 +616,48 @@ class MountainViewMetaWearablesModule(
     promise.resolve(result)
   }
 
+  @SuppressLint("MissingPermission")
+  @ReactMethod
+  fun sendRdGlassCommand(commandId: Int, payloadHex: String, promise: Promise) {
+    try {
+      sendRdGlassCommandInternal(commandId, parseHexPayload(payloadHex), "manual-rdglass-command", promise)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("RDGLASS_BAD_PAYLOAD", error.message ?: "Invalid RDGlass payload hex.")
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  @ReactMethod
+  fun testRdGlassCamera(promise: Promise) {
+    sendRdGlassCommandInternal(0x1303, byteArrayOf(), "rdglass-test-camera", promise)
+  }
+
+  @SuppressLint("MissingPermission")
+  @ReactMethod
+  fun testRdGlassFlashlight(promise: Promise) {
+    sendRdGlassCommandInternal(0x130b, byteArrayOf(0x01.toByte()), "rdglass-test-flashlight", promise)
+  }
+
+  @SuppressLint("MissingPermission")
+  @ReactMethod
+  fun triggerRdGlassIntent(intent: Int, promise: Promise) {
+    if (intent !in 0..2) {
+      promise.reject("RDGLASS_BAD_INTENT", "RDGlass AI intent must be 0 Command, 1 VisualQA, or 2 PhotoRecognition.")
+      return
+    }
+    sendRdGlassCommandInternal(0x120a, byteArrayOf(intent.toByte()), "rdglass-ai-intent", promise)
+  }
+
+  @SuppressLint("MissingPermission")
+  @ReactMethod
+  fun setRdGlassMediaTrigger(task: Int, enabled: Boolean, promise: Promise) {
+    if (task !in 0..5) {
+      promise.reject("RDGLASS_BAD_MEDIA_TASK", "RDGlass media task must be 0 NONE, 1 Photo, 2 Video, 3 Audio, 4 Recognize, or 5 AI.")
+      return
+    }
+    sendRdGlassCommandInternal(0x120e, byteArrayOf(task.toByte(), if (enabled) 0x01.toByte() else 0x00.toByte()), "rdglass-media-trigger", promise)
+  }
+
   private val gattCallback = object : BluetoothGattCallback() {
     @SuppressLint("MissingPermission")
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -594,6 +673,10 @@ class MountainViewMetaWearablesModule(
       gatt.services.forEach { service ->
         appendResearchLog("service " + service.uuid.toString())
         service.characteristics.forEach { characteristic ->
+          if (service.uuid == RDGLASS_SERVICE_UUID && characteristic.uuid == RDGLASS_WRITE_UUID) {
+            activeRdGlassWriteCharacteristic = characteristic
+            appendResearchLog("rdglass write characteristic armed " + characteristic.uuid.toString())
+          }
           appendResearchLog("  characteristic " + characteristic.uuid.toString() + " props " + characteristicProperties(characteristic.properties))
         }
       }
@@ -757,6 +840,12 @@ class MountainViewMetaWearablesModule(
     event.putString("hex", hex)
     event.putInt("byteLength", bytes.size)
     event.putDouble("timestamp", System.currentTimeMillis().toDouble())
+    decodeRdGlassFrame(bytes)?.let { frame ->
+      event.putString("rdCommand", frame.commandName)
+      event.putInt("rdCommandId", frame.commandId)
+      event.putString("rdPayloadHex", bytesToHex(frame.payload))
+      appendResearchLog("rdglass notify " + frame.commandName + " 0x" + frame.commandId.toString(16) + " payload " + bytesToHex(frame.payload))
+    }
     reactContext
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
       .emit("MountainViewBleNotification", event)
@@ -881,16 +970,157 @@ class MountainViewMetaWearablesModule(
     }
   }
 
+  @SuppressLint("MissingPermission")
+  private fun sendRdGlassCommandInternal(commandId: Int, payload: ByteArray, label: String, promise: Promise) {
+    if (!hasBlePermissions()) {
+      promise.reject("BLE_PERMISSION_REQUIRED", "Grant Bluetooth connect permissions before sending RDGlass commands.")
+      return
+    }
+    val gatt = activeGatt
+    if (gatt == null) {
+      promise.reject("BLE_NOT_CONNECTED", "Connect to the RDGlass/AiMB BLE device first.")
+      return
+    }
+    val characteristic = activeRdGlassWriteCharacteristic ?: findRdGlassWriteCharacteristic(gatt)
+    if (characteristic == null) {
+      promise.reject("RDGLASS_WRITE_NOT_FOUND", "RDGlass write characteristic 0000ea02 was not discovered.")
+      return
+    }
+    activeRdGlassWriteCharacteristic = characteristic
+    val frame = buildRdGlassFrame(commandId, payload)
+    val writeType = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+      BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+    } else {
+      BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+    }
+    val wrote = if (Build.VERSION.SDK_INT >= 33) {
+      gatt.writeCharacteristic(characteristic, frame, writeType) == 0
+    } else {
+      characteristic.writeType = writeType
+      characteristic.value = frame
+      gatt.writeCharacteristic(characteristic)
+    }
+    appendResearchLog(label + " send " + rdGlassCommandName(commandId) + " frame " + bytesToHex(frame) + " wrote " + wrote)
+    val result = WritableNativeMap()
+    result.putBoolean("androidNativeBridge", true)
+    result.putString("state", if (wrote) "rdglass-command-sent" else "rdglass-command-write-failed")
+    result.putString("label", label)
+    result.putInt("commandId", commandId)
+    result.putString("commandName", rdGlassCommandName(commandId))
+    result.putString("payloadHex", bytesToHex(payload))
+    result.putString("frameHex", bytesToHex(frame))
+    result.putString("writeCharacteristic", characteristic.uuid.toString())
+    promise.resolve(result)
+  }
+
+  private fun findRdGlassWriteCharacteristic(gatt: BluetoothGatt): BluetoothGattCharacteristic? {
+    val service = gatt.getService(RDGLASS_SERVICE_UUID) ?: return null
+    return service.getCharacteristic(RDGLASS_WRITE_UUID) ?: service.characteristics.firstOrNull {
+      it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0 ||
+        it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+    }
+  }
+
+  private fun buildRdGlassFrame(commandId: Int, payload: ByteArray): ByteArray {
+    val commandPayload = ByteArray(2 + payload.size)
+    commandPayload[0] = ((commandId shr 8) and 0xff).toByte()
+    commandPayload[1] = (commandId and 0xff).toByte()
+    payload.copyInto(commandPayload, 2)
+    val crc = rdGlassCrc(commandPayload)
+    val seq = rdGlassSequence and 0xff
+    rdGlassSequence = (rdGlassSequence + 1) and 0xff
+    val length = commandPayload.size
+    val frame = ByteArray(6 + length)
+    frame[0] = 0xed.toByte()
+    frame[1] = 0x40.toByte()
+    frame[2] = seq.toByte()
+    frame[3] = crc.toByte()
+    frame[4] = ((length shr 8) and 0xff).toByte()
+    frame[5] = (length and 0xff).toByte()
+    commandPayload.copyInto(frame, 6)
+    return frame
+  }
+
+  private fun rdGlassCrc(bytes: ByteArray): Int {
+    var crc = 255
+    bytes.forEach { item ->
+      crc = crc xor (item.toInt() and 255)
+      repeat(8) {
+        val lsb = crc and 1
+        crc = crc ushr 1
+        if (lsb != 0) crc = crc xor 184
+      }
+    }
+    return crc and 255
+  }
+
+  private fun parseHexPayload(hex: String): ByteArray {
+    val clean = hex.replace(Regex("[^0-9a-fA-F]"), "")
+    if (clean.isEmpty()) return byteArrayOf()
+    if (clean.length % 2 != 0) throw IllegalArgumentException("Hex payload must have an even number of digits.")
+    return ByteArray(clean.length / 2) { index ->
+      clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+    }
+  }
+
+  private fun decodeRdGlassFrame(bytes: ByteArray): RdGlassFrame? {
+    if (bytes.size < 8) return null
+    if ((bytes[0].toInt() and 255) != 0xed) return null
+    val length = ((bytes[4].toInt() and 255) shl 8) or (bytes[5].toInt() and 255)
+    if (length < 2 || bytes.size < 6 + length) return null
+    val commandId = ((bytes[6].toInt() and 255) shl 8) or (bytes[7].toInt() and 255)
+    val payload = bytes.copyOfRange(8, 6 + length)
+    return RdGlassFrame(commandId, rdGlassCommandName(commandId), payload)
+  }
+
+  private fun rdGlassCommandName(commandId: Int): String {
+    return when (commandId) {
+      0x1120 -> "BKGetNetworkStatus"
+      0x1121 -> "BKScanWiFi"
+      0x1122 -> "BKWiFiList"
+      0x1123 -> "BKConnectWiFi"
+      0x1124 -> "BKControlWifi"
+      0x1201 -> "BKSetAccessToken"
+      0x1203 -> "BKMediaChanges"
+      0x1204 -> "BKRequestAI"
+      0x1205 -> "BKRecordControl"
+      0x1206 -> "BKRecordData"
+      0x1207 -> "BKStopRecord"
+      0x1208 -> "BKResumeRecord"
+      0x1209 -> "BKWearingDetection"
+      0x120a -> "BKAIIntent"
+      0x120b -> "BKIntentImageData"
+      0x120c -> "BKServerVAD"
+      0x120d -> "BKGetMediaTrigger"
+      0x120e -> "BKSetMediaTrigger"
+      0x1210 -> "BKReliableImageDataTransfer"
+      0x1212 -> "BKMediaControl"
+      0x1303 -> "BKTestCamera"
+      0x130b -> "BKTestFlashlight"
+      0x1401 -> "XKEnterWiFiMode"
+      0x1402 -> "XKExitWiFiMode"
+      else -> "RDGlassCommand0x" + commandId.toString(16)
+    }
+  }
+
   private fun bytesToHex(bytes: ByteArray): String =
     bytes.take(64).joinToString(" ") { "%02x".format(it) }
 
   companion object {
     private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+    private val RDGLASS_SERVICE_UUID: UUID = UUID.fromString("0000fa00-0000-1000-8000-00805f9b34fb")
+    private val RDGLASS_WRITE_UUID: UUID = UUID.fromString("0000ea02-0000-1000-8000-00805f9b34fb")
   }
 
   data class PendingDescriptorWrite(
     val descriptor: BluetoothGattDescriptor,
     val value: ByteArray
+  )
+
+  data class RdGlassFrame(
+    val commandId: Int,
+    val commandName: String,
+    val payload: ByteArray
   )
 
   @ReactMethod

@@ -254,7 +254,12 @@ export default function App() {
     }
   }
 
-  function speakText(text: string) {
+  async function speakText(text: string) {
+    try {
+      await metaWearables.prepareLocalVoiceOutput();
+    } catch {
+      // Local routing is best-effort; Expo speech can still use the active Android output route.
+    }
     return new Promise<void>((resolve) => {
       const spokenText = text.trim();
       if (!spokenText) {
@@ -642,12 +647,59 @@ export default function App() {
 
   async function requestGlassesFlashlight() {
     try {
-      announce("Requesting glasses flashlight...");
-      const result = await metaWearables.setFlashlight(true);
+      announce("Sending RDGlass flashlight diagnostic...");
+      const result = await metaWearables.testRdGlassFlashlight();
       setLog(JSON.stringify(result, null, 2));
-      setStatusMessage(`Flashlight result: ${String(result.state ?? "checked")}`);
+      setStatusMessage(`RDGlass flashlight diagnostic: ${String(result.state ?? "checked")}`);
     } catch (error) {
       reportError("Flashlight", error);
+    }
+  }
+
+  async function testRdGlassCamera() {
+    try {
+      announce("Sending RDGlass camera diagnostic...");
+      const result = await metaWearables.testRdGlassCamera();
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`RDGlass camera diagnostic: ${String(result.state ?? "checked")}`);
+    } catch (error) {
+      reportError("RDGlass camera diagnostic", error);
+    }
+  }
+
+  async function triggerRdGlassVisualQa() {
+    try {
+      announce("Triggering RDGlass VisualQA intent...");
+      const result = await metaWearables.triggerRdGlassIntent(1);
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`RDGlass VisualQA trigger: ${String(result.state ?? "checked")}`);
+    } catch (error) {
+      reportError("RDGlass VisualQA", error);
+    }
+  }
+
+  async function triggerRdGlassPhotoRecognition() {
+    try {
+      announce("Triggering RDGlass photo recognition intent...");
+      const result = await metaWearables.triggerRdGlassIntent(2);
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`RDGlass photo recognition trigger: ${String(result.state ?? "checked")}`);
+    } catch (error) {
+      reportError("RDGlass photo recognition", error);
+    }
+  }
+
+  async function enableRdGlassImageTriggers() {
+    try {
+      announce("Enabling RDGlass image AI media triggers...");
+      const photo = await metaWearables.setRdGlassMediaTrigger(1, true);
+      const recognize = await metaWearables.setRdGlassMediaTrigger(4, true);
+      const ai = await metaWearables.setRdGlassMediaTrigger(5, true);
+      const result = { photo, recognize, ai };
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage("RDGlass photo, recognize, and AI media triggers requested.");
+    } catch (error) {
+      reportError("RDGlass media triggers", error);
     }
   }
 
@@ -1138,7 +1190,7 @@ export default function App() {
                 <StatusCard label="Glasses" value={String(glassesStatus.state ?? "SDK gated")} tone="warn" detail="Android DAT bridge prepared for Meta Wearables events." />
                 <StatusCard label="Image AI" value="Relay only" tone="good" detail="No face recognition in MountainView AI." />
                 <StatusCard label="Streaming" value="Control ready" detail="Start/stop/overlay triggers are prepared." />
-                <StatusCard label="Flash" value={glassesStatus.flashControlSupported ? "Supported" : "Not exposed"} tone={glassesStatus.flashControlSupported ? "good" : "bad"} detail="Current public DAT docs do not list glasses torch control." />
+                <StatusCard label="Flash" value="RD test found" tone="warn" detail="RDGlass exposes BKTestFlashlight, not a confirmed steady torch toggle." />
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Meta glasses</Text>
@@ -1146,7 +1198,7 @@ export default function App() {
                 <Pressable style={styles.primaryButton} onPress={checkGlassesSdk}><Text style={styles.primaryButtonText}>SDK status</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={registerGlasses}><Text style={styles.secondaryButtonText}>Register glasses</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={captureGlassesPhoto}><Text style={styles.secondaryButtonText}>Capture glasses photo</Text></Pressable>
-                <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Request flashlight</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Test RDGlass flashlight</Text></Pressable>
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>RDGlass / AiMB research</Text>
@@ -1154,10 +1206,15 @@ export default function App() {
                 <View style={styles.hintBox}>
                   <Text style={styles.memoryTitle}>Bridge status</Text>
                   <Text style={styles.memoryBody}>{bleAutoConnectState}</Text>
-                  <Text style={styles.memoryBody}>{String(glassesStatus.bleAddress ?? defaultAimbAddress)}</Text>
-                </View>
-                <Pressable style={styles.primaryButton} onPress={() => autoArmGlassesBridge("manual")}><Text style={styles.primaryButtonText}>Auto-connect AiMB glasses</Text></Pressable>
-                <Pressable style={styles.primaryButton} onPress={requestBleResearchPermissions}><Text style={styles.primaryButtonText}>Grant BLE permissions</Text></Pressable>
+                <Text style={styles.memoryBody}>{String(glassesStatus.bleAddress ?? defaultAimbAddress)}</Text>
+              </View>
+              <Pressable style={styles.primaryButton} onPress={() => autoArmGlassesBridge("manual")}><Text style={styles.primaryButtonText}>Auto-connect AiMB glasses</Text></Pressable>
+              <Pressable style={styles.primaryButton} onPress={requestBleResearchPermissions}><Text style={styles.primaryButtonText}>Grant BLE permissions</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Test RDGlass flashlight</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={testRdGlassCamera}><Text style={styles.secondaryButtonText}>Test RDGlass camera</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={triggerRdGlassVisualQa}><Text style={styles.secondaryButtonText}>Trigger VisualQA</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={triggerRdGlassPhotoRecognition}><Text style={styles.secondaryButtonText}>Trigger photo recognition</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={enableRdGlassImageTriggers}><Text style={styles.secondaryButtonText}>Enable image AI triggers</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={loadBondedBluetoothDevices}><Text style={styles.secondaryButtonText}>Load paired Bluetooth devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={scanGenericBleDevices}><Text style={styles.secondaryButtonText}>Scan nearby BLE devices</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={discoverGenericBleServices}><Text style={styles.secondaryButtonText}>Discover connected services</Text></Pressable>
@@ -1236,8 +1293,16 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={startGlassesVideoStream}><Text style={styles.secondaryButtonText}>Start glasses video relay</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.secondaryButtonText}>Run StreamWeaver voice commander</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_room", "Join voice room")}><Text style={styles.secondaryButtonText}>Join HearMeOut voice room</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => setLog("Stop stream requested")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_stop", "Stop stream")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_overlay", "Overlay event requested")}><Text style={styles.secondaryButtonText}>Trigger overlay/event</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_add_mission", voicePrompt || "Add MountainView reminder tomorrow", "discord")}><Text style={styles.secondaryButtonText}>Add DSH calendar date</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_post", "Post the DiscordStreamHub calendar", "discord")}><Text style={styles.secondaryButtonText}>Post DSH calendar</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}><Text style={styles.secondaryButtonText}>Who is live?</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_tag", voicePrompt || "tag scarlett")}><Text style={styles.secondaryButtonText}>Tag Chat-Tag player</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout", "HearMeOut music session state")}><Text style={styles.secondaryButtonText}>HearMeOut session</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_peers", "Who is in the HearMeOut room?")}><Text style={styles.secondaryButtonText}>HearMeOut room peers</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_song_request", voicePrompt)}><Text style={styles.secondaryButtonText}>Request HearMeOut song</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_music_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control HearMeOut music</Text></Pressable>
             </View>
           )}
 

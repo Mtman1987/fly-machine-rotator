@@ -14,10 +14,16 @@ type MetaWearablesModule = {
   discoverGenericBleServices(): Promise<Record<string, unknown>>;
   subscribeGenericBleNotifications(): Promise<Record<string, unknown>>;
   getGenericBleLog(): Promise<Record<string, unknown>>;
+  sendRdGlassCommand(commandId: number, payloadHex?: string): Promise<Record<string, unknown>>;
+  testRdGlassCamera(): Promise<Record<string, unknown>>;
+  testRdGlassFlashlight(): Promise<Record<string, unknown>>;
+  triggerRdGlassIntent(intent: number): Promise<Record<string, unknown>>;
+  setRdGlassMediaTrigger(task: number, enabled: boolean): Promise<Record<string, unknown>>;
   startMediaButtonCommandMode(): Promise<Record<string, unknown>>;
   stopMediaButtonCommandMode(): Promise<Record<string, unknown>>;
   getMediaButtonLog(): Promise<Record<string, unknown>>;
   recognizeSpeechOnce(): Promise<Record<string, unknown>>;
+  prepareLocalVoiceOutput(): Promise<Record<string, unknown>>;
   playTone(name: string): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
 };
@@ -49,10 +55,16 @@ export const metaWearables: MetaWearablesModule = {
   discoverGenericBleServices: () => nativeModule?.discoverGenericBleServices?.() ?? unavailable("discoverGenericBleServices"),
   subscribeGenericBleNotifications: () => nativeModule?.subscribeGenericBleNotifications?.() ?? unavailable("subscribeGenericBleNotifications"),
   getGenericBleLog: () => nativeModule?.getGenericBleLog?.() ?? unavailable("getGenericBleLog"),
+  sendRdGlassCommand: (commandId: number, payloadHex = "") => nativeModule?.sendRdGlassCommand?.(commandId, payloadHex) ?? unavailable(`sendRdGlassCommand:${commandId}`),
+  testRdGlassCamera: () => nativeModule?.testRdGlassCamera?.() ?? unavailable("testRdGlassCamera"),
+  testRdGlassFlashlight: () => nativeModule?.testRdGlassFlashlight?.() ?? unavailable("testRdGlassFlashlight"),
+  triggerRdGlassIntent: (intent: number) => nativeModule?.triggerRdGlassIntent?.(intent) ?? unavailable(`triggerRdGlassIntent:${intent}`),
+  setRdGlassMediaTrigger: (task: number, enabled: boolean) => nativeModule?.setRdGlassMediaTrigger?.(task, enabled) ?? unavailable(`setRdGlassMediaTrigger:${task}:${enabled}`),
   startMediaButtonCommandMode: () => nativeModule?.startMediaButtonCommandMode?.() ?? unavailable("startMediaButtonCommandMode"),
   stopMediaButtonCommandMode: () => nativeModule?.stopMediaButtonCommandMode?.() ?? unavailable("stopMediaButtonCommandMode"),
   getMediaButtonLog: () => nativeModule?.getMediaButtonLog?.() ?? unavailable("getMediaButtonLog"),
   recognizeSpeechOnce: () => nativeModule?.recognizeSpeechOnce?.() ?? unavailable("recognizeSpeechOnce"),
+  prepareLocalVoiceOutput: () => nativeModule?.prepareLocalVoiceOutput?.() ?? unavailable("prepareLocalVoiceOutput"),
   playTone: (name: string) => nativeModule?.playTone?.(name) ?? unavailable(`playTone:${name}`),
   setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
 };
