@@ -31,6 +31,7 @@ type MountainViewConfig = {
 
 const defaultConfig: MountainViewConfig = {
   services: [
+    { id: "mountainview", name: "MountainView AI", baseUrl: "https://mtman-machine-rotator.fly.dev/mountainview" },
     { id: "streamweaver", name: "StreamWeaver", baseUrl: "https://streamweaver-new.fly.dev" },
     { id: "discordstreamhub", name: "DiscordStreamHub", baseUrl: "https://discord-stream-hub-new.fly.dev" },
     { id: "chat-tag", name: "Chat-Tag", baseUrl: "https://chat-tag-new.fly.dev" },
@@ -41,12 +42,21 @@ const defaultConfig: MountainViewConfig = {
     toolkitStatus: "Developer preview bridge. Camera/audio/display support depends on Meta Wearables Device Access Toolkit availability for the signed-in developer account and target glasses.",
     flashControlSupported: false,
     notes: [
-      "MountainView AI does not run face recognition.",
-      "Image analysis is delegated to StreamWeaver or configured Spacemountain services.",
+      "Face/profile memory is explicit and owner-controlled.",
+      "Image analysis can be delegated to EdenAI, StreamWeaver, or configured Spacemountain services.",
       "Direct glasses live streaming and flash control are capability-gated until exposed by the Meta SDK/API available to this app.",
       "RDGlass/AiMB research mode can scan BLE, discover GATT services, and log characteristics without sending unknown control packets."
     ]
   }
+};
+
+const EDEN_AI_FEATURE_ENDPOINTS: Record<string, string> = {
+  face_detection: "/v2/image/face_detection/",
+  face_recognition: "/v2/image/face_recognition/recognize/",
+  logo_detection: "/v2/image/logo_detection/",
+  object_detection: "/v2/image/object_detection/",
+  ocr: "/v2/ocr/ocr",
+  question_answer: "/v2/image/question_answer/"
 };
 
 export async function handleMountainViewRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv): Promise<boolean> {
@@ -93,6 +103,7 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       config: context.publicConfig(),
       commands: context.listCommands(user.id),
       memory: context.searchMemory(user.id, "", ""),
+      people: context.listPeople(user.id),
       mediaEvents: context.listGlassesMediaEvents(user.id),
       devices: context.listDevices(user.id),
       pollingProfiles: context.listPollingProfiles(user.id),
@@ -133,6 +144,47 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     const body = await readJson(request, 20 * 1024 * 1024);
     const result = await context.recordGlassesMediaEvent(user.id, body);
     return json(response, result);
+  }
+
+  if (method === "POST" && apiPath === "/api/vision/analyze") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 25 * 1024 * 1024);
+    return json(response, await context.analyzeVision(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/vision/route") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 25 * 1024 * 1024);
+    return json(response, context.routeVisualTarget(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/vision/smart-capture") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 25 * 1024 * 1024);
+    return json(response, await context.smartCapture(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/people") {
+    const user = context.requireAuth(request);
+    return json(response, { people: context.listPeople(user.id, url.searchParams.get("q") ?? "") });
+  }
+
+  if (method === "POST" && apiPath === "/api/people") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.savePersonProfile(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/people/remember") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, context.rememberPerson(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/media/generate") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 5 * 1024 * 1024);
+    return json(response, await context.generateMedia(user.id, body));
   }
 
   if (method === "GET" && apiPath === "/api/memory") {
@@ -448,6 +500,223 @@ class MountainViewContext {
     return { ok: true, event: { id, kind, source, targetApp, status, metadata, created_at: now } };
   }
 
+  async analyzeVision(userId: string, input: JsonRecord): Promise<JsonRecord> {
+    const features = normalizeVisionFeatures(input.features ?? input.feature ?? ["ocr", "logo_detection", "object_detection"]);
+    const providers = String(input.providers ?? "google,amazon").trim();
+    const question = String(input.question ?? "What is visible in this image?").trim();
+    const results: JsonRecord = {};
+    for (const feature of features) {
+      results[feature] = await this.callEdenAiFeature(userId, feature, {
+        ...input,
+        providers,
+        question
+      });
+    }
+    const labels = extractVisionLabels(results);
+    const route = this.routeVisualTarget(userId, { ...input, labels, vision: results });
+    const logoText = labels.join(" ");
+    const logoMatch = this.matchLogoProfile(userId, { observedText: logoText });
+    const logoRoute = asRecord(logoMatch.route);
+    const routeDevice = asRecord(route.device);
+    const event = this.recordGlassesMediaEvent(userId, {
+      kind: "vision-analysis",
+      source: String(input.source ?? "mountainview-vision"),
+      targetApp: String(logoRoute.appId ?? routeDevice.id ?? "mountainview"),
+      status: "analyzed",
+      metadata: { features, providers, labels, route, logoMatch, results }
+    });
+    return { ok: true, features, providers, labels, route, logoMatch, results, event: event.event };
+  }
+
+  routeVisualTarget(userId: string, input: JsonRecord): JsonRecord {
+    const text = [
+      String(input.observedText ?? ""),
+      String(input.text ?? ""),
+      String(input.message ?? ""),
+      ...normalizeTags(input.labels),
+      ...extractVisionLabels(input.vision)
+    ].join(" ").toLowerCase();
+    const devices = this.listDevices(userId);
+    const preferredId =
+      /\b(tablet|ipad|android tablet)\b/.test(text) ? "device_tablet" :
+      /\b(obs|stream machine|stream pc|overlay)\b/.test(text) ? "device_obs" :
+      /\b(computer|monitor|desktop|pc|laptop|screen)\b/.test(text) ? "device_pc" :
+      /\b(phone|mobile)\b/.test(text) ? "device_phone" :
+      "";
+    const device = devices.find((item) => String(item.id) === preferredId)
+      ?? devices.find((item) => String(item.kind).includes("computer"))
+      ?? devices[0]
+      ?? null;
+    const route = {
+      targetDeviceId: device ? String(device.id) : "",
+      targetDeviceName: device ? String(device.name) : "",
+      channel: device ? String(device.connection_hint ?? "local") : "local",
+      reason: preferredId ? "visual-device-match" : "default-companion-display"
+    };
+    this.recordGlassesMediaEvent(userId, {
+      kind: "visual-route",
+      source: String(input.source ?? "mountainview-vision"),
+      targetApp: "mountainview",
+      status: "routed",
+      metadata: { text, route, device }
+    });
+    return { ok: true, route, device };
+  }
+
+  listPeople(userId: string, query = ""): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM person_profiles WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100").all(userId) as JsonRecord[];
+    const q = query.trim().toLowerCase();
+    return rows.map(normalizeRow).filter((row) => {
+      if (!q) return true;
+      const haystack = `${row.display_name ?? ""} ${row.notes ?? ""} ${JSON.stringify(row.usernames ?? {})} ${JSON.stringify(row.aliases ?? [])}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  savePersonProfile(userId: string, input: JsonRecord): JsonRecord {
+    const now = new Date().toISOString();
+    const displayName = String(input.displayName ?? input.display_name ?? input.name ?? input.username ?? "Unknown person").trim();
+    const id = String(input.id ?? `person_${slugify(displayName)}_${Date.now()}`);
+    const usernames = asRecord(input.usernames);
+    for (const key of ["twitchUsername", "discordUsername", "kickUsername", "youtubeUsername"]) {
+      const value = input[key];
+      if (value) usernames[key.replace("Username", "")] = String(value).replace(/^@+/, "");
+    }
+    const reminders = normalizeReminderList(input.reminders ?? input.meetings ?? []);
+    const context = {
+      relationship: String(input.relationship ?? ""),
+      preferences: normalizeTags(input.preferences),
+      boundaries: normalizeTags(input.boundaries),
+      topics: normalizeTags(input.topics),
+      streamLogo: String(input.streamLogo ?? input.stream_logo ?? ""),
+      avatarUrl: String(input.avatarUrl ?? input.avatar_url ?? ""),
+      lastSeenContext: String(input.lastSeenContext ?? input.last_seen_context ?? ""),
+      source: String(input.source ?? "mountainview")
+    };
+    this.db.prepare(`
+      INSERT INTO person_profiles (id, user_id, display_name, aliases_json, usernames_json, context_json, reminders_json, notes, consent_mode, updated_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name = excluded.display_name,
+        aliases_json = excluded.aliases_json,
+        usernames_json = excluded.usernames_json,
+        context_json = excluded.context_json,
+        reminders_json = excluded.reminders_json,
+        notes = excluded.notes,
+        consent_mode = excluded.consent_mode,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      displayName,
+      JSON.stringify(normalizeTags(input.aliases)),
+      JSON.stringify(usernames),
+      JSON.stringify(context),
+      JSON.stringify(reminders),
+      String(input.notes ?? input.note ?? ""),
+      String(input.consentMode ?? input.consent_mode ?? "owner-memory"),
+      now,
+      now
+    );
+    const person = normalizeRow(this.db.prepare("SELECT * FROM person_profiles WHERE id = ?").get(id) as JsonRecord);
+    this.saveMemory(userId, {
+      kind: "person-profile",
+      title: `Profile: ${displayName}`,
+      body: buildPersonMemorySummary(person),
+      tags: ["person", "profile", ...Object.values(usernames).map(String).filter(Boolean)],
+      metadata: { personId: id, person }
+    });
+    return { ok: true, person };
+  }
+
+  rememberPerson(userId: string, input: JsonRecord): JsonRecord {
+    const person = this.savePersonProfile(userId, input);
+    const displayName = String((person.person as JsonRecord).display_name ?? input.displayName ?? input.name ?? "that person");
+    const memory = this.saveMemory(userId, {
+      kind: "person-note",
+      title: String(input.title ?? `Remember ${displayName}`),
+      body: String(input.note ?? input.notes ?? input.body ?? `Remember context for ${displayName}.`),
+      tags: ["person", "meeting", "glasses", ...normalizeTags(input.tags)],
+      metadata: { personId: (person.person as JsonRecord).id, source: "people/remember" }
+    });
+    return { ok: true, person: person.person, memory: memory.record };
+  }
+
+  async smartCapture(userId: string, input: JsonRecord): Promise<JsonRecord> {
+    const vision = await this.analyzeVision(userId, {
+      ...input,
+      features: input.features ?? ["ocr", "logo_detection", "object_detection", "face_detection"]
+    });
+    const profile = input.savePerson || input.displayName || input.twitchUsername
+      ? this.rememberPerson(userId, {
+        ...input,
+        source: "vision-smart-capture",
+        lastSeenContext: extractVisionLabels(vision.results).slice(0, 8).join(", ")
+      })
+      : null;
+    return {
+      ok: true,
+      vision,
+      profile,
+      reply: buildSmartCaptureReply(vision, profile)
+    };
+  }
+
+  async generateMedia(userId: string, input: JsonRecord): Promise<JsonRecord> {
+    const kind = String(input.kind ?? "image").toLowerCase();
+    const prompt = String(input.prompt ?? input.message ?? "Create a stream-ready visual from the current glasses context.").trim();
+    const commandId = kind === "video" ? "cmd_eden_video_generation" : "cmd_streamweaver_image_generate";
+    return this.executeCommand(userId, commandId, {
+      ...input,
+      prompt,
+      message: prompt,
+      payload: { ...asRecord(input.payload), prompt }
+    });
+  }
+
+  private async callEdenAiFeature(userId: string, feature: string, input: JsonRecord): Promise<JsonRecord> {
+    const endpoint = EDEN_AI_FEATURE_ENDPOINTS[feature];
+    if (!endpoint) return { ok: false, error: `Unsupported EdenAI feature: ${feature}` };
+    const token = this.getServiceToken(userId, "edenai") || this.env.EDENAI_API_KEY || this.env.EDEN_AI_API_KEY || "";
+    if (!token) {
+      return { ok: false, feature, error: "EdenAI token is not configured. Store it under service 'edenai' in MountainView settings." };
+    }
+    const integration = this.getIntegration("edenai");
+    const url = new URL(endpoint, integration.baseUrl).toString();
+    const started = Date.now();
+    let status = 0;
+    let responseText = "";
+    try {
+      const form = new FormData();
+      form.set("providers", String(input.providers ?? "google,amazon"));
+      if (feature === "question_answer") form.set("question", String(input.question ?? "What is visible in this image?"));
+      const imageUrl = String(input.imageUrl ?? input.image_url ?? "").trim();
+      const imageBase64 = String(input.imageBase64 ?? input.image ?? input.file ?? "").trim();
+      if (imageUrl) {
+        form.set("file_url", imageUrl);
+      } else if (imageBase64) {
+        const image = decodeBase64Media(imageBase64);
+        form.set("file", new Blob([image.buffer], { type: image.mimeType }), image.filename);
+      } else {
+        return { ok: false, feature, error: "imageBase64 or imageUrl is required." };
+      }
+      const result = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: form
+      });
+      status = result.status;
+      responseText = await result.text();
+      const parsed = parseMaybeJson(responseText);
+      this.logCommand(userId, `edenai-${feature}`, "edenai", "POST", url, result.ok ? "success" : "error", status, Date.now() - started, responseText.slice(0, 4000), result.ok ? "" : `HTTP ${status}`);
+      return { ok: result.ok, feature, status, response: parsed };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logCommand(userId, `edenai-${feature}`, "edenai", "POST", url, "error", status, Date.now() - started, responseText.slice(0, 4000), message);
+      return { ok: false, feature, status, error: message, response: parseMaybeJson(responseText) };
+    }
+  }
+
   private async prepareCommandPayload(userId: string, commandId: string, payload: JsonRecord): Promise<JsonRecord> {
     const next = withCommandDefaults(commandId, payload);
     if (commandId !== "cmd_chat_tag_tag" || readText(next, "targetUserId")) return next;
@@ -738,6 +1007,11 @@ class MountainViewContext {
     return { ok: true };
   }
 
+  private getServiceToken(userId: string, serviceId: string): string {
+    const row = this.db.prepare("SELECT encrypted_token FROM service_tokens WHERE user_id = ? AND service_id = ?").get(userId, serviceId) as { encrypted_token: string } | undefined;
+    return row ? this.decrypt(row.encrypted_token) : "";
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -779,6 +1053,19 @@ class MountainViewContext {
         body TEXT NOT NULL,
         tags_json TEXT NOT NULL,
         metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS person_profiles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        aliases_json TEXT NOT NULL,
+        usernames_json TEXT NOT NULL,
+        context_json TEXT NOT NULL,
+        reminders_json TEXT NOT NULL,
+        notes TEXT NOT NULL,
+        consent_mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS media_uploads (
@@ -858,12 +1145,26 @@ class MountainViewContext {
       `).run(service.id, service.name, service.baseUrl, JSON.stringify(service.defaultHeaders ?? {}), now);
     }
     const defaults = [
-      ["cmd_streamweaver_image", "streamweaver", "Send image to StreamWeaver", "send image to streamweaver", "POST", "/api/mountainview/image-relay", { source: "meta-glasses", imageBase64: "{{imageBase64}}", metadata: "{{metadata}}" }],
-      ["cmd_stream_start", "streamweaver", "Start stream workflow", "start stream workflow", "POST", "/api/stream/start", { source: "mountainview-ai", payload: "{{payload}}" }],
+      ["cmd_vision_smart_capture", "mountainview", "Smart glasses vision capture", "smart capture what i see", "POST", "/api/vision/smart-capture", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: "{{features}}", providers: "{{providers}}", question: "{{question}}", message: "{{message}}", savePerson: "{{savePerson}}", displayName: "{{displayName}}", twitchUsername: "{{twitchUsername}}" }],
+      ["cmd_vision_route_device", "mountainview", "Route visual result to best device", "send this where i am looking", "POST", "/api/vision/route", { source: "mountainview-ai", observedText: "{{message}}", labels: "{{labels}}", vision: "{{vision}}" }],
+      ["cmd_vision_face_detect", "mountainview", "Detect faces with EdenAI", "detect faces", "POST", "/api/vision/analyze", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: ["face_detection"], providers: "{{providers}}" }],
+      ["cmd_vision_logo_detect", "mountainview", "Detect stream/app logos with EdenAI", "detect logo", "POST", "/api/vision/analyze", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: ["logo_detection"], providers: "{{providers}}" }],
+      ["cmd_vision_object_detect", "mountainview", "Detect objects with EdenAI", "detect objects", "POST", "/api/vision/analyze", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: ["object_detection"], providers: "{{providers}}" }],
+      ["cmd_vision_screen_read", "mountainview", "Read visible screen with EdenAI OCR", "read what i see", "POST", "/api/vision/analyze", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: ["ocr"], providers: "{{providers}}" }],
+      ["cmd_profile_save_person", "mountainview", "Save person/profile memory", "save this person", "POST", "/api/people/remember", { source: "mountainview-ai", displayName: "{{displayName}}", twitchUsername: "{{twitchUsername}}", discordUsername: "{{discordUsername}}", relationship: "{{relationship}}", notes: "{{message}}", reminders: "{{reminders}}", topics: "{{topics}}", preferences: "{{preferences}}", boundaries: "{{boundaries}}", avatarUrl: "{{avatarUrl}}", streamLogo: "{{streamLogo}}" }],
+      ["cmd_profile_meeting_reminder", "mountainview", "Save meeting reminder for person", "remember meeting with this person", "POST", "/api/people/remember", { source: "mountainview-ai", displayName: "{{displayName}}", notes: "{{message}}", reminders: [{ "kind": "meeting", "when": "{{meetingWhen}}", "note": "{{message}}" }], topics: "{{topics}}" }],
+      ["cmd_streamweaver_image", "streamweaver", "Send image to StreamWeaver", "send image to streamweaver", "POST", "/api/ai/image", { source: "meta-glasses", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", providerParams: "{{providerParams}}", contextImage: "{{imageBase64}}" }],
+      ["cmd_streamweaver_image_generate", "streamweaver", "Generate StreamWeaver image", "generate stream image", "POST", "/api/ai/image", { source: "mountainview-ai", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", resolution: "{{resolution}}", numImages: "{{numImages}}", providerParams: "{{providerParams}}" }],
+      ["cmd_streamweaver_image_regenerate", "streamweaver", "Regenerate image from glasses context", "regenerate this image", "POST", "/api/ai/image", { source: "mountainview-ai", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", providerParams: { "mode": "regenerate", "contextImage": "{{imageBase64}}", "scene": "{{message}}" } }],
+      ["cmd_streamweaver_tts", "streamweaver", "Speak Athena through StreamWeaver", "speak on stream", "POST", "/api/tts", { source: "mountainview-ai", text: "{{message}}", tenantId: "{{tenantId}}", voice: "{{voice}}" }],
+      ["cmd_streamweaver_tts_play", "streamweaver", "Play Athena TTS audio", "play athena audio", "GET", "/api/tts/play?text={{message}}&tenantId={{tenantId}}", {}],
+      ["cmd_stream_start", "streamweaver", "Start Twitch client workflow", "start stream workflow", "POST", "/api/twitch/start", { source: "mountainview-ai", tenantId: "{{tenantId}}", payload: "{{payload}}" }],
       ["cmd_stream_stop", "streamweaver", "Stop stream workflow", "stop stream workflow", "POST", "/api/stream/stop", { source: "mountainview-ai", payload: "{{payload}}" }],
       ["cmd_stream_audio", "streamweaver", "Start glasses audio relay", "start glasses audio", "POST", "/api/glasses/audio-stream/start", { source: "mountainview-ai", device: "{{device}}", roomId: "{{roomId}}", payload: "{{payload}}" }],
       ["cmd_stream_video", "streamweaver", "Start glasses video relay", "start glasses video", "POST", "/api/glasses/video-stream/start", { source: "mountainview-ai", device: "{{device}}", roomId: "{{roomId}}", payload: "{{payload}}" }],
       ["cmd_stream_overlay", "streamweaver", "Trigger stream overlay/event", "trigger stream overlay", "POST", "/api/stream/overlay", { source: "mountainview-ai", event: "{{payload}}" }],
+      ["cmd_streamweaver_obs_scenes", "streamweaver", "Read StreamWeaver OBS scenes", "what obs scenes do i have", "GET", "/api/obs/scenes", {}],
+      ["cmd_streamweaver_overlay_data", "streamweaver", "Read StreamWeaver overlay data", "show overlay data", "GET", "/api/overlay/{{overlayType}}?tenant={{tenantId}}", {}],
       ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "{{destination}}", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", payload: "{{payload}}" }],
       ["cmd_twitch_stream_assist", "streamweaver", "Start Twitch screen assist", "start twitch assist", "POST", "/api/twitch/screen-assist/start", { source: "mountainview-ai", trigger: "twitch-logo", transcript: "{{transcript}}", payload: "{{payload}}" }],
       ["cmd_discord_event", "discordstreamhub", "Push Twitch event to DiscordStreamHub", "push event to discord", "POST", "/api/twitch/events", { source: "mountainview-ai", type: "{{eventType}}", serverId: "{{serverId}}", twitchLogin: "{{twitchUsername}}", username: "{{username}}", channel: "{{channel}}", message: "{{message}}" }],
@@ -883,9 +1184,12 @@ class MountainViewContext {
       ["cmd_hearmeout_music_control", "hearmeout", "Control HearMeOut music session", "control hear me out music", "POST", "/api/music/session/control", { source: "mountainview-ai", action: "{{action}}", position: "{{position}}" }],
       ["cmd_hearmeout_song_request", "hearmeout", "Request HearMeOut song", "request song", "POST", "/api/music/session/request", { source: "mountainview-ai", query: "{{query}}", username: "{{username}}", platform: "{{platform}}" }],
       ["cmd_hearmeout_audiobook_request", "hearmeout", "Request HearMeOut audiobook/search item", "request audiobook", "POST", "/api/music/session/request", { source: "mountainview-ai", query: "{{query}}", username: "{{username}}", platform: "{{platform}}", mediaType: "audiobook" }],
+      ["cmd_hearmeout_watch_request", "hearmeout", "Request HearMeOut watch item", "request watch party item", "POST", "/api/watch/sessions/{{sessionId}}/request", { source: "mountainview-ai", query: "{{query}}", itemId: "{{itemId}}", userId: "{{userId}}", username: "{{username}}" }],
+      ["cmd_hearmeout_watch_control", "hearmeout", "Control HearMeOut watch party", "control watch party", "POST", "/api/watch/sessions/{{sessionId}}/control", { source: "mountainview-ai", action: "{{action}}", position: "{{position}}", targetIndex: "{{targetIndex}}" }],
       ["cmd_eden_scene", "edenai", "Analyze current scene with EdenAI", "ask ai what am i looking at", "POST", "/v2/image/explicit_content", { source: "mountainview-ai", image: "{{imageBase64}}", providers: "{{providers}}" }],
       ["cmd_eden_screen_read", "edenai", "Read visible screen text", "read my screen", "POST", "/v2/ocr/ocr", { source: "mountainview-ai", file: "{{imageBase64}}", providers: "{{providers}}", fallbackRoute: "streamweaver" }],
       ["cmd_eden_image_generation", "edenai", "Generate image from glasses context", "generate image from what i see", "POST", "/v2/image/generation", { source: "mountainview-ai", prompt: "{{prompt}}", contextImage: "{{imageBase64}}", providers: "{{providers}}" }],
+      ["cmd_eden_video_generation", "edenai", "Generate video from glasses context", "generate video from what i see", "POST", "/v2/video/generation", { source: "mountainview-ai", prompt: "{{prompt}}", image: "{{imageBase64}}", providers: "{{providers}}" }],
       ["cmd_person_memory_note", "streamweaver", "Save consent-based person memory note", "save note about this person", "POST", "/api/memory/person-note", { source: "mountainview-ai", personId: "{{personId}}", note: "{{note}}", consent: "{{consent}}", payload: "{{payload}}" }]
     ] as const;
     for (const command of defaults) {
@@ -976,6 +1280,7 @@ class MountainViewContext {
 
   private async authHeaders(userId: string, serviceId: string, defaults: Record<string, string> = {}): Promise<Record<string, string>> {
     const headers: Record<string, string> = { "content-type": "application/json", ...defaults };
+    if (serviceId === "streamweaver") headers["x-mountainview-bridge"] = "1";
     const row = this.db.prepare("SELECT encrypted_token FROM service_tokens WHERE user_id = ? AND service_id = ?").get(userId, serviceId) as { encrypted_token: string } | undefined;
     if (row) headers.authorization = `Bearer ${this.decrypt(row.encrypted_token)}`;
     return headers;
@@ -1074,6 +1379,65 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
     return base;
   }
 
+  if (commandId.startsWith("cmd_vision_")) {
+    const feature = commandId.includes("face") ? ["face_detection"]
+      : commandId.includes("logo") ? ["logo_detection"]
+        : commandId.includes("object") ? ["object_detection"]
+          : commandId.includes("screen") ? ["ocr"]
+            : ["ocr", "logo_detection", "object_detection", "face_detection"];
+    return {
+      ...base,
+      features: Array.isArray(payload.features) ? payload.features : feature,
+      providers: readText(base, "providers") || "google,amazon",
+      question: readText(base, "question") || "What is visible in this image?",
+      imageBase64: readText(base, "imageBase64"),
+      imageUrl: readText(base, "imageUrl"),
+      labels: payload.labels ?? [],
+      vision: payload.vision ?? {},
+      savePerson: payload.savePerson ?? false,
+      displayName: readText(base, "displayName") || extractProfileName(message)
+    };
+  }
+
+  if (commandId.startsWith("cmd_profile_")) {
+    const profileName = readText(base, "displayName") || extractProfileName(message) || "Unknown person";
+    return {
+      ...base,
+      displayName: profileName,
+      meetingWhen: readText(base, "meetingWhen") || extractMeetingWhen(message),
+      reminders: payload.reminders ?? [],
+      topics: normalizeTags(payload.topics).length ? normalizeTags(payload.topics) : extractTopics(message),
+      preferences: payload.preferences ?? [],
+      boundaries: payload.boundaries ?? []
+    };
+  }
+
+  if (commandId === "cmd_streamweaver_image" || commandId === "cmd_streamweaver_image_generate" || commandId === "cmd_streamweaver_image_regenerate") {
+    return {
+      ...base,
+      prompt: readText(base, "prompt") || message || "Create a stream-ready image from the current glasses context.",
+      providerOverride: readText(base, "providerOverride") || "eden",
+      resolution: readText(base, "resolution") || "1024x1024",
+      numImages: Number(payload.numImages ?? nestedPayload.numImages ?? 1),
+      providerParams: payload.providerParams ?? nestedPayload.providerParams ?? {}
+    };
+  }
+
+  if (commandId === "cmd_streamweaver_tts" || commandId === "cmd_streamweaver_tts_play") {
+    return {
+      ...base,
+      voice: readText(base, "voice"),
+      message: message || "Athena is connected to the stream."
+    };
+  }
+
+  if (commandId === "cmd_streamweaver_overlay_data") {
+    return {
+      ...base,
+      overlayType: readText(base, "overlayType") || "stream"
+    };
+  }
+
   if (commandId === "cmd_discord_event") {
     return {
       ...base,
@@ -1140,6 +1504,34 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
       ...base,
       action: readText(base, "action") || extractMusicAction(message),
       position: Number(payload.position ?? nestedPayload.position ?? 0)
+    };
+  }
+
+  if (commandId === "cmd_hearmeout_watch_request") {
+    return {
+      ...base,
+      sessionId: readText(base, "sessionId") || DEFAULT_HEARMEOUT_ROOM_ID,
+      query: readText(base, "query") || message,
+      itemId: readText(base, "itemId"),
+      userId: readText(base, "userId") || DEFAULT_CHAT_TAG_USER_ID
+    };
+  }
+
+  if (commandId === "cmd_hearmeout_watch_control") {
+    return {
+      ...base,
+      sessionId: readText(base, "sessionId") || DEFAULT_HEARMEOUT_ROOM_ID,
+      action: readText(base, "action") || extractMusicAction(message),
+      position: Number(payload.position ?? nestedPayload.position ?? 0),
+      targetIndex: Number(payload.targetIndex ?? nestedPayload.targetIndex ?? 0)
+    };
+  }
+
+  if (commandId === "cmd_eden_video_generation" || commandId === "cmd_eden_image_generation") {
+    return {
+      ...base,
+      prompt: readText(base, "prompt") || message || "Generate media from the current glasses context.",
+      providers: readText(base, "providers") || "replicate"
     };
   }
 
@@ -1255,6 +1647,107 @@ function normalizeTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
   return [];
+}
+
+function normalizeVisionFeatures(value: unknown): string[] {
+  const requested = normalizeTags(value);
+  const features = requested.length ? requested : ["ocr", "logo_detection", "object_detection"];
+  return features
+    .map((feature) => feature.toLowerCase().replace(/[-\s]+/g, "_"))
+    .filter((feature) => Boolean(EDEN_AI_FEATURE_ENDPOINTS[feature]));
+}
+
+function decodeBase64Media(value: string): { buffer: Buffer; mimeType: string; filename: string } {
+  const match = value.match(/^data:([^;]+);base64,(.+)$/);
+  const mimeType = match?.[1] || "image/jpeg";
+  const raw = match?.[2] || value;
+  const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+  return { buffer: Buffer.from(raw, "base64"), mimeType, filename: `mountainview.${ext}` };
+}
+
+function extractVisionLabels(value: unknown): string[] {
+  const labels = new Set<string>();
+  const visit = (node: unknown) => {
+    if (node == null) return;
+    if (typeof node === "string") {
+      const trimmed = node.trim();
+      if (trimmed && trimmed.length <= 120) labels.add(trimmed);
+      return;
+    }
+    if (typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.slice(0, 60).forEach(visit);
+      return;
+    }
+    const record = asRecord(node);
+    for (const key of ["label", "name", "text", "description", "brand", "object", "category", "displayName", "twitchUsername"]) {
+      if (record[key]) visit(record[key]);
+    }
+    for (const key of ["items", "logos", "objects", "faces", "textAnnotations", "detections", "results"]) {
+      if (record[key]) visit(record[key]);
+    }
+    if (record.response) visit(record.response);
+  };
+  visit(value);
+  return [...labels].slice(0, 80);
+}
+
+function normalizeReminderList(value: unknown): JsonRecord[] {
+  if (Array.isArray(value)) return value.map(asRecord).filter((item) => Object.keys(item).length > 0);
+  if (typeof value === "string" && value.trim()) return [{ kind: "note", note: value.trim() }];
+  return [];
+}
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "person";
+}
+
+function buildPersonMemorySummary(person: JsonRecord): string {
+  const usernames = asRecord(person.usernames);
+  const context = asRecord(person.context);
+  const reminders = Array.isArray(person.reminders) ? person.reminders : [];
+  const handles = Object.entries(usernames).map(([key, value]) => `${key}: ${value}`).join(", ");
+  const topics = Array.isArray(context.topics) ? context.topics.join(", ") : "";
+  const preferences = Array.isArray(context.preferences) ? context.preferences.join(", ") : "";
+  return [
+    `Name: ${person.display_name}`,
+    handles ? `Handles: ${handles}` : "",
+    context.relationship ? `Relationship: ${context.relationship}` : "",
+    topics ? `Topics: ${topics}` : "",
+    preferences ? `Preferences: ${preferences}` : "",
+    reminders.length ? `Reminders: ${JSON.stringify(reminders)}` : "",
+    person.notes ? `Notes: ${person.notes}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function buildSmartCaptureReply(vision: JsonRecord, profile: JsonRecord | null): string {
+  const labels = Array.isArray(vision.labels) ? vision.labels.slice(0, 6).join(", ") : "";
+  const route = asRecord(vision.route).route as JsonRecord | undefined;
+  const profileName = profile ? String(asRecord(profile.person).display_name ?? "") : "";
+  return [
+    labels ? `I recognized: ${labels}.` : "I captured the scene.",
+    route?.targetDeviceName ? `Routing to ${route.targetDeviceName}.` : "",
+    profileName ? `Saved profile memory for ${profileName}.` : ""
+  ].filter(Boolean).join(" ");
+}
+
+function extractProfileName(message: string): string {
+  const match = message.match(/\b(?:person|profile|about|meeting with|remember)\s+@?([a-z0-9_][a-z0-9_. -]{1,50})/i);
+  return match?.[1]?.replace(/\b(tomorrow|today|at|on|with)\b.*$/i, "").trim() ?? "";
+}
+
+function extractMeetingWhen(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("tomorrow")) return "tomorrow";
+  if (lower.includes("today")) return "today";
+  const iso = message.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  if (iso) return iso[0];
+  return "";
+}
+
+function extractTopics(message: string): string[] {
+  return ["meeting", "stream", "collab", "sponsor", "mod", "support", "watch party", "song request"]
+    .filter((topic) => message.toLowerCase().includes(topic));
 }
 
 function parseJsonObject(value: string): JsonRecord {

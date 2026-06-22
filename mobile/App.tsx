@@ -565,6 +565,63 @@ export default function App() {
     }
   }
 
+  async function pickImageBase64(action: string) {
+    announce(`Opening image picker for ${action}...`);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.8
+    });
+    if (result.canceled) return "";
+    return result.assets[0]?.base64 ?? "";
+  }
+
+  async function smartVisionCapture(savePerson = false) {
+    try {
+      const imageBase64 = await pickImageBase64(savePerson ? "profile memory" : "smart vision");
+      if (!imageBase64) {
+        setStatusMessage("Vision capture canceled.");
+        return;
+      }
+      announce("Running MountainView smart vision capture...");
+      const data = await request("/vision/smart-capture", {
+        method: "POST",
+        body: JSON.stringify({
+          imageBase64,
+          message: voicePrompt,
+          savePerson,
+          displayName: savePerson ? voicePrompt.replace(/^.*(?:about|person|meeting with)\s+/i, "").trim() : "",
+          providers: "google,amazon"
+        })
+      });
+      setLog(JSON.stringify(data, null, 2));
+      setStatusMessage(data.reply ?? "Smart vision capture complete.");
+      await speakText(data.reply ?? "Smart vision capture complete.");
+    } catch (error) {
+      reportError("Smart vision capture", error);
+    }
+  }
+
+  async function savePersonProfileFromPrompt() {
+    try {
+      announce("Saving person profile memory...");
+      const data = await request("/people/remember", {
+        method: "POST",
+        body: JSON.stringify({
+          displayName: voicePrompt.replace(/^.*(?:about|person|meeting with|remember)\s+/i, "").trim() || "Stream contact",
+          notes: voicePrompt,
+          topics: ["meeting", "stream", "follow-up"],
+          reminders: [{ kind: "follow-up", when: voicePrompt.toLowerCase().includes("tomorrow") ? "tomorrow" : "", note: voicePrompt }]
+        })
+      });
+      setLog(JSON.stringify(data, null, 2));
+      setStatusMessage("Person profile memory saved.");
+      await load();
+    } catch (error) {
+      reportError("Save person profile", error);
+    }
+  }
+
   async function saveMemory() {
     try {
       announce("Saving memory...");
@@ -1266,8 +1323,12 @@ export default function App() {
           {tab === "relay" && (
             <View style={styles.panel}>
               <Text style={styles.label}>StreamWeaver relay</Text>
+              <Pressable style={styles.primaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.primaryButtonText}>Smart vision capture</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(true)}><Text style={styles.secondaryButtonText}>Capture and save profile</Text></Pressable>
               <Pressable style={styles.primaryButton} onPress={sendImageToStreamWeaver}><Text style={styles.primaryButtonText}>Send image/frame</Text></Pressable>
-              <Text style={styles.note}>Images are forwarded to StreamWeaver for AI processing.</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_image_generate", voicePrompt)}><Text style={styles.secondaryButtonText}>Generate StreamWeaver image</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_image_regenerate", voicePrompt)}><Text style={styles.secondaryButtonText}>Regenerate from context</Text></Pressable>
+              <Text style={styles.note}>Images can be analyzed by EdenAI, saved as profile context, routed to a companion device, or generated through StreamWeaver.</Text>
             </View>
           )}
 
@@ -1276,6 +1337,8 @@ export default function App() {
               <Text style={styles.label}>AI memory</Text>
               <TextInput value={note} onChangeText={setNote} placeholder="Save note, context, image metadata, or app activity" placeholderTextColor="#7f8ca8" style={[styles.input, styles.textArea]} multiline />
               <Pressable style={styles.primaryButton} onPress={saveMemory}><Text style={styles.primaryButtonText}>Save memory</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={savePersonProfileFromPrompt}><Text style={styles.secondaryButtonText}>Save person profile</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(true)}><Text style={styles.secondaryButtonText}>Profile from image</Text></Pressable>
               {memory.map((record) => (
                 <View key={record.id} style={styles.memoryRow}>
                   <Text style={styles.memoryTitle}>{record.title}</Text>
@@ -1295,6 +1358,9 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_room", "Join voice room")}><Text style={styles.secondaryButtonText}>Join HearMeOut voice room</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_stop", "Stop stream")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_overlay", "Overlay event requested")}><Text style={styles.secondaryButtonText}>Trigger overlay/event</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_tts", voicePrompt || "Athena is live on stream.")}><Text style={styles.secondaryButtonText}>Athena speaks on stream</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_obs_scenes", "Read OBS scenes")}><Text style={styles.secondaryButtonText}>Read OBS scenes</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_overlay_data", "Show stream overlay data")}><Text style={styles.secondaryButtonText}>Read overlay data</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_add_mission", voicePrompt || "Add MountainView reminder tomorrow", "discord")}><Text style={styles.secondaryButtonText}>Add DSH calendar date</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_post", "Post the DiscordStreamHub calendar", "discord")}><Text style={styles.secondaryButtonText}>Post DSH calendar</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}><Text style={styles.secondaryButtonText}>Who is live?</Text></Pressable>
@@ -1303,6 +1369,8 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_peers", "Who is in the HearMeOut room?")}><Text style={styles.secondaryButtonText}>HearMeOut room peers</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_song_request", voicePrompt)}><Text style={styles.secondaryButtonText}>Request HearMeOut song</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_music_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control HearMeOut music</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_request", voicePrompt || "Request a watch party item")}><Text style={styles.secondaryButtonText}>Request watch item</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control watch party</Text></Pressable>
             </View>
           )}
 
