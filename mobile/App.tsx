@@ -115,8 +115,10 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("Ready. Leave owner password blank and tap Connect.");
   const [note, setNote] = useState("");
   const [deviceName, setDeviceName] = useState("Companion Tablet");
-  const [pollInterval, setPollInterval] = useState("60");
+  const [pollInterval, setPollInterval] = useState("180");
   const [logoTestText, setLogoTestText] = useState("I see the StreamWeaver logo on my tablet");
+  const [twitchTargetChannel, setTwitchTargetChannel] = useState("");
+  const [visualContext, setVisualContext] = useState("No visual target locked yet.");
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
   const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
   const [voiceDestination, setVoiceDestination] = useState<VoiceDestination>("ai");
@@ -142,6 +144,7 @@ export default function App() {
   const wakeListenerActiveRef = useRef(false);
   const streamCommandListenerActiveRef = useRef(false);
   const replyLoopActiveRef = useRef(false);
+  const lastToneAtRef = useRef<Record<string, number>>({});
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
@@ -246,8 +249,33 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function playTone(name: string) {
+  function extractTwitchChannel(text: string) {
+    const normalized = String(text || "").trim();
+    const twitchUrl = normalized.match(/(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([a-z0-9_]{3,25})/i);
+    if (twitchUrl?.[1]) return twitchUrl[1].toLowerCase();
+    const watching = normalized.match(/\b(?:watching|on|in)\s+@?([a-z0-9_]{3,25})(?:'s)?\s+(?:twitch\s+)?(?:stream|chat)\b/i);
+    if (watching?.[1]) return watching[1].toLowerCase();
+    const known = normalized.match(/\b(mamafeisty|mtman1987)\b/i);
+    return known?.[1]?.toLowerCase() ?? "";
+  }
+
+  function updateVisualTargetFromText(text: string, source: string) {
+    const channel = extractTwitchChannel(text);
+    if (channel) {
+      setTwitchTargetChannel(channel);
+      setVisualContext(`Twitch target locked from ${source}: ${channel}`);
+      return channel;
+    }
+    if (text.trim()) setVisualContext(`${source}: ${text.trim().slice(0, 220)}`);
+    return "";
+  }
+
+  async function playTone(name: string, options: { force?: boolean } = {}) {
     try {
+      const now = Date.now();
+      const minGapMs = name === "listen" || name === "ready" ? 1800 : 900;
+      if (!options.force && now - (lastToneAtRef.current[name] ?? 0) < minGapMs) return;
+      lastToneAtRef.current[name] = now;
       await metaWearables.playTone(name);
     } catch {
       // Tone feedback is best-effort; command flow should keep working without it.
@@ -327,7 +355,8 @@ export default function App() {
         destination,
         tenantId: "94371378",
         username: "mtman1987",
-        channel: "mtman1987",
+        channel: destination === "twitch" ? (twitchTargetChannel.trim() || "mtman1987") : "mtman1987",
+        visualContext,
         dispatch: destination === "twitch",
         source: "mountainview-mobile",
         voiceMode,
@@ -595,6 +624,7 @@ export default function App() {
         })
       });
       setLog(JSON.stringify(data, null, 2));
+      updateVisualTargetFromText(JSON.stringify(data), "smart vision");
       setStatusMessage(data.reply ?? "Smart vision capture complete.");
       await speakText(data.reply ?? "Smart vision capture complete.");
     } catch (error) {
@@ -1021,11 +1051,11 @@ export default function App() {
     setStreamCommandListenerActive(true);
     setStatusMessage("StreamWeaver command listener active. Spoken phrases will be routed like trusted stream commands.");
     setLog("StreamWeaver command listener active. Try: be right back, !brb, shoutout mtman, or Athena plus a question.");
+    await playTone("listen", { force: true });
 
     while (streamCommandListenerActiveRef.current) {
       try {
         setIsListening(true);
-        await playTone("listen");
         const speech = await metaWearables.recognizeSpeechOnce();
         const transcript = String(speech.transcript ?? "").trim();
         if (transcript) {
@@ -1078,12 +1108,13 @@ export default function App() {
   async function savePollingProfile() {
     try {
       announce("Saving visual polling profile...");
+      const intervalSeconds = Number(pollInterval);
       await request("/polling-profiles", {
         method: "POST",
         body: JSON.stringify({
           name: "Visual trigger scan",
-          intervalSeconds: Number(pollInterval),
-          batteryMode: Number(pollInterval) <= 15 ? "high-power" : "balanced",
+          intervalSeconds,
+          batteryMode: intervalSeconds <= 30 ? "high-power" : intervalSeconds >= 180 ? "battery-saver" : "balanced",
           triggerTargets: ["qr", "device-marker", "scene-change", "app-logo", "screen-read"]
         })
       });
@@ -1102,6 +1133,7 @@ export default function App() {
         body: JSON.stringify({ observedText: logoTestText })
       });
       setLog(JSON.stringify(data, null, 2));
+      updateVisualTargetFromText(`${logoTestText}\n${JSON.stringify(data)}`, "logo route");
       setStatusMessage(data.matched ? "Logo route matched." : "No logo route matched.");
       Speech.speak(data.matched ? "Logo route matched." : "No logo route matched.");
       await load();
@@ -1209,6 +1241,24 @@ export default function App() {
                   </View>
                 )}
                 <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
+                <View style={styles.targetPanel}>
+                  <View style={styles.targetHeader}>
+                    <Ionicons name="logo-twitch" size={16} color="#a78bfa" />
+                    <Text style={styles.targetTitle}>Twitch visual target</Text>
+                  </View>
+                  <TextInput
+                    value={twitchTargetChannel}
+                    onChangeText={(value) => {
+                      setTwitchTargetChannel(value.replace(/^#|^@/, "").trim().toLowerCase());
+                      setVisualContext(value.trim() ? `Manual Twitch target: ${value.trim()}` : "No visual target locked yet.");
+                    }}
+                    placeholder="mamafeisty"
+                    placeholderTextColor="#7f8ca8"
+                    autoCapitalize="none"
+                    style={styles.input}
+                  />
+                  <Text style={styles.note}>{visualContext}</Text>
+                </View>
                 <View style={styles.actionRow}>
                   <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={replyLoopActive ? stopReplyLoop : () => startReplyLoop("manual-button")}>
                     <Text style={styles.primaryButtonText}>{replyLoopActive ? "Stop reply loop" : "Start reply loop"}</Text>
@@ -1321,9 +1371,10 @@ export default function App() {
           )}
 
           {tab === "relay" && (
-            <View style={styles.panel}>
-              <Text style={styles.label}>StreamWeaver relay</Text>
-              <Pressable style={styles.primaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.primaryButtonText}>Smart vision capture</Text></Pressable>
+              <View style={styles.panel}>
+                <Text style={styles.label}>StreamWeaver relay</Text>
+                <Text style={styles.note}>Use Smart vision capture to lock the current Twitch stream/app context, then say things like send message "hello mama" while Twitch dictation is selected.</Text>
+                <Pressable style={styles.primaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.primaryButtonText}>Smart vision capture</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(true)}><Text style={styles.secondaryButtonText}>Capture and save profile</Text></Pressable>
               <Pressable style={styles.primaryButton} onPress={sendImageToStreamWeaver}><Text style={styles.primaryButtonText}>Send image/frame</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_image_generate", voicePrompt)}><Text style={styles.secondaryButtonText}>Generate StreamWeaver image</Text></Pressable>
@@ -1550,6 +1601,9 @@ const styles = StyleSheet.create({
   buttonMapItem: { flex: 1, minHeight: 92, borderRadius: 8, padding: 9, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 5 },
   buttonMapTitle: { color: "#f8fafc", fontWeight: "900", fontSize: 12 },
   buttonMapText: { color: "#a8b0c3", fontSize: 11, lineHeight: 15 },
+  targetPanel: { gap: 8, padding: 10, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(167,139,250,.28)" },
+  targetHeader: { flexDirection: "row", alignItems: "center", gap: 7 },
+  targetTitle: { color: "#f8fafc", fontWeight: "900", fontSize: 12 },
   grid: { gap: 10 },
   statusCard: { padding: 14, borderRadius: 8, backgroundColor: "#171b31", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   label: { color: "#9fb1cc", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", fontWeight: "700" },

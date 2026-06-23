@@ -188,7 +188,7 @@ class MountainViewMetaWearablesModule(
         "stop" -> 160
         else -> 120
       }
-      val generator = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+      val generator = ToneGenerator(AudioManager.STREAM_MUSIC, 35)
       generator.startTone(tone, durationMs)
       mainHandler.postDelayed({ generator.release() }, (durationMs + 80).toLong())
       val result = WritableNativeMap()
