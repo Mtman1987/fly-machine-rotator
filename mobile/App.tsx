@@ -383,6 +383,9 @@ export default function App() {
     try {
       const intent = parseVoiceCommandForDate(message);
       const shouldUseParsedIntent = commandId === "cmd_streamweaver_voice_commander" || commandId === "cmd_dsh_calendar_add_mission";
+      const forcedVoiceMode = typeof intent.metadata.forceVoiceMode === "string" ? intent.metadata.forceVoiceMode as VoiceCommanderMode : undefined;
+      const effectiveVoiceMode = forcedVoiceMode ?? voiceMode;
+      const outboundMessage = intent.intent === "direct-message" ? intent.cleanedText : message;
       if (shouldUseParsedIntent && intent.commandId === "local_flashlight") {
         appendActivityLog("voice", "Voice intent", intent.intent, intent);
         await requestGlassesFlashlight();
@@ -393,18 +396,21 @@ export default function App() {
       announce(`Sending command ${actualCommandId}...`);
       appendActivityLog(intent.intent === "calendar" ? "calendar" : "voice", "Voice intent", intent.intent, intent);
       const command = commandMap.get(actualCommandId);
-      const translationEnabled = voiceMode === "translation";
+      const translationEnabled = effectiveVoiceMode === "translation";
+      const selectedChannel = actualDestination === "twitch"
+        ? (intent.twitchChannel || twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(visualContext) || "mtman1987")
+        : "mtman1987";
       const voicePayload = {
-        message,
-        transcript: message,
+        message: outboundMessage,
+        transcript: outboundMessage,
         destination: actualDestination,
         tenantId: "94371378",
         username: "mtman1987",
-        channel: actualDestination === "twitch" ? (intent.twitchChannel || twitchTargetChannel.trim() || "mtman1987") : "mtman1987",
+        channel: selectedChannel,
         visualContext,
         dispatch: actualDestination === "twitch",
         source: "mountainview-mobile",
-        voiceMode,
+        voiceMode: effectiveVoiceMode,
         intent: intent.intent,
         parsedDate: intent.date,
         parsedTime: intent.time,
@@ -465,6 +471,13 @@ export default function App() {
 
   function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function extractTwitchChannelFromVisualContext(text: string) {
+    const direct = text.match(/(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([a-z0-9_]{3,25})/i);
+    if (direct?.[1]) return direct[1].toLowerCase();
+    const named = text.match(/\b(?:watching|locked|target|channel)\s+@?([a-z0-9_]{3,25})(?:'s)?\s+(?:twitch\s+)?(?:stream|chat)\b/i);
+    return named?.[1]?.toLowerCase() ?? "";
   }
 
   function chooseGlassesDevice(devices: BleScanDevice[], preferredAddress?: string) {

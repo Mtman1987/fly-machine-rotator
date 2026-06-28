@@ -6,6 +6,7 @@ export type ParsedSpokenDate = {
 
 export type VoiceIntent =
   | "calendar"
+  | "direct-message"
   | "twitch-message"
   | "hearmeout-request"
   | "image-generation"
@@ -22,6 +23,7 @@ export type ParsedVoiceCommand = {
   time?: string;
   title?: string;
   twitchChannel?: string;
+  targetName?: string;
   metadata: Record<string, unknown>;
 };
 
@@ -73,6 +75,7 @@ export function parseVoiceCommandForDate(text: string, now = new Date()): Parsed
   const date = parseSpokenDate(cleanedText, now);
   const time = extractTime(cleanedText);
   const twitchChannel = extractTwitchChannel(cleanedText);
+  const directMessage = extractDirectMessage(cleanedText);
 
   if (/\b(calendar|meeting|appointment|event|reminder|date)\b/.test(lower)) {
     return {
@@ -84,6 +87,25 @@ export function parseVoiceCommandForDate(text: string, now = new Date()): Parsed
       time,
       title: extractCalendarTitle(cleanedText),
       metadata: { missionDate: formatDateForCommand(date), missionTime: time, parser: "mountainview-mobile" }
+    };
+  }
+
+  if (directMessage) {
+    const targetChannel = twitchChannel || normalizeTargetChannel(directMessage.targetName);
+    return {
+      intent: "direct-message",
+      commandId: "cmd_streamweaver_voice_commander",
+      destination: /\b(discord|server)\b/.test(lower) ? "discord" : "twitch",
+      cleanedText: directMessage.message,
+      twitchChannel: targetChannel,
+      targetName: directMessage.targetName,
+      metadata: {
+        channel: targetChannel,
+        targetName: directMessage.targetName,
+        outgoingMessage: directMessage.message,
+        forceVoiceMode: "dictation",
+        parser: "mountainview-mobile"
+      }
     };
   }
 
@@ -189,6 +211,42 @@ function extractTwitchChannel(text: string): string {
   if (url?.[1]) return url[1].toLowerCase();
   const named = text.match(/\b(?:in|to|for|watching|on)\s+@?([a-z0-9_]{3,25})(?:'s)?\s+(?:twitch\s+)?(?:chat|stream)\b/i);
   return named?.[1]?.toLowerCase() ?? "";
+}
+
+function extractDirectMessage(text: string): { targetName: string; message: string } | undefined {
+  const quoted = text.match(/\b(?:send|post|type|say)\s+(?:a\s+)?message(?:\s+to\s+(.+?))?\s+(?:that\s+says|saying|with|:)\s+["“]?(.+?)["”]?\s*$/i);
+  if (quoted?.[2]?.trim()) {
+    return {
+      targetName: cleanTargetName(quoted[1] ?? ""),
+      message: quoted[2].trim()
+    };
+  }
+
+  const simple = text.match(/\b(?:send|post|type)\s+["“]?(.+?)["”]?\s+(?:to|in|into)\s+(.+?)(?:\s+(?:chat|twitch|discord))?\s*$/i);
+  if (simple?.[1]?.trim()) {
+    return {
+      targetName: cleanTargetName(simple[2] ?? ""),
+      message: simple[1].trim()
+    };
+  }
+
+  return undefined;
+}
+
+function cleanTargetName(value: string): string {
+  return value
+    .replace(/\b(?:twitch|discord|chat|channel|server|user)\b/ig, "")
+    .replace(/^@/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeTargetChannel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^@/, "")
+    .replace(/[^a-z0-9_]+/g, "")
+    .slice(0, 25);
 }
 
 function extractCalendarTitle(text: string): string {
