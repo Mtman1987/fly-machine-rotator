@@ -5,7 +5,8 @@ import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { addBleButtonListener, addMediaButtonListener, metaWearables } from "./src/metaWearables";
+import { parseVoiceCommandForDate } from "./src/dateParser";
+import { addBleButtonListener, addMediaButtonListener, metaWearables, toggleFlashlight } from "./src/metaWearables";
 
 (Text as any).defaultProps = (Text as any).defaultProps ?? {};
 (Text as any).defaultProps.maxFontSizeMultiplier = 1.15;
@@ -83,6 +84,14 @@ type BleScanDevice = {
 
 type VoiceDestination = "ai" | "private" | "twitch" | "discord";
 type VoiceCommanderMode = "reply" | "dictation" | "translation";
+type ActivityLogRecord = {
+  id: string;
+  category: "api" | "ble" | "voice" | "flashlight" | "calendar" | "vision" | "system";
+  title: string;
+  status: string;
+  detail: string;
+  createdAt: string;
+};
 
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
 const bleLastDeviceKey = "mountainview_last_ble_device";
@@ -112,6 +121,8 @@ export default function App() {
   const [qrTriggers, setQrTriggers] = useState<QrTrigger[]>([]);
   const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
+  const [activityLogs, setActivityLogs] = useState<ActivityLogRecord[]>([]);
+  const [logFilter, setLogFilter] = useState<ActivityLogRecord["category"] | "all">("all");
   const [statusMessage, setStatusMessage] = useState("Ready. Leave owner password blank and tap Connect.");
   const [note, setNote] = useState("");
   const [deviceName, setDeviceName] = useState("Companion Tablet");
@@ -148,16 +159,33 @@ export default function App() {
 
   const connected = token.length > 0;
   const commandMap = useMemo(() => new Map(commands.map((command) => [command.id, command])), [commands]);
+  const visibleActivityLogs = useMemo(() => {
+    return logFilter === "all" ? activityLogs : activityLogs.filter((item) => item.category === logFilter);
+  }, [activityLogs, logFilter]);
+
+  function appendActivityLog(category: ActivityLogRecord["category"], title: string, status: string, detail: unknown) {
+    const record: ActivityLogRecord = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      category,
+      title,
+      status,
+      detail: typeof detail === "string" ? detail : JSON.stringify(detail, null, 2),
+      createdAt: new Date().toISOString()
+    };
+    setActivityLogs((current) => [record, ...current].slice(0, 250));
+  }
 
   function announce(message: string) {
     setStatusMessage(message);
     setLog(message);
+    appendActivityLog("system", "Status", "info", message);
   }
 
   function reportError(action: string, error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setStatusMessage(`${action} failed: ${message}`);
     setLog(`${action} failed\n${message}`);
+    appendActivityLog("system", action, "error", message);
     Alert.alert(`${action} failed`, message);
   }
 
@@ -165,6 +193,7 @@ export default function App() {
     const message = error instanceof Error ? error.message : String(error);
     setStatusMessage(`${action} failed: ${message}`);
     setLog((current) => `${action} failed\n${message}\n\n${current}`);
+    appendActivityLog("system", action, "error", message);
   }
 
   useEffect(() => {
@@ -214,6 +243,7 @@ export default function App() {
   }, []);
 
   async function request(path: string, options: RequestInit = {}, authToken = token) {
+    const startedAt = Date.now();
     const response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       headers: {
@@ -229,6 +259,11 @@ export default function App() {
     } catch {
       throw new Error(raw ? `Server returned non-JSON: ${raw.slice(0, 160)}` : "Server returned an empty response");
     }
+    appendActivityLog("api", `${options.method ?? "GET"} ${path}`, response.ok && !data.error ? "success" : "error", {
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      response: data.error ? { error: data.error } : data
+    });
     if (!response.ok || data.error) throw new Error(data.error ?? "Request failed");
     return data;
   }
@@ -346,20 +381,34 @@ export default function App() {
 
   async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean } = {}) {
     try {
-      announce(`Sending command ${commandId}...`);
-      const command = commandMap.get(commandId);
+      const intent = parseVoiceCommandForDate(message);
+      const shouldUseParsedIntent = commandId === "cmd_streamweaver_voice_commander" || commandId === "cmd_dsh_calendar_add_mission";
+      if (shouldUseParsedIntent && intent.commandId === "local_flashlight") {
+        appendActivityLog("voice", "Voice intent", intent.intent, intent);
+        await requestGlassesFlashlight();
+        return { ok: true, local: true, intent };
+      }
+      const actualCommandId = shouldUseParsedIntent ? intent.commandId : commandId;
+      const actualDestination = shouldUseParsedIntent ? intent.destination : destination;
+      announce(`Sending command ${actualCommandId}...`);
+      appendActivityLog(intent.intent === "calendar" ? "calendar" : "voice", "Voice intent", intent.intent, intent);
+      const command = commandMap.get(actualCommandId);
       const translationEnabled = voiceMode === "translation";
       const voicePayload = {
         message,
         transcript: message,
-        destination,
+        destination: actualDestination,
         tenantId: "94371378",
         username: "mtman1987",
-        channel: destination === "twitch" ? (twitchTargetChannel.trim() || "mtman1987") : "mtman1987",
+        channel: actualDestination === "twitch" ? (intent.twitchChannel || twitchTargetChannel.trim() || "mtman1987") : "mtman1987",
         visualContext,
-        dispatch: destination === "twitch",
+        dispatch: actualDestination === "twitch",
         source: "mountainview-mobile",
         voiceMode,
+        intent: intent.intent,
+        parsedDate: intent.date,
+        parsedTime: intent.time,
+        ...intent.metadata,
         translation: {
           enabled: translationEnabled,
           language: translationLanguage
@@ -368,17 +417,17 @@ export default function App() {
       const data = await request("/commands/execute", {
         method: "POST",
         body: JSON.stringify({
-          commandId,
+          commandId: actualCommandId,
           payload: {
             ...voicePayload,
-            destination,
+            destination: actualDestination,
             wakeWord: message.toLowerCase().startsWith("hey annie") ? "hey annie" : "hey athena",
             payload: voicePayload
           }
         })
       });
-      setLog(`${command?.name ?? commandId}\n${JSON.stringify(data, null, 2)}`);
-      setStatusMessage(`${command?.name ?? commandId} sent.`);
+      setLog(`${command?.name ?? actualCommandId}\n${JSON.stringify(data, null, 2)}`);
+      setStatusMessage(`${command?.name ?? actualCommandId} sent.`);
       const reply = commandReplyText(data);
       if (data.command) await playTone("command");
       else if (data.dispatched) await playTone("dispatch");
@@ -452,6 +501,7 @@ export default function App() {
       setBleAutoConnectState("AiMB bridge armed");
       setStatusMessage("AiMB bridge armed. Glasses button events are subscribed.");
       setLog(JSON.stringify({ reason, connect, services, notifications }, null, 2));
+      appendActivityLog("ble", "AiMB bridge armed", "armed", { reason, address, connect, services, notifications });
       await trackMobileEvent("ble-auto-arm", { reason, address, connect, services, notifications }, "armed");
       return true;
     } catch (error) {
@@ -492,6 +542,7 @@ export default function App() {
   async function handleMediaButtonEvent(event: Record<string, unknown>) {
     const keyName = String(event.keyName ?? "UNKNOWN_BUTTON");
     const now = Date.now();
+    appendActivityLog("ble", "Media button", keyName, event);
     const triggerKeys = new Set([
       "KEYCODE_MEDIA_PLAY_PAUSE",
       "KEYCODE_MEDIA_PLAY",
@@ -512,6 +563,7 @@ export default function App() {
   async function handleBleButtonEvent(event: Record<string, unknown>) {
     const action = String(event.action ?? "unknown");
     const now = Date.now();
+    appendActivityLog("ble", "BLE button", action, event);
     setLog((current) => `BLE glasses button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
     await trackMobileEvent("ble-button", { event }, action);
     if (action !== "ai-talk-tap" && action !== "ai-talk-long-start") return;
@@ -675,7 +727,7 @@ export default function App() {
       setLog(JSON.stringify(status, null, 2));
       setStatusMessage(`Glasses bridge status: ${String(status.state ?? "checked")}`);
     } catch (error) {
-      reportError("SDK status", error);
+      reportError("Bridge status", error);
     }
   }
 
@@ -734,10 +786,12 @@ export default function App() {
 
   async function requestGlassesFlashlight() {
     try {
-      announce("Sending RDGlass flashlight diagnostic...");
-      const result = await metaWearables.testRdGlassFlashlight();
+      announce("Sending RDGlass flashlight diagnostic with retries...");
+      const result = await toggleFlashlight(true, { retries: 3, settleMs: 260 });
       setLog(JSON.stringify(result, null, 2));
-      setStatusMessage(`RDGlass flashlight diagnostic: ${String(result.state ?? "checked")}`);
+      appendActivityLog("flashlight", "Flashlight request", result.ok ? "accepted" : "unsupported", result);
+      await trackMobileEvent("flashlight", result, result.ok ? "accepted" : "unsupported");
+      setStatusMessage(`RDGlass flashlight diagnostic: ${String(result.state ?? (result.ok ? "accepted" : "checked"))}`);
     } catch (error) {
       reportError("Flashlight", error);
     }
@@ -1294,15 +1348,15 @@ export default function App() {
                 </View>
               </View>
               <View style={styles.grid}>
-                <StatusCard label="Glasses" value={String(glassesStatus.state ?? "SDK gated")} tone="warn" detail="Android DAT bridge prepared for Meta Wearables events." />
+                <StatusCard label="Glasses" value={String(glassesStatus.state ?? "native bridge")} tone="warn" detail="Android BLE, media-button, speech, and RDGlass research bridge." />
                 <StatusCard label="Image AI" value="Relay only" tone="good" detail="No face recognition in MountainView AI." />
                 <StatusCard label="Streaming" value="Control ready" detail="Start/stop/overlay triggers are prepared." />
                 <StatusCard label="Flash" value="RD test found" tone="warn" detail="RDGlass exposes BKTestFlashlight, not a confirmed steady torch toggle." />
               </View>
               <View style={styles.panel}>
-                <Text style={styles.label}>Meta glasses</Text>
-                <Text style={styles.note}>Android SDK integration is native. Use a dev client build with GITHUB_TOKEN and MOUNTAINVIEW_META_APP_ID configured.</Text>
-                <Pressable style={styles.primaryButton} onPress={checkGlassesSdk}><Text style={styles.primaryButtonText}>SDK status</Text></Pressable>
+                <Text style={styles.label}>AiMB / RDGlass bridge</Text>
+                <Text style={styles.note}>These glasses are handled through Android-native Bluetooth, BLE notifications, media buttons, speech recognition, and RDGlass command research. No Meta SDK is required for this hardware path.</Text>
+                <Pressable style={styles.primaryButton} onPress={checkGlassesSdk}><Text style={styles.primaryButtonText}>Bridge status</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={registerGlasses}><Text style={styles.secondaryButtonText}>Register glasses</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={captureGlassesPhoto}><Text style={styles.secondaryButtonText}>Capture glasses photo</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={requestGlassesFlashlight}><Text style={styles.secondaryButtonText}>Test RDGlass flashlight</Text></Pressable>
@@ -1425,7 +1479,38 @@ export default function App() {
             </View>
           )}
 
-          {tab === "logs" && <View style={styles.panel}><Text style={styles.label}>Activity logs</Text><Text style={styles.log}>{log}</Text></View>}
+          {tab === "logs" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>Activity logs</Text>
+              <Text style={styles.note}>API calls, BLE signals, voice intents, calendar parsing, flashlight attempts, and vision actions are kept here for mapping the glasses.</Text>
+              <View style={styles.inlineOptions}>
+                {(["all", "api", "ble", "voice", "calendar", "flashlight", "vision", "system"] as const).map((category) => (
+                  <Pressable key={category} style={[styles.optionChip, logFilter === category && styles.optionChipActive]} onPress={() => setLogFilter(category)}>
+                    <Text style={styles.optionChipText}>{category}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.hintBox}>
+                <Text style={styles.memoryTitle}>Latest raw output</Text>
+                <Text style={styles.log}>{log}</Text>
+              </View>
+              {visibleActivityLogs.length === 0 ? (
+                <Text style={styles.note}>No structured log records for this filter yet.</Text>
+              ) : (
+                visibleActivityLogs.map((item) => (
+                  <View key={item.id} style={styles.logRow}>
+                    <View style={styles.logRowHeader}>
+                      <Text style={styles.logCategory}>{item.category}</Text>
+                      <Text style={styles.logTime}>{new Date(item.createdAt).toLocaleTimeString()}</Text>
+                    </View>
+                    <Text style={styles.memoryTitle}>{item.title}</Text>
+                    <Text style={styles.memoryBody}>{item.status}</Text>
+                    <Text style={styles.logDetail}>{item.detail}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          )}
 
           {tab === "devices" && (
             <View style={styles.panel}>
@@ -1630,6 +1715,11 @@ const styles = StyleSheet.create({
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },
   log: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 12 },
+  logRow: { borderRadius: 8, padding: 12, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", gap: 5 },
+  logRowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  logCategory: { color: "#20d5ff", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  logTime: { color: "#9fb1cc", fontSize: 11, fontWeight: "700" },
+  logDetail: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 11, lineHeight: 15 },
   inlineOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   optionChip: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   optionChipActive: { borderColor: "#20d5ff", backgroundColor: "rgba(32,213,255,.14)" },

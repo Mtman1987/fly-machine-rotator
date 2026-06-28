@@ -236,9 +236,9 @@ class MountainViewMetaWearablesModule(
     val result = WritableNativeMap()
     result.putBoolean("androidNativeBridge", true)
     result.putString("packageName", "${appPackage}")
-    result.putString("sdk", "Meta Wearables Device Access Toolkit")
+    result.putString("sdk", "MountainView Android native bridge")
     result.putString("state", "installed-plus-rdglass-research")
-    result.putString("note", "Native module shell is installed. Meta DAT binding is SDK-gated; generic BLE research mode can scan AiMB/RDGlass devices and discover GATT services.")
+    result.putString("note", "Native module shell is installed. AiMB/RDGlass testing uses Android Bluetooth audio, BLE research, media buttons, speech recognition, and RDGlass command logging. Meta DAT is optional and disabled unless explicitly enabled.")
     result.putBoolean("flashControlSupported", false)
     result.putBoolean("wakePhraseSupported", false)
     result.putString("wakePhraseNote", "Android can request microphone/foreground-service permissions, but always-on custom wake phrases require a foreground service or vendor SDK support.")
@@ -1125,27 +1125,27 @@ class MountainViewMetaWearablesModule(
 
   @ReactMethod
   fun startRegistration(promise: Promise) {
-    promise.reject("MWDAT_NOT_BOUND", "Meta DAT registration is not bound yet. Configure MOUNTAINVIEW_META_APP_ID and GITHUB_TOKEN, run Android prebuild, then wire DAT registration APIs.")
+    promise.reject("RDGLASS_REGISTRATION_NOT_REQUIRED", "AiMB/RDGlass testing does not use Meta DAT registration. Pair the glasses in Android Bluetooth, then use BLE auto-arm or media button mode.")
   }
 
   @ReactMethod
   fun capturePhoto(promise: Promise) {
-    promise.reject("MWDAT_NOT_BOUND", "Photo capture needs DAT Camera API binding after package resolution.")
+    promise.reject("RDGLASS_CAMERA_NOT_MAPPED", "Direct glasses photo capture is not mapped yet. Use RDGlass camera diagnostics, BLE logs, or phone-side image relay while mapping the command channel.")
   }
 
   @ReactMethod
   fun startAudioStream(promise: Promise) {
-    promise.reject("MWDAT_NOT_BOUND", "Audio streaming needs DAT/session API binding after package resolution. Route audio events to StreamWeaver or HearMeOut through MountainView commands.")
+    promise.reject("RDGLASS_AUDIO_STREAM_NOT_MAPPED", "Direct glasses audio streaming is not mapped yet. Bluetooth audio output and Android speech recognition are available for command testing.")
   }
 
   @ReactMethod
   fun startVideoStream(promise: Promise) {
-    promise.reject("MWDAT_NOT_BOUND", "Video streaming needs DAT Camera API binding after package resolution.")
+    promise.reject("RDGLASS_VIDEO_STREAM_NOT_MAPPED", "Direct glasses video streaming is not mapped yet. Use snapshot polling and RDGlass media trigger logs while mapping the command channel.")
   }
 
   @ReactMethod
   fun setFlashlight(enabled: Boolean, promise: Promise) {
-    promise.reject("MWDAT_UNSUPPORTED", "Current public DAT Android setup does not document glasses flash/torch control.")
+    promise.reject("RDGLASS_TORCH_NOT_MAPPED", "Steady AiMB/RDGlass torch control is not mapped yet. Use BKTestFlashlight retries and BLE logs for research.")
   }
 }
 `;

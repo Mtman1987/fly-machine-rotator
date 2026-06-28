@@ -37,7 +37,7 @@ function unavailable(method: string): Promise<Record<string, unknown>> {
     state: "unavailable",
     method,
     platform: Platform.OS,
-    note: "Run an Android dev client/prebuild with the Meta Wearables plugin to enable this native bridge."
+    note: "Run an Android dev client or release APK with the MountainView native bridge to enable BLE, media button, speech, and RDGlass research features."
   });
 }
 
@@ -75,4 +75,38 @@ export function addMediaButtonListener(listener: (event: Record<string, unknown>
 
 export function addBleButtonListener(listener: (event: Record<string, unknown>) => void): EmitterSubscription | { remove: () => void } {
   return nativeEvents?.addListener("MountainViewBleButton", listener) ?? { remove: () => undefined };
+}
+
+export async function toggleFlashlight(enabled: boolean, options: { retries?: number; settleMs?: number } = {}): Promise<Record<string, unknown>> {
+  const retries = Math.max(1, options.retries ?? 3);
+  const settleMs = Math.max(80, options.settleMs ?? 220);
+  const attempts: Record<string, unknown>[] = [];
+
+  for (let index = 0; index < retries; index += 1) {
+    try {
+      const result = await metaWearables.setFlashlight(enabled);
+      attempts.push({ index: index + 1, path: "setFlashlight", result });
+      return { ok: true, enabled, attempts, result };
+    } catch (error) {
+      attempts.push({ index: index + 1, path: "setFlashlight", error: error instanceof Error ? error.message : String(error) });
+    }
+
+    try {
+      const result = await metaWearables.testRdGlassFlashlight();
+      attempts.push({ index: index + 1, path: "testRdGlassFlashlight", result });
+      if (enabled) return { ok: true, enabled, attempts, result, note: "RDGlass flashlight diagnostic command accepted." };
+    } catch (error) {
+      attempts.push({ index: index + 1, path: "testRdGlassFlashlight", error: error instanceof Error ? error.message : String(error) });
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+  }
+
+  return {
+    ok: false,
+    enabled,
+    attempts,
+    state: "unsupported-or-not-connected",
+    note: "No stable glasses torch API is confirmed yet; MountainView logged every retry for mapping."
+  };
 }

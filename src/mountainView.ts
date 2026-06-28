@@ -39,12 +39,12 @@ const defaultConfig: MountainViewConfig = {
     { id: "edenai", name: "EdenAI Router", baseUrl: "https://api.edenai.run" }
   ],
   metaWearables: {
-    toolkitStatus: "Developer preview bridge. Camera/audio/display support depends on Meta Wearables Device Access Toolkit availability for the signed-in developer account and target glasses.",
+    toolkitStatus: "Android-native AiMB/RDGlass bridge. Current hardware path uses Bluetooth audio, BLE notifications, Android media buttons, speech recognition, and RDGlass command research.",
     flashControlSupported: false,
     notes: [
       "Face/profile memory is explicit and owner-controlled.",
       "Image analysis can be delegated to EdenAI, StreamWeaver, or configured Spacemountain services.",
-      "Direct glasses live streaming and flash control are capability-gated until exposed by the Meta SDK/API available to this app.",
+      "Direct glasses live streaming and steady flash control are capability-gated until the AiMB/RDGlass command channel exposes stable media APIs.",
       "RDGlass/AiMB research mode can scan BLE, discover GATT services, and log characteristics without sending unknown control packets."
     ]
   }
@@ -487,7 +487,7 @@ class MountainViewContext {
   recordGlassesMediaEvent(userId: string, input: JsonRecord): JsonRecord {
     const id = `glasses_media_${Date.now()}`;
     const kind = String(input.kind ?? "event");
-    const source = String(input.source ?? "meta-glasses");
+    const source = String(input.source ?? "android-glasses");
     const targetApp = String(input.targetApp ?? input.target_app ?? "streamweaver");
     const status = String(input.status ?? "received");
     const metadata = asRecord(input.metadata);
@@ -1153,7 +1153,7 @@ class MountainViewContext {
       ["cmd_vision_screen_read", "mountainview", "Read visible screen with EdenAI OCR", "read what i see", "POST", "/api/vision/analyze", { source: "mountainview-ai", imageBase64: "{{imageBase64}}", imageUrl: "{{imageUrl}}", features: ["ocr"], providers: "{{providers}}" }],
       ["cmd_profile_save_person", "mountainview", "Save person/profile memory", "save this person", "POST", "/api/people/remember", { source: "mountainview-ai", displayName: "{{displayName}}", twitchUsername: "{{twitchUsername}}", discordUsername: "{{discordUsername}}", relationship: "{{relationship}}", notes: "{{message}}", reminders: "{{reminders}}", topics: "{{topics}}", preferences: "{{preferences}}", boundaries: "{{boundaries}}", avatarUrl: "{{avatarUrl}}", streamLogo: "{{streamLogo}}" }],
       ["cmd_profile_meeting_reminder", "mountainview", "Save meeting reminder for person", "remember meeting with this person", "POST", "/api/people/remember", { source: "mountainview-ai", displayName: "{{displayName}}", notes: "{{message}}", reminders: [{ "kind": "meeting", "when": "{{meetingWhen}}", "note": "{{message}}" }], topics: "{{topics}}" }],
-      ["cmd_streamweaver_image", "streamweaver", "Send image to StreamWeaver", "send image to streamweaver", "POST", "/api/ai/image", { source: "meta-glasses", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", providerParams: "{{providerParams}}", contextImage: "{{imageBase64}}" }],
+      ["cmd_streamweaver_image", "streamweaver", "Send image to StreamWeaver", "send image to streamweaver", "POST", "/api/ai/image", { source: "android-glasses", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", providerParams: "{{providerParams}}", contextImage: "{{imageBase64}}" }],
       ["cmd_streamweaver_image_generate", "streamweaver", "Generate StreamWeaver image", "generate stream image", "POST", "/api/ai/image", { source: "mountainview-ai", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", resolution: "{{resolution}}", numImages: "{{numImages}}", providerParams: "{{providerParams}}" }],
       ["cmd_streamweaver_image_regenerate", "streamweaver", "Regenerate image from glasses context", "regenerate this image", "POST", "/api/ai/image", { source: "mountainview-ai", prompt: "{{prompt}}", tenantId: "{{tenantId}}", providerOverride: "{{providerOverride}}", providerParams: { "mode": "regenerate", "contextImage": "{{imageBase64}}", "scene": "{{message}}" } }],
       ["cmd_streamweaver_tts", "streamweaver", "Speak Athena through StreamWeaver", "speak on stream", "POST", "/api/tts", { source: "mountainview-ai", text: "{{message}}", tenantId: "{{tenantId}}", voice: "{{voice}}" }],
@@ -1934,13 +1934,13 @@ function renderMountainViewHtml(): string {
         <div class="panel">
           <div class="hero">
             <div>
-              <div class="label">Meta glasses bridge</div>
-              <div class="value warn" id="deviceState">SDK gated</div>
-              <p class="sub">Phone-side bridge for events, voice commands, images, and command triggers where supported by Meta Wearables APIs.</p>
+              <div class="label">AiMB / RDGlass bridge</div>
+              <div class="value warn" id="deviceState">Native</div>
+              <p class="sub">Phone-side bridge for Bluetooth audio, BLE events, media buttons, voice commands, images, and command triggers.</p>
             </div>
             <div class="stat"><div class="label">No face recognition</div><div class="value good">Relay only</div><p class="sub">StreamWeaver handles AI image processing.</p></div>
             <div class="stat"><div class="label">Live stream</div><div class="value">Ready</div><p class="sub">Control plane prepared for future direct media feeds.</p></div>
-            <div class="stat"><div class="label">Flashlight</div><div class="value bad">Not exposed</div><p class="sub">UI remains ready for future SDK support.</p></div>
+            <div class="stat"><div class="label">Flashlight</div><div class="value bad">Research</div><p class="sub">RDGlass test command is logged; steady torch control is still being mapped.</p></div>
           </div>
         </div>
         <div class="panel">
