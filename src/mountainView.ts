@@ -1363,7 +1363,10 @@ class MountainViewContext {
       });
     }
 
-    if (/\b(be right back|brb|back from break|stop brb|shout\s*out|shoutout|generate|make|create)\b/.test(lower) && /\b(image|picture|photo|avatar|brb|shout)/.test(lower)) {
+    if (
+      /\b(be right back|brb|back from break|stop brb|shout\s*out|shoutout)\b/.test(lower) ||
+      (/\b(generate|make|create)\b/.test(lower) && /\b(image|picture|photo|avatar)\b/.test(lower))
+    ) {
       return voiceDecision({
         mode: "action",
         commandId: "cmd_streamweaver_voice_commander",
