@@ -473,6 +473,16 @@ class MountainViewContext {
         routingDecision: decision
       }
     };
+    if (input.dryRun === true || context.dryRun === true) {
+      this.recordGlassesMediaEvent(userId, {
+        kind: "voice-route-dry-run",
+        source: "mountainview-router",
+        targetApp: String(decision.appId ?? "streamweaver"),
+        status: String(decision.mode ?? "conversation"),
+        metadata: { transcript, decision, payload }
+      });
+      return { ok: true, dryRun: true, decision, payload };
+    }
     const result = await this.executeCommand(userId, String(decision.commandId), payload);
     this.recordGlassesMediaEvent(userId, {
       kind: "voice-route-decision",
