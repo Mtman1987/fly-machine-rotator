@@ -69,4 +69,4 @@ $rows = foreach ($phrase in $Phrases) {
   }
 }
 
-$rows | Format-Table -AutoSize -Wrap
+$rows | Format-Table phrase,mode,command,app,confidence,readiness,risk,confirm,needs,reason -AutoSize -Wrap
