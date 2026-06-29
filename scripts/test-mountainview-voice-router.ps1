@@ -47,6 +47,10 @@ $rows = foreach ($phrase in $Phrases) {
       command = $result.decision.commandId
       app = $result.decision.appId
       confidence = $result.decision.confidence
+      readiness = $result.decision.routingProfile.testReadiness
+      risk = $result.decision.routingProfile.riskLevel
+      confirm = $result.decision.routingProfile.confirmBeforeRun
+      needs = ($result.decision.routingProfile.requiredContext -join ", ")
       reason = $result.decision.reason
     }
   } catch {
@@ -56,6 +60,10 @@ $rows = foreach ($phrase in $Phrases) {
       command = ""
       app = ""
       confidence = ""
+      readiness = ""
+      risk = ""
+      confirm = ""
+      needs = ""
       reason = $_.Exception.Message
     }
   }

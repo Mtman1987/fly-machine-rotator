@@ -6,6 +6,14 @@ import { dirname } from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 
 type JsonRecord = Record<string, unknown>;
+type CommandRoutingProfile = {
+  requiredContext: string[];
+  optionalContext: string[];
+  riskLevel: "low" | "medium" | "high";
+  confirmBeforeRun: boolean;
+  testReadiness: "ready" | "dry-run-first" | "needs-context" | "needs-token" | "future";
+  naturalExamples: string[];
+};
 
 const DEFAULT_STREAMWEAVER_TENANT_ID = "94371378";
 const DEFAULT_STREAMWEAVER_USERNAME = "mtman1987";
@@ -357,7 +365,7 @@ class MountainViewContext {
   listCommands(userId: string): JsonRecord[] {
     const rows = this.db.prepare("SELECT * FROM command_definitions WHERE user_id = ? OR user_id = 'system' ORDER BY updated_at DESC")
       .all(userId) as JsonRecord[];
-    return rows.map(normalizeRow);
+    return rows.map((row) => enrichCommandForVoice(normalizeRow(row)));
   }
 
   saveCommand(userId: string, input: JsonRecord): JsonRecord {
@@ -1403,8 +1411,9 @@ class MountainViewContext {
       });
     }
 
-    const catalog = this.bestCatalogMatch(userId, transcript);
+    const catalog = this.bestCatalogMatch(userId, transcript, context);
     if (catalog && Number(catalog.confidence) >= 0.62) {
+      const profile = getCommandRoutingProfile(String(catalog.commandId), String(catalog.appId));
       return voiceDecision({
         mode: "action",
         commandId: String(catalog.commandId),
@@ -1412,7 +1421,7 @@ class MountainViewContext {
         transcript,
         confidence: Number(catalog.confidence),
         reason: `Matched command catalog phrase/name: ${catalog.reason}`,
-        payload: { tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply" }
+        payload: { tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", routingProfile: profile }
       });
     }
 
@@ -1427,13 +1436,15 @@ class MountainViewContext {
     });
   }
 
-  private bestCatalogMatch(userId: string, transcript: string): JsonRecord | undefined {
+  private bestCatalogMatch(userId: string, transcript: string, context: JsonRecord): JsonRecord | undefined {
     const lower = transcript.toLowerCase();
     const terms = tokenizeCommandText(lower);
     if (terms.length === 0) return undefined;
     let best: JsonRecord | undefined;
     for (const command of this.listCommands(userId)) {
       if (Number(command.enabled ?? 1) !== 1) continue;
+      const commandId = String(command.id ?? "");
+      if (commandId === "cmd_streamweaver_voice_commander") continue;
       const phrase = String(command.phrase ?? "");
       const haystack = `${command.name ?? ""} ${phrase} ${command.app_id ?? ""} ${command.url_template ?? ""}`.toLowerCase();
       const commandTerms = tokenizeCommandText(haystack);
@@ -1441,6 +1452,7 @@ class MountainViewContext {
       const overlap = terms.filter((term) => commandTerms.includes(term)).length;
       let score = overlap / Math.max(terms.length, 4);
       if (phrase && lower.includes(phrase.toLowerCase())) score += 0.35;
+      score += scoreCommandContextFit(command, context);
       if (String(command.app_id) === "streamweaver" && /\b(stream|twitch|voice|image|overlay|tts|shout|brb)\b/.test(lower)) score += 0.08;
       if (String(command.app_id) === "hearmeout" && /\b(hear|song|audio|room|watch|movie)\b/.test(lower)) score += 0.08;
       if (String(command.app_id) === "chat-tag" && /\b(tag|game|card|join)\b/.test(lower)) score += 0.08;
@@ -1742,6 +1754,7 @@ function voiceDecision(input: {
   reason: string;
   payload: JsonRecord;
 }): JsonRecord {
+  const profile = getCommandRoutingProfile(input.commandId, input.appId);
   return {
     mode: input.mode,
     commandId: input.commandId,
@@ -1749,9 +1762,138 @@ function voiceDecision(input: {
     transcript: input.transcript,
     confidence: input.confidence,
     reason: input.reason,
+    routingProfile: profile,
     payload: input.payload,
     createdAt: new Date().toISOString()
   };
+}
+
+function enrichCommandForVoice(command: JsonRecord): JsonRecord {
+  const profile = getCommandRoutingProfile(String(command.id ?? ""), String(command.app_id ?? ""));
+  return {
+    ...command,
+    voiceRouting: profile,
+    requiredContext: profile.requiredContext,
+    riskLevel: profile.riskLevel,
+    confirmBeforeRun: profile.confirmBeforeRun,
+    testReadiness: profile.testReadiness,
+    naturalExamples: profile.naturalExamples
+  };
+}
+
+function getCommandRoutingProfile(commandId: string, appId: string): CommandRoutingProfile {
+  if (commandId === "cmd_streamweaver_voice_commander") {
+    return profile(["transcript"], ["destination", "voiceMode", "channel", "visualContext"], "low", false, "ready", [
+      "Athena what do you remember about my stream today",
+      "shoutout mamafeisty",
+      "be right back",
+      "generate an image of Athena standing in my room"
+    ]);
+  }
+  if (commandId.includes("image") || commandId.includes("vision") || commandId.includes("eden")) {
+    return profile(["imageBase64 or imageUrl"], ["prompt", "providers", "visualContext", "displayName"], commandId.includes("face") ? "medium" : "low", commandId.includes("face"), "needs-context", [
+      "read what I see",
+      "detect the logo on this screen",
+      "generate an image from what I am looking at"
+    ]);
+  }
+  if (commandId.startsWith("cmd_dsh_calendar_")) {
+    return profile(["serverId", "discordUserId", "missionName", "missionDate"], ["missionTime", "channelId", "missionDescription"], "medium", commandId !== "cmd_dsh_calendar_add_mission", "dry-run-first", [
+      "add a calendar event for Friday at 8 pm mod meeting",
+      "post the calendar to Discord"
+    ]);
+  }
+  if (commandId === "cmd_discord_message" || commandId === "cmd_discord_event") {
+    return profile(["channelId or serverId", "message"], ["twitchUsername", "eventType"], "medium", true, "dry-run-first", [
+      "send a Discord message that says stream is starting",
+      "push this event to DiscordStreamHub"
+    ]);
+  }
+  if (commandId.startsWith("cmd_chat_tag")) {
+    const needsTarget = commandId === "cmd_chat_tag" || commandId === "cmd_chat_tag_tag";
+    return profile(needsTarget ? ["userId", "targetUserId or targetName"] : ["userId"], ["twitchUsername", "streamerId", "performedBy"], needsTarget ? "medium" : "low", needsTarget, needsTarget ? "needs-context" : "ready", [
+      "who is live in chat tag",
+      "join chat tag",
+      "tag player professor evie"
+    ]);
+  }
+  if (commandId.startsWith("cmd_hearmeout")) {
+    if (commandId.includes("request")) {
+      return profile(["query", "username"], ["roomId", "sessionId", "mediaType", "platform"], "low", false, "ready", [
+        "request the song never gonna give you up in HearMeOut",
+        "request the audiobook dune in HearMeOut"
+      ]);
+    }
+    if (commandId.includes("control")) {
+      return profile(["action"], ["position", "targetIndex", "sessionId"], "medium", true, "dry-run-first", [
+        "pause HearMeOut",
+        "skip to the next watch party item"
+      ]);
+    }
+    return profile(["roomId or sessionId"], ["peerId"], "low", false, "ready", [
+      "who is in the HearMeOut room",
+      "join the HearMeOut voice room"
+    ]);
+  }
+  if (commandId.startsWith("cmd_stream_")) {
+    const highRisk = commandId.includes("stop") || commandId.includes("start");
+    return profile(highRisk ? ["tenantId"] : ["payload"], ["device", "roomId", "event"], highRisk ? "high" : "medium", highRisk, "dry-run-first", [
+      "start stream workflow",
+      "stop stream workflow",
+      "trigger stream overlay"
+    ]);
+  }
+  if (commandId.startsWith("cmd_streamweaver_tts")) {
+    return profile(["message"], ["tenantId", "voice"], "low", false, "ready", [
+      "speak on stream that we are testing MountainView"
+    ]);
+  }
+  if (commandId === "cmd_streamweaver_obs_scenes" || commandId === "cmd_streamweaver_overlay_data") {
+    return profile(["tenantId"], ["overlayType"], "low", false, "ready", [
+      "what OBS scenes do I have",
+      "show overlay data"
+    ]);
+  }
+  if (commandId.startsWith("cmd_profile_") || commandId.includes("person")) {
+    return profile(["displayName or personId", "notes"], ["reminders", "topics", "avatarUrl"], "medium", true, "needs-context", [
+      "save a note about this person",
+      "remember I have a meeting with Alex next Tuesday"
+    ]);
+  }
+  if (appId === "edenai") {
+    return profile(["providers", "prompt or imageBase64"], ["imageUrl"], "medium", true, "needs-token", [
+      "ask EdenAI what I am looking at"
+    ]);
+  }
+  return profile(["transcript"], ["payload"], "medium", true, "dry-run-first", [
+    "run this command from MountainView"
+  ]);
+}
+
+function profile(
+  requiredContext: string[],
+  optionalContext: string[],
+  riskLevel: CommandRoutingProfile["riskLevel"],
+  confirmBeforeRun: boolean,
+  testReadiness: CommandRoutingProfile["testReadiness"],
+  naturalExamples: string[]
+): CommandRoutingProfile {
+  return { requiredContext, optionalContext, riskLevel, confirmBeforeRun, testReadiness, naturalExamples };
+}
+
+function scoreCommandContextFit(command: JsonRecord, context: JsonRecord): number {
+  const profile = getCommandRoutingProfile(String(command.id ?? ""), String(command.app_id ?? ""));
+  const available = new Set(Object.entries(context).filter(([, value]) => value != null && String(value).trim()).map(([key]) => key.toLowerCase()));
+  let score = 0;
+  for (const requirement of profile.requiredContext) {
+    const alternatives = requirement.toLowerCase().split(/\s+or\s+/);
+    if (alternatives.some((key) => available.has(key))) score += 0.04;
+    else score -= 0.04;
+  }
+  if (profile.testReadiness === "ready") score += 0.03;
+  if (profile.confirmBeforeRun) score -= 0.03;
+  if (profile.riskLevel === "high") score -= 0.08;
+  return score;
 }
 
 function summarizeCommandResult(result: JsonRecord): JsonRecord {
