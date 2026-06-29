@@ -393,6 +393,35 @@ export default function App() {
       }
       const actualCommandId = shouldUseParsedIntent ? intent.commandId : commandId;
       const actualDestination = shouldUseParsedIntent ? intent.destination : destination;
+      if (commandId === "cmd_streamweaver_voice_commander") {
+        const routeData = await request("/voice/route", {
+          method: "POST",
+          body: JSON.stringify({
+            transcript: message,
+            context: {
+              destination,
+              voiceMode,
+              tenantId: "94371378",
+              username: "mtman1987",
+              channel: twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(visualContext) || "mtman1987",
+              visualContext,
+              translation: {
+                enabled: voiceMode === "translation",
+                language: translationLanguage
+              },
+              source: "mountainview-mobile"
+            }
+          })
+        });
+        setLog(JSON.stringify(routeData, null, 2));
+        appendActivityLog("voice", "Voice route", String(routeData.decision?.mode ?? "routed"), routeData.decision ?? routeData);
+        const reply = commandReplyText(routeData.result ?? routeData);
+        if (routeData.decision?.mode === "action") await playTone("command");
+        if (options.speakReply ?? true) {
+          await speakText(reply || (routeData.ok ? "Command routed." : "Command failed."));
+        }
+        return routeData;
+      }
       announce(`Sending command ${actualCommandId}...`);
       appendActivityLog(intent.intent === "calendar" ? "calendar" : "voice", "Voice intent", intent.intent, intent);
       const command = commandMap.get(actualCommandId);

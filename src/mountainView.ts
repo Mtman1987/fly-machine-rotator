@@ -132,6 +132,12 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     return json(response, result);
   }
 
+  if (method === "POST" && apiPath === "/api/voice/route") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request);
+    return json(response, await context.routeVoiceCommand(user.id, body));
+  }
+
   if (method === "POST" && apiPath === "/api/media/streamweaver") {
     const user = context.requireAuth(request);
     const body = await readJson(request, 20 * 1024 * 1024);
@@ -444,6 +450,38 @@ class MountainViewContext {
         externalResponse: parseMaybeJson(responseText)
       }
     };
+  }
+
+  async routeVoiceCommand(userId: string, input: JsonRecord): Promise<JsonRecord> {
+    const transcript = readText(input, "transcript") || readText(input, "message");
+    if (!transcript) throw new HttpError(400, "Transcript is required.");
+    const context = asRecord(input.context);
+    const decision = this.decideVoiceRoute(userId, transcript, context);
+    const decisionPayload = asRecord(decision.payload);
+    const decisionTranscript = String(decision.transcript ?? transcript);
+    const payload = {
+      ...context,
+      ...decisionPayload,
+      message: decisionTranscript,
+      transcript: decisionTranscript,
+      routingDecision: decision,
+      payload: {
+        ...asRecord(context.payload),
+        ...decisionPayload,
+        message: decisionTranscript,
+        transcript: decisionTranscript,
+        routingDecision: decision
+      }
+    };
+    const result = await this.executeCommand(userId, String(decision.commandId), payload);
+    this.recordGlassesMediaEvent(userId, {
+      kind: "voice-route-decision",
+      source: "mountainview-router",
+      targetApp: String(decision.appId ?? "streamweaver"),
+      status: String(decision.mode ?? "conversation"),
+      metadata: { transcript, decision, result: summarizeCommandResult(result) }
+    });
+    return { ok: true, decision, result };
   }
 
   async relayImageToStreamWeaver(userId: string, input: JsonRecord): Promise<JsonRecord> {
@@ -1293,6 +1331,113 @@ class MountainViewContext {
     `).run(`log_${Date.now()}_${Math.random().toString(16).slice(2)}`, userId, commandId, appId, method, url, status, responseStatus, durationMs, responseBody, error, new Date().toISOString());
   }
 
+  private decideVoiceRoute(userId: string, transcript: string, context: JsonRecord): JsonRecord {
+    const lower = transcript.toLowerCase();
+    const requestedDestination = normalizeVoiceDestination(readText(context, "destination"));
+    const requestedMode = normalizeVoiceMode(readText(context, "voiceMode"));
+    const tenantId = readText(context, "tenantId") || DEFAULT_STREAMWEAVER_TENANT_ID;
+    const username = readText(context, "username") || DEFAULT_STREAMWEAVER_USERNAME;
+    const visualContext = readText(context, "visualContext");
+
+    const directMessage = extractDirectMessageIntent(transcript);
+    if (directMessage) {
+      const channel = directMessage.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username;
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_voice_commander",
+        appId: "streamweaver",
+        transcript: directMessage.message,
+        confidence: 0.94,
+        reason: "Natural language asked to send/post/type a message, so MountainView selected StreamWeaver dictation instead of Athena conversation.",
+        payload: { destination: directMessage.destination || requestedDestination || "twitch", voiceMode: "dictation", dispatch: true, channel, tenantId, username, targetName: directMessage.targetName }
+      });
+    }
+
+    if (/\b(be right back|brb|back from break|stop brb|shout\s*out|shoutout|generate|make|create)\b/.test(lower) && /\b(image|picture|photo|avatar|brb|shout)/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_voice_commander",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.91,
+        reason: "StreamWeaver voice commander already owns built-in stream actions like shoutout, BRB, and !img image flows.",
+        payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
+      });
+    }
+
+    if (/\b(calendar|meeting|appointment|event|reminder|schedule|date)\b/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_dsh_calendar_add_mission",
+        appId: "discordstreamhub",
+        transcript,
+        confidence: 0.9,
+        reason: "Calendar/date language maps to the DiscordStreamHub mission calendar command.",
+        payload: { destination: "discord", tenantId, username }
+      });
+    }
+
+    if (/\b(song|audiobook|audio book|movie|watch party|queue|request|play)\b/.test(lower) && /\b(hearmeout|hear me out|song|audiobook|audio book|movie|watch party)\b/.test(lower)) {
+      const commandId = /\b(audiobook|audio book)\b/.test(lower) ? "cmd_hearmeout_audiobook_request" : "cmd_hearmeout_song_request";
+      return voiceDecision({
+        mode: "action",
+        commandId,
+        appId: "hearmeout",
+        transcript,
+        confidence: 0.88,
+        reason: "Media queue language maps to HearMeOut request routes.",
+        payload: { query: transcript, tenantId, username }
+      });
+    }
+
+    const catalog = this.bestCatalogMatch(userId, transcript);
+    if (catalog && Number(catalog.confidence) >= 0.62) {
+      return voiceDecision({
+        mode: "action",
+        commandId: String(catalog.commandId),
+        appId: String(catalog.appId),
+        transcript,
+        confidence: Number(catalog.confidence),
+        reason: `Matched command catalog phrase/name: ${catalog.reason}`,
+        payload: { tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply" }
+      });
+    }
+
+    return voiceDecision({
+      mode: "conversation",
+      commandId: "cmd_streamweaver_voice_commander",
+      appId: "streamweaver",
+      transcript,
+      confidence: 0.55,
+      reason: "No high-confidence action matched, so MountainView kept this as Athena conversation.",
+      payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
+    });
+  }
+
+  private bestCatalogMatch(userId: string, transcript: string): JsonRecord | undefined {
+    const lower = transcript.toLowerCase();
+    const terms = tokenizeCommandText(lower);
+    if (terms.length === 0) return undefined;
+    let best: JsonRecord | undefined;
+    for (const command of this.listCommands(userId)) {
+      if (Number(command.enabled ?? 1) !== 1) continue;
+      const phrase = String(command.phrase ?? "");
+      const haystack = `${command.name ?? ""} ${phrase} ${command.app_id ?? ""} ${command.url_template ?? ""}`.toLowerCase();
+      const commandTerms = tokenizeCommandText(haystack);
+      if (commandTerms.length === 0) continue;
+      const overlap = terms.filter((term) => commandTerms.includes(term)).length;
+      let score = overlap / Math.max(terms.length, 4);
+      if (phrase && lower.includes(phrase.toLowerCase())) score += 0.35;
+      if (String(command.app_id) === "streamweaver" && /\b(stream|twitch|voice|image|overlay|tts|shout|brb)\b/.test(lower)) score += 0.08;
+      if (String(command.app_id) === "hearmeout" && /\b(hear|song|audio|room|watch|movie)\b/.test(lower)) score += 0.08;
+      if (String(command.app_id) === "chat-tag" && /\b(tag|game|card|join)\b/.test(lower)) score += 0.08;
+      if (!best || score > Number(best.confidence)) {
+        best = { commandId: command.id, appId: command.app_id, confidence: Math.min(0.86, score), reason: `${command.name ?? command.id}` };
+      }
+    }
+    return best;
+  }
+
   private encrypt(value: string): string {
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.tokenKey, iv);
@@ -1573,6 +1718,106 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
   return {
     ...base
   };
+}
+
+function voiceDecision(input: {
+  mode: "conversation" | "action";
+  commandId: string;
+  appId: string;
+  transcript: string;
+  confidence: number;
+  reason: string;
+  payload: JsonRecord;
+}): JsonRecord {
+  return {
+    mode: input.mode,
+    commandId: input.commandId,
+    appId: input.appId,
+    transcript: input.transcript,
+    confidence: input.confidence,
+    reason: input.reason,
+    payload: input.payload,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function summarizeCommandResult(result: JsonRecord): JsonRecord {
+  const response = asRecord(result.response);
+  return {
+    ok: result.ok,
+    status: result.status,
+    routed: response.routed,
+    handled: response.handled,
+    dispatched: response.dispatched,
+    command: response.command
+  };
+}
+
+function normalizeVoiceDestination(value: string): string {
+  return ["ai", "private", "twitch", "discord"].includes(value) ? value : "";
+}
+
+function normalizeVoiceMode(value: string): string {
+  return ["reply", "dictation", "translation"].includes(value) ? value : "";
+}
+
+function tokenizeCommandText(value: string): string[] {
+  const stop = new Set(["the", "and", "that", "with", "from", "this", "please", "athena", "annie", "command", "trigger"]);
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9_ ]+/g, " ")
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 3 && !stop.has(term));
+}
+
+function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
+  const quoted = text.match(/\b(?:send|post|type|say)\s+(?:a\s+)?message(?:\s+to\s+(.+?))?\s+(?:that\s+says|saying|with|:)\s+["“]?(.+?)["”]?\s*$/i);
+  if (quoted?.[2]?.trim()) {
+    const targetName = cleanSpokenTarget(quoted[1] ?? "");
+    return {
+      message: quoted[2].trim(),
+      targetName,
+      channel: normalizeTwitchChannel(targetName),
+      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+    };
+  }
+
+  const simple = text.match(/\b(?:send|post|type)\s+["“]?(.+?)["”]?\s+(?:to|in|into)\s+(.+?)(?:\s+(?:chat|twitch|discord))?\s*$/i);
+  if (simple?.[1]?.trim()) {
+    const targetName = cleanSpokenTarget(simple[2] ?? "");
+    return {
+      message: simple[1].trim(),
+      targetName,
+      channel: normalizeTwitchChannel(targetName),
+      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+    };
+  }
+
+  return undefined;
+}
+
+function cleanSpokenTarget(value: string): string {
+  return value
+    .replace(/\b(?:twitch|discord|chat|channel|server|user)\b/ig, "")
+    .replace(/^@/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeTwitchChannel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^@/, "")
+    .replace(/[^a-z0-9_]+/g, "")
+    .slice(0, 25);
+}
+
+function extractTwitchChannel(text: string): string {
+  const direct = text.match(/(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([a-z0-9_]{3,25})/i);
+  if (direct?.[1]) return direct[1].toLowerCase();
+  const named = text.match(/\b(?:watching|locked|target|channel)\s+@?([a-z0-9_]{3,25})(?:'s)?\s+(?:twitch\s+)?(?:stream|chat)\b/i);
+  return named?.[1]?.toLowerCase() ?? "";
 }
 
 function readText(source: JsonRecord, key: string): string {
