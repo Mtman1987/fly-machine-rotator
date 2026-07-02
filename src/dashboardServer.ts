@@ -4,8 +4,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { generateFixRecord, StoredErrorEvent } from "./aiFixer.js";
 import { loadConfig } from "./config.js";
 import { appendFixAttempt, buildFixId, FixRecord, FixStore, getFixStoreFile } from "./fixStore.js";
+import { updateFixQualityGate } from "./fixQuality.js";
 import { buildFingerprintIgnoreRule, buildPatternIgnoreRule, getIgnoreRulesFile, IgnoreRule, IgnoreRuleStore } from "./ignoreRules.js";
-import { buildFixBranchName, captureRepoSnapshot, ensureRepoDependencies, ensureRepoReady, hasWorkingTreeChanges, pushRepoBranch, runCheckCommands, writeRepoFiles } from "./repoOps.js";
+import { buildFixBranchName, captureRepoSnapshot, checkoutFixBranch, ensureRepoDependencies, ensureRepoReady, hasWorkingTreeChanges, pushRepoBranch, runCheckCommands, writeRepoFiles } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
@@ -138,7 +139,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     const id = url.searchParams.get("id");
     if (!id) throw new HttpError(400, "Missing fix id.");
     const result = await handleFixAction(url.pathname, id, env, body);
-    if (url.pathname.endsWith("/handled")) await refreshUnifiedReport(env);
+    if (url.pathname.endsWith("/handled") || url.pathname.endsWith("/verify")) await refreshUnifiedReport(env);
     return json(response, result);
   }
 
@@ -207,6 +208,7 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     if (existing.status === "error" && existing.changes.length > 0) {
       existing.status = "generated";
     }
+    updateFixQualityGate(existing);
     store.upsert(existing);
     await store.save();
     return { ok: true, message: `Saved ${existing.changes.length} edited file change(s).` };
@@ -218,6 +220,8 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     if (existing.changes.length === 0) throw new HttpError(400, "No file changes available to apply.");
     const repoPath = await ensureRepoReady(config, env);
     await assertFreshFixSnapshot(existing, repoPath);
+    const branch = buildFixBranchName(config, existing.appName, existing.fingerprint);
+    await checkoutFixBranch(repoPath, branch);
     await writeRepoFiles(repoPath, existing.changes.map((change) => ({ path: change.path, content: change.content })));
     existing.status = "applied";
     existing.updatedAt = new Date().toISOString();
@@ -226,11 +230,12 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       attemptedAt: existing.updatedAt,
       action: "apply",
       ok: true,
-      summary: `Applied ${existing.changes.length} file change(s).`
+      summary: `Applied ${existing.changes.length} file change(s) on branch ${branch}.`
     });
+    updateFixQualityGate(existing);
     store.upsert(existing);
     await store.save();
-    return { ok: true, message: `Applied ${existing.changes.length} file change(s).` };
+    return { ok: true, message: `Applied ${existing.changes.length} file change(s) on ${branch}.` };
   }
 
   if (pathname.endsWith("/check")) {
@@ -257,6 +262,7 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     const branchPushed = existing.checkResult.ok
       ? await maybePushCheckedFixBranch(existing, config, repoPath, env)
       : false;
+    updateFixQualityGate(existing);
     store.upsert(existing);
     await store.save();
     return { ok: true, message: existing.checkResult.ok ? branchPushed ? `Checks passed and pushed branch ${existing.pushResult?.branch}.` : "Checks passed." : "Checks failed." };
@@ -284,9 +290,48 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       summary: `Pushed branch ${push.branch}.`,
       details: push.commit
     });
+    updateFixQualityGate(existing);
     store.upsert(existing);
     await store.save();
     return { ok: true, message: `Pushed branch ${push.branch}.` };
+  }
+
+  if (pathname.endsWith("/verify")) {
+    const windowMinutes = Number(env.ROTATOR_FIX_VERIFY_WINDOW_MINUTES ?? 30);
+    const since = Date.now() - Math.max(1, windowMinutes) * 60_000;
+    const matches = pruneLast24Hours(await readErrorHistory(env)).filter((item) =>
+      item.appName === existing.appName &&
+      item.fingerprint === existing.fingerprint &&
+      Date.parse(item.recordedAt) >= since
+    );
+    existing.verificationResult = {
+      verifiedAt: new Date().toISOString(),
+      ok: matches.length === 0,
+      windowMinutes,
+      matchingEvents: matches.length,
+      summary: matches.length === 0
+        ? `No matching ${existing.appName} events found in the last ${windowMinutes} minute(s).`
+        : `${matches.length} matching ${existing.appName} event(s) still appeared in the last ${windowMinutes} minute(s).`
+    };
+    existing.status = existing.verificationResult.ok ? "handled" : "error";
+    existing.updatedAt = existing.verificationResult.verifiedAt;
+    if (!existing.verificationResult.ok) {
+      existing.lastError = existing.verificationResult.summary;
+    } else {
+      existing.lastError = undefined;
+      existing.handledAt = existing.verificationResult.verifiedAt;
+      await removeFingerprintFromErrorState(existing.fingerprint, env);
+    }
+    appendFixAttempt(existing, {
+      attemptedAt: existing.updatedAt,
+      action: "verify",
+      ok: existing.verificationResult.ok,
+      summary: existing.verificationResult.summary
+    });
+    updateFixQualityGate(existing);
+    store.upsert(existing);
+    await store.save();
+    return { ok: true, message: existing.verificationResult.summary };
   }
 
   if (pathname.endsWith("/handled")) {
@@ -299,6 +344,7 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       ok: true,
       summary: "Marked handled and removed from active error state."
     });
+    updateFixQualityGate(existing);
     store.upsert(existing);
     await store.save();
     await removeFingerprintFromErrorState(existing.fingerprint, env);
@@ -1047,6 +1093,27 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
         ...(fix.confidenceSignals ?? [])
       ].join("\n")
     : "";
+  const qualityText = fix?.qualityGate
+    ? [
+        `Verdict: ${fix.qualityGate.verdict}`,
+        `Overall: ${fix.qualityGate.overallConfidence}%`,
+        `Root cause: ${fix.qualityGate.rootCauseConfidence}%`,
+        `Patch: ${fix.qualityGate.patchConfidence}%`,
+        `Tests: ${fix.qualityGate.testConfidence}%`,
+        `Rollback: ${fix.qualityGate.rollbackConfidence}%`,
+        `Post-deploy: ${fix.qualityGate.postDeployConfidence}%`,
+        "",
+        ...fix.qualityGate.signals
+      ].join("\n")
+    : "";
+  const verificationText = fix?.verificationResult
+    ? [
+        `Verified: ${fix.verificationResult.ok ? "yes" : "no"}`,
+        `Window: ${fix.verificationResult.windowMinutes} minute(s)`,
+        `Matching events: ${fix.verificationResult.matchingEvents}`,
+        fix.verificationResult.summary
+      ].join("\n")
+    : "";
 
   const hasChanges = Boolean(fix && fix.changes.length > 0);
   const hasAppliedChanges = Boolean(fix && (fix.status === "applied" || fix.status === "checked" || fix.status === "pushed"));
@@ -1088,6 +1155,7 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
       <button type="button" class="secondary" onclick="runFixAction('apply', '${escapeHtml(id)}')" ${hasChanges ? "" : "disabled"}>Approve and apply</button>
       <button type="button" class="secondary" onclick="runFixAction('check', '${escapeHtml(id)}')" ${hasAppliedChanges ? "" : "disabled"}>Run checks</button>
       <button type="button" class="secondary" onclick="runFixAction('push', '${escapeHtml(id)}')" ${fix?.checkResult?.ok ? "" : "disabled"}>Push branch</button>
+      <button type="button" class="secondary" onclick="runFixAction('verify', '${escapeHtml(id)}')" ${fix?.pushResult || fix?.status === "handled" ? "" : "disabled"}>Verify quiet</button>
       <button type="button" class="secondary" onclick="runErrorAction('ignore-fingerprint', '${escapeHtml(id)}')">Ignore fingerprint</button>
       <button type="button" class="secondary" onclick="runErrorAction('ignore-pattern', '${escapeHtml(id)}')">Ignore app + pattern</button>
       <button type="button" class="danger" onclick="runFixAction('handled', '${escapeHtml(id)}')">Mark handled</button>
@@ -1110,6 +1178,12 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
           <div class="eyebrow">Confidence Evidence</div>
           <div class="code-box">${escapeHtml(confidenceText)}</div>
         </div>
+        ${fix.qualityGate ? `
+          <div>
+            <div class="eyebrow">Fix Quality Gate • ${escapeHtml(fix.qualityGate.verdict)} • ${escapeHtml(String(fix.qualityGate.overallConfidence))}%</div>
+            <div class="code-box">${escapeHtml(qualityText)}</div>
+          </div>
+        ` : ""}
         ${reviewStation ? `
           <div>
             <div class="eyebrow">Review Station</div>
@@ -1126,6 +1200,12 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
           <div>
             <div class="eyebrow">Push Result</div>
             <div class="check-box">${escapeHtml(pushText)}</div>
+          </div>
+        ` : ""}
+        ${fix.verificationResult ? `
+          <div>
+            <div class="eyebrow">Post-Deploy Verification</div>
+            <div class="check-box">${escapeHtml(verificationText)}</div>
           </div>
         ` : ""}
         ${fix.lastError ? `
@@ -1288,6 +1368,8 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
     try {
       const repoPath = await ensureRepoReady(config, env);
       await assertFreshFixSnapshot(record, repoPath);
+      const branch = buildFixBranchName(config, record.appName, record.fingerprint);
+      await checkoutFixBranch(repoPath, branch);
       await writeRepoFiles(repoPath, record.changes.map((change) => ({ path: change.path, content: change.content })));
       record.status = "applied";
       record.updatedAt = new Date().toISOString();
@@ -1304,6 +1386,7 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
       record.status = record.checkResult.ok ? "checked" : "error";
       record.updatedAt = new Date().toISOString();
       record.lastError = record.checkResult.ok ? undefined : commandResults.find((result) => result.exitCode !== 0)?.output.slice(-4000);
+      updateFixQualityGate(record);
       if (record.checkResult.ok) {
         checked += 1;
       } else {
@@ -1317,6 +1400,7 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
       record.status = "error";
       record.updatedAt = new Date().toISOString();
       record.lastError = error instanceof Error ? error.message : String(error);
+      updateFixQualityGate(record);
       failed += 1;
     }
 
@@ -1357,6 +1441,7 @@ async function maybePushCheckedFixBranch(
     summary: `Pushed branch ${push.branch}.`,
     details: push.commit
   });
+  updateFixQualityGate(record);
   return true;
 }
 

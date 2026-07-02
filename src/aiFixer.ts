@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { appendFixAttempt, buildFixId, FixRecord, FixStatus } from "./fixStore.js";
+import { updateFixQualityGate } from "./fixQuality.js";
 import { captureRepoSnapshot, ensureRepoReady } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
 
@@ -101,6 +102,7 @@ export async function generateFixRecord(
       ? `repo=${repoSnapshot.branch ?? "unknown"}@${repoSnapshot.headCommit.slice(0, 12)} context=${context.map((item) => item.path).join(", ")}`
       : `context=${context.map((item) => item.path).join(", ")}`
   });
+  updateFixQualityGate(record);
   return record;
 }
 

@@ -139,6 +139,11 @@ export async function pushRepoBranch(repoPath: string, branchName: string, messa
   return { branch: branchName, commit, output: pushResult.output };
 }
 
+export async function checkoutFixBranch(repoPath: string, branchName: string): Promise<void> {
+  await configureGitIdentity(repoPath);
+  await runShell(`git checkout -B ${shellQuote(branchName)}`, repoPath);
+}
+
 export function buildFixBranchName(config: RepoConfig, appName: string, fingerprint: string): string {
   const safeApp = appName.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
   return `${config.branchPrefix}/${safeApp}-${fingerprint.slice(0, 8)}`;

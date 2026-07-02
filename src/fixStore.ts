@@ -33,9 +33,29 @@ export interface FixPushResult {
   output: string;
 }
 
+export interface FixVerificationResult {
+  verifiedAt: string;
+  ok: boolean;
+  windowMinutes: number;
+  matchingEvents: number;
+  summary: string;
+}
+
+export interface FixQualityGate {
+  updatedAt: string;
+  overallConfidence: number;
+  rootCauseConfidence: number;
+  patchConfidence: number;
+  testConfidence: number;
+  rollbackConfidence: number;
+  postDeployConfidence: number;
+  verdict: "blocked" | "review" | "ready" | "verified";
+  signals: string[];
+}
+
 export interface FixAttempt {
   attemptedAt: string;
-  action: "generate" | "apply" | "check" | "push" | "handled";
+  action: "generate" | "apply" | "check" | "push" | "verify" | "handled";
   ok: boolean;
   summary: string;
   details?: string;
@@ -66,12 +86,14 @@ export interface FixRecord {
   confidence?: "low" | "medium" | "high";
   confidenceScore?: number;
   confidenceSignals?: string[];
+  qualityGate?: FixQualityGate;
   sourceSummary?: string;
   changes: FixFileChange[];
   attempts: FixAttempt[];
   repoSnapshot?: FixRepoSnapshot;
   checkResult?: FixCheckResult;
   pushResult?: FixPushResult;
+  verificationResult?: FixVerificationResult;
   lastError?: string;
   handledAt?: string;
 }
@@ -138,6 +160,18 @@ function normalizeFixRecord(record: FixRecord): FixRecord {
     ...record,
     changes: Array.isArray(record.changes) ? record.changes : [],
     attempts: Array.isArray(record.attempts) ? record.attempts : [],
-    confidenceSignals: Array.isArray(record.confidenceSignals) ? record.confidenceSignals : undefined
+    confidenceSignals: Array.isArray(record.confidenceSignals) ? record.confidenceSignals : undefined,
+    qualityGate: normalizeQualityGate(record.qualityGate),
+    verificationResult: record.verificationResult && typeof record.verificationResult === "object"
+      ? record.verificationResult
+      : undefined
+  };
+}
+
+function normalizeQualityGate(value: FixRecord["qualityGate"]): FixRecord["qualityGate"] {
+  if (!value || typeof value !== "object") return undefined;
+  return {
+    ...value,
+    signals: Array.isArray(value.signals) ? value.signals : []
   };
 }
