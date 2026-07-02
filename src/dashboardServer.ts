@@ -366,7 +366,6 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
   const ignoredErrors = rawErrors.filter((event) => ignoreStore.matches(event));
   const errors = dedupeErrorEvents(rawErrors.filter((event) => !ignoreStore.matches(event)));
   const counts = summarizeFailureCounts(rawErrors);
-  const actionProtected = Boolean(env.ROTATOR_DASHBOARD_ACTION_TOKEN);
   const dashboardUrl = getDashboardUrl(env);
   const fixStore = await FixStore.load(getFixStoreFile(env));
   const fixesById = new Map(fixStore.list().map((fix) => [fix.id, fix]));
@@ -923,8 +922,8 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         ${runtime.lastError ? `<p class="muted" style="color: var(--danger); margin-top: 12px;">${escapeHtml(runtime.lastError)}</p>` : ""}
         <div class="control-grid">
           <div>
-            <label class="eyebrow" for="action-token">Action token</label>
-            <input id="action-token" type="password" placeholder="${actionProtected ? "Required for mutating actions" : "Optional; actions are open"}" />
+            <div class="eyebrow">Action token</div>
+            <div class="code-box">Actions are open.</div>
           </div>
           <div>
             <div class="eyebrow">Coder and credentials</div>
@@ -997,21 +996,13 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
     </section>
   </main>
   <script>
-    const tokenInput = document.getElementById('action-token');
     const actionStatus = document.getElementById('action-status');
-    const stored = localStorage.getItem('rotatorActionToken');
-    if (stored) tokenInput.value = stored;
-    tokenInput.addEventListener('change', () => localStorage.setItem('rotatorActionToken', tokenInput.value));
 
     async function runAction(path, label) {
       actionStatus.textContent = (label || 'Working') + '...';
       actionStatus.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       try {
-        localStorage.setItem('rotatorActionToken', tokenInput.value);
-        const response = await fetch(path, {
-          method: 'POST',
-          headers: tokenInput.value ? { 'x-rotator-action-token': tokenInput.value } : {}
-        });
+        const response = await fetch(path, { method: 'POST' });
         const text = await response.text();
         if (!response.ok) throw new Error(text || ('Request failed with ' + response.status));
         const payload = text ? JSON.parse(text) : { ok: true };
@@ -1045,13 +1036,9 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       actionStatus.textContent = 'Saving edits...';
       actionStatus.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       try {
-        localStorage.setItem('rotatorActionToken', tokenInput.value);
         const response = await fetch('/actions/fixes/save?id=' + encodeURIComponent(id), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(tokenInput.value ? { 'x-rotator-action-token': tokenInput.value } : {})
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ changes })
         });
         const text = await response.text();
@@ -1247,12 +1234,8 @@ function confidenceLabelToScore(confidence: FixRecord["confidence"]): number {
 }
 
 function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): void {
-  const expected = env.ROTATOR_DASHBOARD_ACTION_TOKEN;
-  if (!expected) return;
-  const provided = request.headers["x-rotator-action-token"];
-  if (provided !== expected) {
-    throw new HttpError(401, "Unauthorized action token.");
-  }
+  void request;
+  void env;
 }
 
 async function refreshUnifiedReport(env: NodeJS.ProcessEnv, latestRotationResults?: Parameters<typeof upsertUnifiedDiscordReport>[1]): Promise<void> {
