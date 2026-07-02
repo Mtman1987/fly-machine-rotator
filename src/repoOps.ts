@@ -70,17 +70,52 @@ export async function writeRepoFiles(
   repoPath: string,
   changes: Array<{ path: string; content: string }>
 ): Promise<string[]> {
+  await validateRepoFileChanges(repoPath, changes);
   const written: string[] = [];
   for (const change of changes) {
     const targetPath = join(repoPath, change.path);
-    if (!isSubpath(repoPath, targetPath)) {
-      throw new Error(`Refusing to write outside repo: ${change.path}`);
-    }
     await mkdir(dirname(targetPath), { recursive: true });
     await writeFile(targetPath, change.content);
     written.push(change.path);
   }
   return written;
+}
+
+export async function validateRepoFileChanges(
+  repoPath: string,
+  changes: Array<{ path: string; content: string }>
+): Promise<void> {
+  if (changes.length === 0) {
+    throw new Error("No file changes available to apply.");
+  }
+
+  for (const change of changes) {
+    const normalizedPath = change.path.replaceAll("\\", "/");
+    const targetPath = join(repoPath, change.path);
+    if (
+      !normalizedPath ||
+      normalizedPath.startsWith("../") ||
+      normalizedPath.startsWith("/") ||
+      normalizedPath.includes("/../") ||
+      !isSubpath(repoPath, targetPath)
+    ) {
+      throw new Error(`Refusing to write outside repo: ${change.path}`);
+    }
+    if (!change.content.trim() || !change.content.includes("\n")) {
+      throw new Error(`Refusing to apply blank or partial content for ${change.path}.`);
+    }
+
+    const existing = await readFile(targetPath, "utf8").catch(() => undefined);
+    if (!existing) continue;
+    const existingLines = existing.split(/\r?\n/).length;
+    const proposedLines = change.content.split(/\r?\n/).length;
+    if (existingLines >= 120 && proposedLines < Math.floor(existingLines * 0.4)) {
+      throw new Error(`Refusing likely truncated rewrite for ${change.path}.`);
+    }
+    if (existing.length >= 4000 && change.content.length < Math.floor(existing.length * 0.35)) {
+      throw new Error(`Refusing likely truncated rewrite for ${change.path}.`);
+    }
+  }
 }
 
 export async function pushRepoBranch(repoPath: string, branchName: string, message: string, env: NodeJS.ProcessEnv = process.env): Promise<{ branch: string; commit: string; output: string }> {

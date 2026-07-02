@@ -5,12 +5,13 @@ import { generateFixRecord, StoredErrorEvent } from "./aiFixer.js";
 import { loadConfig } from "./config.js";
 import { appendFixAttempt, buildFixId, FixRecord, FixStore, getFixStoreFile } from "./fixStore.js";
 import { buildFingerprintIgnoreRule, buildPatternIgnoreRule, getIgnoreRulesFile, IgnoreRule, IgnoreRuleStore } from "./ignoreRules.js";
-import { buildFixBranchName, ensureRepoDependencies, ensureRepoReady, hasWorkingTreeChanges, pushRepoBranch, runCheckCommands, writeRepoFiles } from "./repoOps.js";
+import { buildFixBranchName, captureRepoSnapshot, ensureRepoDependencies, ensureRepoReady, hasWorkingTreeChanges, pushRepoBranch, runCheckCommands, writeRepoFiles } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { handleMountainViewRequest } from "./mountainView.js";
+import { isNonActionableErrorMessage } from "./logMonitor.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -106,6 +107,14 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     const ruleId = url.searchParams.get("rule");
     if (!ruleId) throw new HttpError(400, "Missing ignore rule id.");
     const result = await removeIgnoreRule(ruleId, env);
+    return json(response, { ok: true, message: result.message });
+  }
+
+  if (method === "POST" && url.pathname === "/actions/errors/auto-ignore-noise") {
+    await readBody(request);
+    authorizeAction(request, env);
+    const result = await autoIgnoreKnownNoise(env);
+    await refreshUnifiedReport(env);
     return json(response, { ok: true, message: result.message });
   }
 
@@ -208,6 +217,7 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
     if (!config) throw new HttpError(400, `No repo mapping for ${existing.appName}.`);
     if (existing.changes.length === 0) throw new HttpError(400, "No file changes available to apply.");
     const repoPath = await ensureRepoReady(config, env);
+    await assertFreshFixSnapshot(existing, repoPath);
     await writeRepoFiles(repoPath, existing.changes.map((change) => ({ path: change.path, content: change.content })));
     existing.status = "applied";
     existing.updatedAt = new Date().toISOString();
@@ -876,6 +886,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
           <button type="button" onclick="runAction('/actions/rotate')">Run rotation now</button>
           <button type="button" class="secondary" onclick="runAction('/actions/fixes/review-cycle')">Run AI review cycle</button>
           <button type="button" class="secondary" onclick="runAction('/actions/fixes/auto-fix-cycle')" ${autoFixEnabled ? "" : "disabled"}>Run auto-fix cycle</button>
+          <button type="button" class="secondary" onclick="runAction('/actions/errors/auto-ignore-noise')">Auto-ignore known noise</button>
           <button type="button" class="danger" onclick="runAction('/actions/errors/clear')">Clear current errors</button>
         </div>
         <div class="small muted" style="margin-top: 10px;">
@@ -1064,7 +1075,7 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
     <div class="actions">
       <button type="button" onclick="runFixAction('generate', '${escapeHtml(id)}')">${fix ? "Refresh fix" : "Generate fix"}</button>
       <button type="button" class="secondary" onclick="saveFixEdits('${escapeHtml(id)}')" ${hasChanges ? "" : "disabled"}>Save edits</button>
-      <button type="button" class="secondary" onclick="runFixAction('apply', '${escapeHtml(id)}')" ${hasChanges ? "" : "disabled"}>Apply patch</button>
+      <button type="button" class="secondary" onclick="runFixAction('apply', '${escapeHtml(id)}')" ${hasChanges ? "" : "disabled"}>Approve and apply</button>
       <button type="button" class="secondary" onclick="runFixAction('check', '${escapeHtml(id)}')" ${hasAppliedChanges ? "" : "disabled"}>Run checks</button>
       <button type="button" class="secondary" onclick="runFixAction('push', '${escapeHtml(id)}')" ${fix?.checkResult?.ok ? "" : "disabled"}>Push branch</button>
       <button type="button" class="secondary" onclick="runErrorAction('ignore-fingerprint', '${escapeHtml(id)}')">Ignore fingerprint</button>
@@ -1173,12 +1184,52 @@ async function removeIgnoreRule(ruleId: string, env: NodeJS.ProcessEnv): Promise
   return { message: `Removed ignore rule ${ruleId}.` };
 }
 
+async function autoIgnoreKnownNoise(env: NodeJS.ProcessEnv): Promise<{ ignored: number; message: string }> {
+  const store = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
+  const events = dedupeErrorEvents(pruneLast24Hours(await readErrorHistory(env)));
+  let ignored = 0;
+
+  for (const event of events) {
+    if (store.matches(event) || !isNonActionableErrorMessage(event.message)) continue;
+    store.add({
+      ...buildPatternIgnoreRule(event),
+      note: `Auto-noise: ${event.message.slice(0, 120)}`
+    });
+    ignored += 1;
+  }
+
+  if (ignored > 0) {
+    await store.save();
+    await removeMatchingIgnoredEvents(env, store);
+  }
+
+  return {
+    ignored,
+    message: ignored > 0
+      ? `Added ${ignored} known-noise ignore rule(s) and removed matching events.`
+      : "No known-noise events found."
+  };
+}
+
+async function assertFreshFixSnapshot(record: FixRecord, repoPath: string): Promise<void> {
+  const expectedHead = record.repoSnapshot?.headCommit;
+  if (!expectedHead) return;
+  const current = await captureRepoSnapshot(repoPath);
+  if (current.dirty) {
+    throw new Error(`Refusing to apply ${record.id}: target repo has uncommitted changes.`);
+  }
+  if (current.headCommit && current.headCommit !== expectedHead) {
+    throw new Error(`Refusing to apply stale fix ${record.id}: repo moved from ${expectedHead.slice(0, 12)} to ${current.headCommit.slice(0, 12)}. Regenerate the fix first.`);
+  }
+}
+
 async function runReviewCycle(env: NodeJS.ProcessEnv): Promise<{ message: string }> {
+  const ignored = await autoIgnoreKnownNoise(env);
   const results = await executeTrackedRotation([], env, "dashboard-review");
   await refreshUnifiedReport(env, results);
   const generated = await generateFixesForCurrentErrors(env);
   return {
-    message: `Review cycle complete. rotation=${formatRotationSummary(results)} fixes generated=${generated.generated} failed=${generated.failed}.`
+    message: `Review cycle complete. ignored=${ignored.ignored} rotation=${formatRotationSummary(results)} fixes generated=${generated.generated} failed=${generated.failed}.`
   };
 }
 
@@ -1215,6 +1266,7 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
 
     try {
       const repoPath = await ensureRepoReady(config, env);
+      await assertFreshFixSnapshot(record, repoPath);
       await writeRepoFiles(repoPath, record.changes.map((change) => ({ path: change.path, content: change.content })));
       record.status = "applied";
       record.updatedAt = new Date().toISOString();

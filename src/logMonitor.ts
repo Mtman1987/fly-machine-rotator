@@ -250,9 +250,13 @@ function parseFlyLogLine(appName: string, line: string): LogEntry {
 
 export function looksLikeError(message: string): boolean {
   const normalized = stripAnsi(message);
-  if (isExpectedApplicationResponse(message)) return false;
-  if (isNonActionableErrorEcho(normalized)) return false;
+  if (isNonActionableErrorMessage(normalized)) return false;
   return ERROR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isNonActionableErrorMessage(message: string): boolean {
+  const normalized = stripAnsi(message);
+  return isExpectedApplicationResponse(normalized) || isNonActionableErrorEcho(normalized);
 }
 
 function isExpectedApplicationResponse(message: string): boolean {
@@ -282,6 +286,8 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[PM\d+\] machines API returned an error: "machine ID [^"]+ lease currently held by [^"]+"/i,
     /\[PM\d+\] machines API returned an error: "rate limit exceeded"/i,
     /\[PM\d+\] machine is in a non-startable state: stopping/i,
+    /\[PM\d+\] failed to change machine state: machine getting replaced, refusing to start/i,
+    /\[PM\d+\] failed to change machine state: unable to start machine from current state: 'created'/i,
     /\[PM\d+\] failed to connect to machine: gave up after \d+ attempts/i,
     /\[PC\d+\] failed to connect to instance after \d+ attempts/i,
     /\[PR\d+\] could not find a good candidate within \d+ attempts? at load balancing(?:\. last error: \[(?:PM|PR)\d+\] (?:failed to connect to machine|machines API returned an error: "(?:rate limit exceeded|machine ID [^"]+ lease currently held by [^"]+)"))?/i,
@@ -291,17 +297,28 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[PM\d+\].*machine lease currently held/i,
     /^\s*referer:\s*['"]?https?:\/\/[^'"]*(?:error=|error_description=)/i,
     /error umounting \/data: EBUSY: Device or resource busy, retrying in a bit/i,
+    /error signaling \(SIGTERM\) main child process: ESRCH: No such process/i,
+    /unexpected error executing command error="exec: "?powershell"?: executable file not found in \$PATH"/i,
+    /^(?:\S+\s+)?Error: failed to pipe response$/i,
+    /^\s*\[cause\]: TypeError: terminated$/i,
+    /^\s*\[cause\]: Error \[SocketError\]: other side closed$/i,
+    /\[PU\d+\] could not finish reading HTTP body from instance: error reading a body from connection/i,
     /\[TTS\] inworld failed .* falling back to EdenAI:/i,
-    /\[TTS\] OpenAI failed .* falling back to EdenAI/i
+    /\[TTS\] OpenAI failed .* falling back to EdenAI/i,
+    /\[Kick\]\s*.+Pusher connection error .*code:\s*1006/i
   ].some((pattern) => pattern.test(message));
 }
 
 function isNonActionableErrorEcho(message: string): boolean {
   return [
     /\[Twitch\] Message sent via API:/i,
+    /^\[DiscordChat\] Received:\s*\{/i,
     /\[Dispatcher\] Handling Twitch message:/i,
     /\[Dispatcher\] Non-command message from .+, checking mentions\./i,
     /\[BRB\] Playing clip:/i,
+    /\[Twitch:[^\]]+\] Failed to join #[^:]+: msg_banned/i,
+    /\[TTS API\] Request:\s*\{/i,
+    /^\s*(?:textLength|textPreview|voice|tenantId):\s*/i,
     /\[HTTP [^\]]+\] Sending as .*failed to create clip!\s*\(500\)/i
   ].some((pattern) => pattern.test(message));
 }

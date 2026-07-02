@@ -143,26 +143,35 @@ async function requestFixPlan(
   const failures: string[] = [];
   if (env.EDENAI_API_KEY) {
     try {
-      return await requestEdenAiFixPlan(prompt, repoPath, env);
+      return assertUsableModelPlan(await requestEdenAiFixPlan(prompt, repoPath, env), "EdenAI");
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (env.OPENAI_API_KEY) {
     try {
-      return await requestOpenAiFixPlan(prompt, repoPath, env);
+      return assertUsableModelPlan(await requestOpenAiFixPlan(prompt, repoPath, env), "OpenAI");
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (env.GEMINI_API_KEY) {
     try {
-      return await requestGeminiFixPlan(prompt, repoPath, env);
+      return assertUsableModelPlan(await requestGeminiFixPlan(prompt, repoPath, env), "Gemini");
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
   throw new Error(failures.join("\n\n") || "No AI provider is configured.");
+}
+
+function assertUsableModelPlan(plan: ModelFixPlan, provider: string): ModelFixPlan {
+  const hasDiagnosis = plan.diagnosis !== "No diagnosis provided." && plan.diagnosis.trim().length >= 20;
+  const hasSummary = plan.summary !== "No summary provided." && plan.summary.trim().length >= 10;
+  if (!hasDiagnosis && !hasSummary && plan.changes.length === 0) {
+    throw new Error(`${provider} returned an empty fix plan.`);
+  }
+  return plan;
 }
 
 function buildPrompt(
@@ -213,10 +222,13 @@ function buildPrompt(
     "Candidate source files:",
     ...contextFiles.map((file) => `FILE: ${file.path}\nREASON: ${file.reason}\n${file.content}`),
     "",
+    `Allowed edit paths: ${contextFiles.map((file) => file.path).join(", ") || "none"}`,
+    "",
     "Rules:",
     "- Return strict JSON only.",
     "- First identify the root cause from the provided code evidence, then propose the smallest safe fix.",
     "- Prefer editing an existing file already shown in the candidate source files.",
+    "- Every change.path must exactly match one of the allowed edit paths unless the file already exists in the repo.",
     "- Do not rewrite an entire file with generic scaffolding.",
     "- Preserve unrelated code and return the full updated file content only for files you actually modify.",
     "- If the failure is external or config-only and no safe code fix exists, return an empty changes array.",
@@ -254,9 +266,9 @@ async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
   }
 
   const body = await response.json() as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: unknown } }>;
   };
-  const content = body.choices?.[0]?.message?.content;
+  const content = extractModelText(body.choices?.[0]?.message?.content);
   if (!content) {
     throw new Error("OpenAI response did not include content.");
   }
@@ -294,9 +306,9 @@ async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
   }
 
   const body = await response.json() as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: unknown } }>;
   };
-  const content = body.choices?.[0]?.message?.content;
+  const content = extractModelText(body.choices?.[0]?.message?.content);
   if (!content) {
     throw new Error("EdenAI response did not include content.");
   }
@@ -482,6 +494,9 @@ export function derivePriorityPaths(event: StoredErrorEvent): string[] {
 
   if (event.appName === "discord-stream-hub-new") {
     paths.add("src/app/api/discord/chat/route.ts");
+    paths.add("src/app/api/discord/manual-shoutout/route.ts");
+    paths.add("src/lib/twitch-api.ts");
+    paths.add("src/lib/twitch.ts");
     if (message.includes("discordcleanup") || message.includes("failed to fetch messages")) {
       paths.add("src/lib/discord-orphan-cleanup-service.ts");
       paths.add("src/lib/discord-sync-service.ts");
@@ -505,6 +520,10 @@ export function derivePriorityPaths(event: StoredErrorEvent): string[] {
     paths.add("src/services/tts-provider.ts");
     paths.add("src/ai/flows/text-to-speech.ts");
     paths.add("src/services/checkin-sources.ts");
+    paths.add("src/app/api/ai/image/route.ts");
+    paths.add("src/services/image-command.ts");
+    paths.add("src/services/seaart.ts");
+    paths.add("src/lib/seaart.ts");
     if (message.includes("login authentication failed")) {
       paths.add("src/services/twitch.ts");
       paths.add("src/lib/twitch-oauth-service.ts");
@@ -694,6 +713,37 @@ function extractJsonCandidates(content: string): string[] {
   }
 
   return candidates;
+}
+
+function extractModelText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const text = value
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const record = item as Record<string, unknown>;
+          return firstString(record.text, record.content, record.output_text);
+        }
+        return undefined;
+      })
+      .filter((item): item is string => Boolean(item))
+      .join("\n")
+      .trim();
+    return text || undefined;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return firstString(record.text, record.content, record.output_text);
+  }
+  return undefined;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
 }
 
 function findBalancedJsonPayload(value: string, start: number): string | undefined {
