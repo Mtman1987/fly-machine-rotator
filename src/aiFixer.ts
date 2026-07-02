@@ -55,6 +55,12 @@ export async function generateFixRecord(
     related: options.related,
     repoSnapshot
   });
+  const confidenceEstimate = estimateFixConfidence(plan, {
+    existing: options.existing,
+    related: options.related,
+    repoDirty: repoSnapshot.dirty,
+    contextCount: context.length
+  });
   const record: FixRecord = {
     id: buildFixId(event.appName, event.fingerprint),
     appName: event.appName,
@@ -68,6 +74,8 @@ export async function generateFixRecord(
     diagnosis: plan.diagnosis,
     summary: plan.summary,
     confidence: plan.confidence,
+    confidenceScore: confidenceEstimate.score,
+    confidenceSignals: confidenceEstimate.signals,
     sourceSummary: plan.sourceSummary,
     changes: plan.changes,
     attempts: options.existing?.attempts ?? [],
@@ -154,6 +162,67 @@ async function requestFixPlan(
     }
   }
   return buildLocalFallbackPlan(event, contextFiles, failures);
+}
+
+function estimateFixConfidence(
+  plan: ModelFixPlan,
+  evidence: {
+    existing?: FixRecord;
+    related?: FixRecord[];
+    repoDirty: boolean;
+    contextCount: number;
+  }
+): { score: number; signals: string[] } {
+  const signals: string[] = [];
+  let score = plan.confidence === "high" ? 74 : plan.confidence === "medium" ? 58 : 38;
+  signals.push(`model confidence: ${plan.confidence}`);
+
+  if (plan.changes.length > 0) {
+    score += 8;
+    signals.push(`proposes ${plan.changes.length} file change(s)`);
+  } else {
+    score -= 18;
+    signals.push("diagnosis only; no automatic patch");
+  }
+
+  if (/local fallback/i.test(plan.sourceSummary)) {
+    score -= 16;
+    signals.push("local fallback used because model providers were unavailable or unusable");
+  }
+
+  if (evidence.contextCount >= 2) {
+    score += 5;
+    signals.push(`repo context included ${evidence.contextCount} source files`);
+  }
+
+  if (evidence.repoDirty) {
+    score -= 12;
+    signals.push("target repo snapshot was dirty");
+  }
+
+  const attempts = evidence.existing?.attempts ?? [];
+  const failedRecent = attempts.slice(-5).filter((attempt) => !attempt.ok).length;
+  if (failedRecent > 0) {
+    score -= Math.min(20, failedRecent * 5);
+    signals.push(`${failedRecent} recent failed attempt(s) for this fingerprint`);
+  }
+
+  const related = evidence.related ?? [];
+  const relatedPassed = related.filter((record) => record.checkResult?.ok || record.status === "pushed" || record.status === "handled").length;
+  const relatedFailed = related.filter((record) => record.status === "error" || record.checkResult?.ok === false).length;
+  if (relatedPassed > 0) {
+    score += Math.min(12, relatedPassed * 3);
+    signals.push(`${relatedPassed} related fix(es) passed checks or were handled`);
+  }
+  if (relatedFailed > 0) {
+    score -= Math.min(16, relatedFailed * 3);
+    signals.push(`${relatedFailed} related fix(es) failed or remain errored`);
+  }
+
+  return {
+    score: Math.max(5, Math.min(95, Math.round(score))),
+    signals
+  };
 }
 
 function assertUsableModelPlan(plan: ModelFixPlan, provider: string): ModelFixPlan {

@@ -254,9 +254,12 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       summary: existing.checkResult.ok ? "Checks passed." : "Checks failed.",
       details: commandResults.map((result) => `${result.command} => ${result.exitCode}`).join(" | ")
     });
+    const branchPushed = existing.checkResult.ok
+      ? await maybePushCheckedFixBranch(existing, config, repoPath, env)
+      : false;
     store.upsert(existing);
     await store.save();
-    return { ok: true, message: existing.checkResult.ok ? "Checks passed." : "Checks failed." };
+    return { ok: true, message: existing.checkResult.ok ? branchPushed ? `Checks passed and pushed branch ${existing.pushResult?.branch}.` : "Checks passed." : "Checks failed." };
   }
 
   if (pathname.endsWith("/push")) {
@@ -1037,6 +1040,13 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
   const pushText = fix?.pushResult
     ? `Branch: ${fix.pushResult.branch}\nCommit: ${fix.pushResult.commit}\n${fix.pushResult.output.slice(-1500)}`
     : "";
+  const confidenceText = fix
+    ? [
+        `Estimated correctness: ${fix.confidenceScore ?? confidenceLabelToScore(fix.confidence)}%`,
+        `AI label: ${fix.confidence ?? "unknown"}`,
+        ...(fix.confidenceSignals ?? [])
+      ].join("\n")
+    : "";
 
   const hasChanges = Boolean(fix && fix.changes.length > 0);
   const hasAppliedChanges = Boolean(fix && (fix.status === "applied" || fix.status === "checked" || fix.status === "pushed"));
@@ -1093,8 +1103,12 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
           <div class="code-box">${escapeHtml(fix.diagnosis ?? "No diagnosis stored.")}</div>
         </div>
         <div>
-          <div class="eyebrow">Proposed File Changes${fix.confidence ? ` • ${escapeHtml(fix.confidence)} confidence` : ""}</div>
+          <div class="eyebrow">Proposed File Changes${fix.confidenceScore !== undefined ? ` • ${escapeHtml(String(fix.confidenceScore))}% estimated correct` : fix.confidence ? ` • ${escapeHtml(fix.confidence)} confidence` : ""}</div>
           <div class="code-box">${escapeHtml(changes || "No file changes proposed.")}</div>
+        </div>
+        <div>
+          <div class="eyebrow">Confidence Evidence</div>
+          <div class="code-box">${escapeHtml(confidenceText)}</div>
         </div>
         ${reviewStation ? `
           <div>
@@ -1143,6 +1157,13 @@ function renderIgnoreRule(rule: IgnoreRule): string {
       <button type="button" class="danger" onclick="runRuleAction('${escapeHtml(rule.id)}')">Re-enable matching errors</button>
     </div>
   </article>`;
+}
+
+function confidenceLabelToScore(confidence: FixRecord["confidence"]): number {
+  if (confidence === "high") return 74;
+  if (confidence === "medium") return 58;
+  if (confidence === "low") return 38;
+  return 25;
 }
 
 function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): void {
@@ -1289,17 +1310,7 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
         failed += 1;
       }
 
-      if (record.checkResult.ok && env.ROTATOR_AUTOFIX_PUSH === "true" && await hasWorkingTreeChanges(repoPath)) {
-        const branch = buildFixBranchName(config, record.appName, record.fingerprint);
-        const push = await pushRepoBranch(repoPath, branch, `rotator fix: ${record.appName} ${record.fingerprint}`, env);
-        record.pushResult = {
-          pushedAt: new Date().toISOString(),
-          branch: push.branch,
-          commit: push.commit,
-          output: push.output.slice(-4000)
-        };
-        record.status = "pushed";
-        record.updatedAt = new Date().toISOString();
+      if (record.checkResult.ok && await maybePushCheckedFixBranch(record, config, repoPath, env)) {
         pushed += 1;
       }
     } catch (error) {
@@ -1316,6 +1327,42 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
   return {
     message: `${review.message} auto-fix applied=${applied} checked=${checked} pushed=${pushed} failed=${failed}.`
   };
+}
+
+async function maybePushCheckedFixBranch(
+  record: FixRecord,
+  config: NonNullable<ReturnType<typeof getRepoConfigForApp>>,
+  repoPath: string,
+  env: NodeJS.ProcessEnv
+): Promise<boolean> {
+  if (record.pushResult?.commit) return false;
+  if (!shouldPushFixBranches(env)) return false;
+  if (!(await hasWorkingTreeChanges(repoPath))) return false;
+
+  const branch = buildFixBranchName(config, record.appName, record.fingerprint);
+  const push = await pushRepoBranch(repoPath, branch, `rotator fix: ${record.appName} ${record.fingerprint}`, env);
+  record.pushResult = {
+    pushedAt: new Date().toISOString(),
+    branch: push.branch,
+    commit: push.commit,
+    output: push.output.slice(-4000)
+  };
+  record.status = "pushed";
+  record.updatedAt = new Date().toISOString();
+  record.lastError = undefined;
+  appendFixAttempt(record, {
+    attemptedAt: record.updatedAt,
+    action: "push",
+    ok: true,
+    summary: `Pushed branch ${push.branch}.`,
+    details: push.commit
+  });
+  return true;
+}
+
+function shouldPushFixBranches(env: NodeJS.ProcessEnv): boolean {
+  if (env.ROTATOR_FIX_BRANCH_PUSH === "false" || env.ROTATOR_AUTOFIX_PUSH === "false") return false;
+  return Boolean(env.GITHUB_TOKEN);
 }
 
 async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ generated: number; failed: number }> {

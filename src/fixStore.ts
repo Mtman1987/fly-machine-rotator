@@ -64,6 +64,8 @@ export interface FixRecord {
   diagnosis?: string;
   summary?: string;
   confidence?: "low" | "medium" | "high";
+  confidenceScore?: number;
+  confidenceSignals?: string[];
   sourceSummary?: string;
   changes: FixFileChange[];
   attempts: FixAttempt[];
@@ -135,6 +137,7 @@ function normalizeFixRecord(record: FixRecord): FixRecord {
   return {
     ...record,
     changes: Array.isArray(record.changes) ? record.changes : [],
-    attempts: Array.isArray(record.attempts) ? record.attempts : []
+    attempts: Array.isArray(record.attempts) ? record.attempts : [],
+    confidenceSignals: Array.isArray(record.confidenceSignals) ? record.confidenceSignals : undefined
   };
 }
