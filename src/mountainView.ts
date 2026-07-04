@@ -497,7 +497,9 @@ class MountainViewContext {
       });
       return { ok: true, dryRun: true, decision, payload };
     }
-    const result = await this.executeCommand(userId, String(decision.commandId), payload);
+    const result = String(decision.commandId) === "cmd_streamweaver_twitch_chat_session"
+      ? this.recordLocalVoiceSessionWorkflow(userId, decision, payload)
+      : await this.executeCommand(userId, String(decision.commandId), payload);
     this.applyVoiceSessionDecision(userId, decision, payload, result);
     this.recordGlassesMediaEvent(userId, {
       kind: "voice-route-decision",
@@ -1615,6 +1617,35 @@ class MountainViewContext {
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       metadata: parseJsonObject(String(row.metadata_json ?? "{}"))
+    };
+  }
+
+  private recordLocalVoiceSessionWorkflow(userId: string, decision: JsonRecord, payload: JsonRecord): JsonRecord {
+    const action = readText(payload, "action") || "start";
+    const channel = readText(payload, "channel") || DEFAULT_STREAMWEAVER_USERNAME;
+    const targetName = readText(payload, "targetName") || channel;
+    return {
+      ok: true,
+      localOnly: true,
+      queued: true,
+      status: 202,
+      response: {
+        reply: action === "stop"
+          ? `Stopped Twitch chat dictation for ${channel}.`
+          : `Started local Twitch chat dictation mode for ${channel}. StreamWeaver chat read-aloud is not enabled until the dedicated listener endpoint is added.`,
+        action,
+        channel,
+        targetName,
+        nextEndpoint: "streamweaver:/api/mountainview/twitch-chat/session",
+        decision
+      },
+      command: {
+        commandId: String(decision.commandId ?? "cmd_streamweaver_twitch_chat_session"),
+        appId: "streamweaver",
+        status: "queued-local",
+        payload,
+        userId
+      }
     };
   }
 
