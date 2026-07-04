@@ -1428,6 +1428,8 @@ class MountainViewContext {
     const visualContext = readText(context, "visualContext");
     const activeSession = this.getActiveVoiceSession(userId);
 
+    const chatSession = extractTwitchChatSessionIntent(transcript);
+
     if (activeSession && /\b(stop|end|cancel|leave|quit)\b/.test(lower) && /\b(chat|dictation|reply|reading|stream)\b/.test(lower)) {
       return voiceDecision({
         mode: "action",
@@ -1437,6 +1439,19 @@ class MountainViewContext {
         confidence: 0.96,
         reason: "User asked to stop the active Twitch chat dictation/listening session.",
         payload: { action: "stop", destination: "twitch", voiceMode: "dictation", channel: activeSession.targetChannel, targetName: activeSession.targetName, tenantId, username, readAloud: true, dictation: false, activeSession }
+      });
+    }
+
+    if (chatSession) {
+      const channel = resolveSpokenTwitchAlias(chatSession.targetName || chatSession.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username, this.env);
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_twitch_chat_session",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.92,
+        reason: "User asked Athena to read or monitor a Twitch chat and keep replies as dictation until stopped.",
+        payload: { action: "start", destination: "twitch", voiceMode: "dictation", channel, targetName: chatSession.targetName, tenantId, username, readAloud: chatSession.readAloud, dictation: true }
       });
     }
 
@@ -1508,20 +1523,6 @@ class MountainViewContext {
         confidence: 0.89,
         reason: "Chat-Tag, Battle Arena, rank, live crew, and Quackverse language maps to the game command bridge.",
         payload: { destination: requestedDestination || "ai", tenantId, username, twitchUsername: username, userId: DEFAULT_CHAT_TAG_USER_ID, targetName: extractChatTagTarget(transcript), query: transcript }
-      });
-    }
-
-    const chatSession = extractTwitchChatSessionIntent(transcript);
-    if (chatSession) {
-      const channel = resolveSpokenTwitchAlias(chatSession.targetName || chatSession.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username, this.env);
-      return voiceDecision({
-        mode: "action",
-        commandId: "cmd_streamweaver_twitch_chat_session",
-        appId: "streamweaver",
-        transcript,
-        confidence: 0.92,
-        reason: "User asked Athena to read or monitor a Twitch chat and keep replies as dictation until stopped.",
-        payload: { action: "start", destination: "twitch", voiceMode: "dictation", channel, targetName: chatSession.targetName, tenantId, username, readAloud: chatSession.readAloud, dictation: true }
       });
     }
 
