@@ -147,6 +147,11 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     return json(response, await context.routeVoiceCommand(user.id, body));
   }
 
+  if (method === "GET" && apiPath === "/api/voice/logs") {
+    const user = context.requireAuth(request);
+    return json(response, context.listVoiceLogs(user.id));
+  }
+
   if (method === "POST" && apiPath === "/api/media/streamweaver") {
     const user = context.requireAuth(request);
     const body = await readJson(request, 20 * 1024 * 1024);
@@ -493,6 +498,7 @@ class MountainViewContext {
       return { ok: true, dryRun: true, decision, payload };
     }
     const result = await this.executeCommand(userId, String(decision.commandId), payload);
+    this.applyVoiceSessionDecision(userId, decision, payload, result);
     this.recordGlassesMediaEvent(userId, {
       kind: "voice-route-decision",
       source: "mountainview-router",
@@ -501,6 +507,29 @@ class MountainViewContext {
       metadata: { transcript, decision, result: summarizeCommandResult(result) }
     });
     return { ok: true, decision, result };
+  }
+
+  listVoiceLogs(userId: string): JsonRecord {
+    const rows = this.db.prepare(`
+      SELECT * FROM glasses_media_events
+      WHERE user_id = ? AND kind IN ('voice-route-decision', 'voice-route-dry-run', 'voice-session-start', 'voice-session-stop', 'voice-session-dictation')
+      ORDER BY created_at DESC
+      LIMIT 1000
+    `).all(userId) as JsonRecord[];
+    const activeSession = this.getActiveVoiceSession(userId);
+    return {
+      ok: true,
+      activeSession,
+      logs: rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        source: row.source,
+        targetApp: row.target_app,
+        status: row.status,
+        createdAt: row.created_at,
+        metadata: parseJsonObject(String(row.metadata_json ?? "{}"))
+      }))
+    };
   }
 
   async relayImageToStreamWeaver(userId: string, input: JsonRecord): Promise<JsonRecord> {
@@ -1147,6 +1176,19 @@ class MountainViewContext {
         metadata_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS voice_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        target_app TEXT NOT NULL,
+        target_channel TEXT NOT NULL,
+        target_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL DEFAULT ''
+      );
       CREATE TABLE IF NOT EXISTS devices (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -1223,6 +1265,7 @@ class MountainViewContext {
       ["cmd_streamweaver_obs_scenes", "streamweaver", "Read StreamWeaver OBS scenes", "what obs scenes do i have", "GET", "/api/obs/scenes", {}],
       ["cmd_streamweaver_overlay_data", "streamweaver", "Read StreamWeaver overlay data", "show overlay data", "GET", "/api/overlay/{{overlayType}}?tenant={{tenantId}}", {}],
       ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "{{destination}}", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", payload: "{{payload}}" }],
+      ["cmd_streamweaver_twitch_chat_session", "streamweaver", "Start or stop Twitch chat dictation session", "read twitch chat out loud", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "twitch", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", channel: "{{channel}}", payload: { "mode": "twitch-chat-session", "action": "{{action}}", "channel": "{{channel}}", "targetName": "{{targetName}}", "readAloud": "{{readAloud}}", "dictation": "{{dictation}}" } }],
       ["cmd_twitch_stream_assist", "streamweaver", "Start Twitch screen assist", "start twitch assist", "POST", "/api/twitch/screen-assist/start", { source: "mountainview-ai", trigger: "twitch-logo", transcript: "{{transcript}}", payload: "{{payload}}" }],
       ["cmd_discord_event", "discordstreamhub", "Push Twitch event to DiscordStreamHub", "push event to discord", "POST", "/api/twitch/events", { source: "mountainview-ai", type: "{{eventType}}", serverId: "{{serverId}}", twitchLogin: "{{twitchUsername}}", username: "{{username}}", channel: "{{channel}}", message: "{{message}}" }],
       ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub channel message", "send discord stream message", "POST", "/api/discord/post", { source: "mountainview-ai", channelId: "{{channelId}}", content: "{{message}}" }],
@@ -1381,6 +1424,31 @@ class MountainViewContext {
     const tenantId = readText(context, "tenantId") || DEFAULT_STREAMWEAVER_TENANT_ID;
     const username = readText(context, "username") || DEFAULT_STREAMWEAVER_USERNAME;
     const visualContext = readText(context, "visualContext");
+    const activeSession = this.getActiveVoiceSession(userId);
+
+    if (activeSession && /\b(stop|end|cancel|leave|quit)\b/.test(lower) && /\b(chat|dictation|reply|reading|stream)\b/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_twitch_chat_session",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.96,
+        reason: "User asked to stop the active Twitch chat dictation/listening session.",
+        payload: { action: "stop", destination: "twitch", voiceMode: "dictation", channel: activeSession.targetChannel, targetName: activeSession.targetName, tenantId, username, readAloud: true, dictation: false, activeSession }
+      });
+    }
+
+    if (activeSession && String(activeSession.mode) === "twitch-chat-dictation") {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_voice_commander",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.93,
+        reason: "Active Twitch chat dictation session is running, so MountainView treated the utterance as a reply to the locked channel.",
+        payload: { destination: "twitch", voiceMode: "dictation", dispatch: true, channel: activeSession.targetChannel, targetName: activeSession.targetName, tenantId, username, activeSession }
+      });
+    }
 
     const directMessage = extractDirectMessageIntent(transcript);
     if (directMessage) {
@@ -1438,6 +1506,20 @@ class MountainViewContext {
         confidence: 0.89,
         reason: "Chat-Tag, Battle Arena, rank, live crew, and Quackverse language maps to the game command bridge.",
         payload: { destination: requestedDestination || "ai", tenantId, username, twitchUsername: username, userId: DEFAULT_CHAT_TAG_USER_ID, targetName: extractChatTagTarget(transcript), query: transcript }
+      });
+    }
+
+    const chatSession = extractTwitchChatSessionIntent(transcript);
+    if (chatSession) {
+      const channel = resolveSpokenTwitchAlias(chatSession.targetName || chatSession.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username, this.env);
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_streamweaver_twitch_chat_session",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.92,
+        reason: "User asked Athena to read or monitor a Twitch chat and keep replies as dictation until stopped.",
+        payload: { action: "start", destination: "twitch", voiceMode: "dictation", channel, targetName: chatSession.targetName, tenantId, username, readAloud: chatSession.readAloud, dictation: true }
       });
     }
 
@@ -1513,6 +1595,74 @@ class MountainViewContext {
       reason: "No high-confidence app action matched, so MountainView sent the conversation to Athena OS as the ecosystem-level assistant.",
       payload: { message: transcript, transcript, intent: "conversation", route: "athena-os", visualContext, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
     });
+  }
+
+  private getActiveVoiceSession(userId: string): JsonRecord | null {
+    const row = this.db.prepare(`
+      SELECT * FROM voice_sessions
+      WHERE user_id = ? AND status = 'active'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(userId) as JsonRecord | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      mode: row.mode,
+      targetApp: row.target_app,
+      targetChannel: row.target_channel,
+      targetName: row.target_name,
+      status: row.status,
+      startedAt: row.started_at,
+      updatedAt: row.updated_at,
+      metadata: parseJsonObject(String(row.metadata_json ?? "{}"))
+    };
+  }
+
+  private applyVoiceSessionDecision(userId: string, decision: JsonRecord, payload: JsonRecord, result: JsonRecord): void {
+    const commandId = String(decision.commandId ?? "");
+    const action = readText(payload, "action") || readText(asRecord(payload.payload), "action");
+    if (commandId === "cmd_streamweaver_twitch_chat_session" && action === "start") {
+      const now = new Date().toISOString();
+      const channel = readText(payload, "channel") || DEFAULT_STREAMWEAVER_USERNAME;
+      const targetName = readText(payload, "targetName") || channel;
+      const id = `voice_session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      this.db.prepare("UPDATE voice_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE user_id = ? AND status = 'active'")
+        .run(now, now, userId);
+      this.db.prepare(`
+        INSERT INTO voice_sessions (id, user_id, mode, target_app, target_channel, target_name, status, metadata_json, started_at, updated_at, ended_at)
+        VALUES (?, ?, 'twitch-chat-dictation', 'streamweaver', ?, ?, 'active', ?, ?, ?, '')
+      `).run(id, userId, channel, targetName, JSON.stringify({ payload, result: summarizeCommandResult(result) }), now, now);
+      this.recordGlassesMediaEvent(userId, {
+        kind: "voice-session-start",
+        source: "mountainview-router",
+        targetApp: "streamweaver",
+        status: "active",
+        metadata: { sessionId: id, channel, targetName, payload, result: summarizeCommandResult(result) }
+      });
+      return;
+    }
+    if (commandId === "cmd_streamweaver_twitch_chat_session" && action === "stop") {
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE voice_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE user_id = ? AND status = 'active'")
+        .run(now, now, userId);
+      this.recordGlassesMediaEvent(userId, {
+        kind: "voice-session-stop",
+        source: "mountainview-router",
+        targetApp: "streamweaver",
+        status: "ended",
+        metadata: { payload, result: summarizeCommandResult(result) }
+      });
+      return;
+    }
+    if (commandId === "cmd_streamweaver_voice_commander" && asRecord(payload).activeSession) {
+      this.recordGlassesMediaEvent(userId, {
+        kind: "voice-session-dictation",
+        source: "mountainview-router",
+        targetApp: "streamweaver",
+        status: "dictated",
+        metadata: { transcript: readText(payload, "transcript"), channel: readText(payload, "channel"), result: summarizeCommandResult(result) }
+      });
+    }
   }
 
   private bestCatalogMatch(userId: string, transcript: string, context: JsonRecord): JsonRecord | undefined {
@@ -1661,6 +1811,20 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
 
   if (commandId === "cmd_streamweaver_voice_commander") {
     return base;
+  }
+
+  if (commandId === "cmd_streamweaver_twitch_chat_session") {
+    const channel = resolveSpokenTwitchAlias(readText(base, "channel") || readText(base, "targetName") || message, process.env);
+    return {
+      ...base,
+      action: readText(base, "action") || "start",
+      destination: "twitch",
+      voiceMode: "dictation",
+      channel,
+      targetName: readText(base, "targetName") || channel,
+      readAloud: payload.readAloud ?? true,
+      dictation: payload.dictation ?? true
+    };
   }
 
   if (commandId.startsWith("cmd_spmt_")) {
@@ -2050,13 +2214,24 @@ function tokenizeCommandText(value: string): string[] {
 }
 
 function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
+  const typeInChat = text.match(/\b(?:send|post|type|say)\s+(?:in|into|to)\s+(.+?)\s+(?:twitch\s+)?chat\s+["“](.+?)["”]\s*$/i);
+  if (typeInChat?.[2]?.trim()) {
+    const targetName = cleanSpokenTarget(typeInChat[1] ?? "");
+    return {
+      message: typeInChat[2].trim(),
+      targetName,
+      channel: resolveSpokenTwitchAlias(targetName, process.env),
+      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+    };
+  }
+
   const quoted = text.match(/\b(?:send|post|type|say)\s+(?:a\s+)?message(?:\s+to\s+(.+?))?\s+(?:that\s+says|saying|with|:)\s+["“]?(.+?)["”]?\s*$/i);
   if (quoted?.[2]?.trim()) {
     const targetName = cleanSpokenTarget(quoted[1] ?? "");
     return {
       message: quoted[2].trim(),
       targetName,
-      channel: normalizeTwitchChannel(targetName),
+      channel: resolveSpokenTwitchAlias(targetName, process.env),
       destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
     };
   }
@@ -2067,11 +2242,25 @@ function extractDirectMessageIntent(text: string): { message: string; targetName
     return {
       message: simple[1].trim(),
       targetName,
-      channel: normalizeTwitchChannel(targetName),
+      channel: resolveSpokenTwitchAlias(targetName, process.env),
       destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
     };
   }
 
+  return undefined;
+}
+
+function extractTwitchChatSessionIntent(text: string): { targetName: string; channel: string; readAloud: boolean } | undefined {
+  const readChat = text.match(/\b(?:read|listen\s+to|monitor|open)\s+(.+?)\s+(?:twitch\s+)?chat\s+(?:out\s+loud|aloud)?/i);
+  if (readChat?.[1]?.trim()) {
+    const targetName = cleanSpokenTarget(readChat[1]);
+    return { targetName, channel: resolveSpokenTwitchAlias(targetName, process.env), readAloud: true };
+  }
+  const watchStream = text.match(/\b(?:play|watch|listen\s+to)\s+(.+?)\s+(?:stream|twitch\s+stream)\b/i);
+  if (watchStream?.[1]?.trim()) {
+    const targetName = cleanSpokenTarget(watchStream[1]);
+    return { targetName, channel: resolveSpokenTwitchAlias(targetName, process.env), readAloud: false };
+  }
   return undefined;
 }
 
@@ -2089,6 +2278,26 @@ function normalizeTwitchChannel(value: string): string {
     .replace(/^@/, "")
     .replace(/[^a-z0-9_]+/g, "")
     .slice(0, 25);
+}
+
+function resolveSpokenTwitchAlias(value: string, env: NodeJS.ProcessEnv): string {
+  const normalized = normalizeTwitchChannel(value);
+  const aliases: Record<string, string> = {
+    fatkids: "fatkid4ev4",
+    fatkid: "fatkid4ev4",
+    fatkid4eva: "fatkid4ev4",
+    lovesnightmare: "lovesnightmare",
+    lovesnightmares: "lovesnightmare",
+  };
+  try {
+    const configured = JSON.parse(env.MOUNTAINVIEW_TWITCH_ALIASES || "{}");
+    if (configured && typeof configured === "object") {
+      for (const [key, target] of Object.entries(configured)) aliases[normalizeTwitchChannel(key)] = normalizeTwitchChannel(String(target));
+    }
+  } catch {
+    // Bad alias config should not break voice routing.
+  }
+  return aliases[normalized] || normalized;
 }
 
 function extractTwitchChannel(text: string): string {
