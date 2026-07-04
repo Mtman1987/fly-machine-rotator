@@ -1347,6 +1347,13 @@ class MountainViewContext {
   private async authHeaders(userId: string, serviceId: string, defaults: Record<string, string> = {}): Promise<Record<string, string>> {
     const headers: Record<string, string> = { "content-type": "application/json", ...defaults };
     if (serviceId === "streamweaver") headers["x-mountainview-bridge"] = "1";
+    if (serviceId === "chat-tag") {
+      const chatTagSecret = this.env.CHAT_TAG_BOT_SECRET || this.env.CHAT_TAG_SECRET || this.env.BOT_SECRET_KEY;
+      if (chatTagSecret) {
+        headers["x-bot-secret"] = chatTagSecret;
+        headers["x-mountainview-bridge"] = "1";
+      }
+    }
     if (serviceId === "spmt") {
       const spmtKey = this.env.SPMT_API_KEY || this.env.SPMT_PLATFORM_API_KEY || this.env.ATHENA_OS_API_KEY;
       if (spmtKey) {
