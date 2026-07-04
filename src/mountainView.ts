@@ -44,6 +44,7 @@ const defaultConfig: MountainViewConfig = {
     { id: "discordstreamhub", name: "DiscordStreamHub", baseUrl: "https://discord-stream-hub-new.fly.dev" },
     { id: "chat-tag", name: "Chat-Tag", baseUrl: "https://chat-tag-new.fly.dev" },
     { id: "hearmeout", name: "HearMeOut", baseUrl: "https://hearmeout-main.fly.dev" },
+    { id: "spmt", name: "SPMT / Athena OS", baseUrl: "https://spmt.live" },
     { id: "edenai", name: "EdenAI Router", baseUrl: "https://api.edenai.run" }
   ],
   metaWearables: {
@@ -1228,6 +1229,11 @@ class MountainViewContext {
       ["cmd_dsh_calendar_add_mission", "discordstreamhub", "Add DiscordStreamHub calendar mission", "add calendar mission", "POST", "/api/calendar/add-mission", { source: "mountainview-ai", serverId: "{{serverId}}", userId: "{{discordUserId}}", missionName: "{{missionName}}", missionDate: "{{missionDate}}", missionTime: "{{missionTime}}", missionDescription: "{{missionDescription}}" }],
       ["cmd_dsh_calendar_post", "discordstreamhub", "Post DiscordStreamHub calendar", "post calendar to discord", "POST", "/api/calendar/post", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}" }],
       ["cmd_dsh_calendar_generate", "discordstreamhub", "Generate DiscordStreamHub calendar embed", "generate calendar embed", "POST", "/api/calendar/generate", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}", includeButtons: "{{includeButtons}}" }],
+      ["cmd_spmt_athena_command", "spmt", "Ask Athena OS to control SpaceMountain apps", "ask athena os", "POST", "/api/athena/commands", { source: "mountainview-ai", transcript: "{{transcript}}", message: "{{message}}", intent: "{{intent}}", destination: "{{destination}}", route: "{{route}}", context: { "visualContext": "{{visualContext}}", "voiceMode": "{{voiceMode}}", "tenantId": "{{tenantId}}", "username": "{{username}}", "payload": "{{payload}}" } }],
+      ["cmd_spmt_athena_search", "spmt", "Search Athena and SpaceMountain context", "search athena", "GET", "/api/search?q={{query}}&source=mountainview", {}],
+      ["cmd_spmt_athena_memory", "spmt", "Save Athena memory from glasses", "remember this in athena", "POST", "/api/athena/memory", { source: "mountainview-ai", content: "{{message}}", transcript: "{{transcript}}", context: "{{visualContext}}", tags: ["mountainview", "glasses"] }],
+      ["cmd_spmt_platform_event", "spmt", "Publish MountainView platform event", "publish mountainview event", "POST", "/api/platform/events", { sourceApp: "mountainview", type: "mountainview.voice_command", summary: "{{message}}", payload: { "transcript": "{{transcript}}", "visualContext": "{{visualContext}}", "destination": "{{destination}}", "voiceMode": "{{voiceMode}}", "route": "{{route}}" } }],
+      ["cmd_spmt_apps", "spmt", "List SpaceMountain apps registered in SPMT", "what apps can i control", "GET", "/api/apps", {}],
       ["cmd_chat_tag_live_members", "chat-tag", "Ask Chat-Tag who is live", "who is live", "GET", "/api/discord/live-members", {}],
       ["cmd_chat_tag_state", "chat-tag", "Read Chat-Tag game state", "chat tag status", "GET", "/api/tag", {}],
       ["cmd_chat_tag_join", "chat-tag", "Join Chat-Tag from glasses", "join chat tag", "POST", "/api/tag", { source: "mountainview-ai", action: "join", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", username: "{{username}}", performedBy: "{{performedBy}}" }],
@@ -1297,6 +1303,7 @@ class MountainViewContext {
       ["logo_discordstreamhub", "discordstreamhub", "DiscordStreamHub", ["discordstreamhub", "discord stream hub", "discord"], "cmd_dsh_calendar_add_mission", 0.78],
       ["logo_chattag", "chat-tag", "Chat-Tag", ["chat-tag", "chat tag", "tag trigger"], "cmd_chat_tag_live_members", 0.78],
       ["logo_edenai", "edenai", "EdenAI", ["edenai", "eden ai", "ai router"], "cmd_eden_scene", 0.78],
+      ["logo_spmt", "spmt", "SPMT / Athena OS", ["spmt", "athena os", "space mountain", "command bridge", "launchpad"], "cmd_spmt_athena_command", 0.78],
       ["logo_twitch", "twitch", "Twitch", ["twitch", "twitch.tv", "purple chat", "live channel"], "cmd_twitch_stream_assist", 0.78],
       ["logo_discord", "discord", "Discord", ["discord", "discord app", "discord chat", "discord server"], "cmd_discord_message", 0.78]
     ] as const;
@@ -1337,6 +1344,14 @@ class MountainViewContext {
   private async authHeaders(userId: string, serviceId: string, defaults: Record<string, string> = {}): Promise<Record<string, string>> {
     const headers: Record<string, string> = { "content-type": "application/json", ...defaults };
     if (serviceId === "streamweaver") headers["x-mountainview-bridge"] = "1";
+    if (serviceId === "spmt") {
+      const spmtKey = this.env.SPMT_API_KEY || this.env.SPMT_PLATFORM_API_KEY || this.env.ATHENA_OS_API_KEY;
+      if (spmtKey) {
+        headers.authorization = `Bearer ${spmtKey}`;
+        headers["x-api-key"] = spmtKey;
+        headers["x-spacemountain-source"] = "mountainview-ai";
+      }
+    }
     const row = this.db.prepare("SELECT encrypted_token FROM service_tokens WHERE user_id = ? AND service_id = ?").get(userId, serviceId) as { encrypted_token: string } | undefined;
     if (row) headers.authorization = `Bearer ${this.decrypt(row.encrypted_token)}`;
     return headers;
@@ -1398,6 +1413,19 @@ class MountainViewContext {
       });
     }
 
+    if (/\b(chat[-\s]?tag|battle\s?arena|tag\s+(?:player|game)|who is live|join chat tag)\b/.test(lower)) {
+      const tagAction = /\bjoin\b/.test(lower) ? "cmd_chat_tag_join" : /\btag\b/.test(lower) && !/\bchat[-\s]?tag\b/.test(lower) ? "cmd_chat_tag_tag" : "cmd_chat_tag_live_members";
+      return voiceDecision({
+        mode: "action",
+        commandId: tagAction,
+        appId: "chat-tag",
+        transcript,
+        confidence: 0.89,
+        reason: "Chat-Tag and Battle Arena language maps to the game command bridge.",
+        payload: { destination: requestedDestination || "ai", tenantId, username, targetName: extractChatTagTarget(transcript) }
+      });
+    }
+
     if (/\b(song|audiobook|audio book|movie|watch party|queue|request|play)\b/.test(lower) && /\b(hearmeout|hear me out|song|audiobook|audio book|movie|watch party)\b/.test(lower)) {
       const commandId = /\b(audiobook|audio book)\b/.test(lower) ? "cmd_hearmeout_audiobook_request" : "cmd_hearmeout_song_request";
       return voiceDecision({
@@ -1408,6 +1436,42 @@ class MountainViewContext {
         confidence: 0.88,
         reason: "Media queue language maps to HearMeOut request routes.",
         payload: { query: transcript, tenantId, username }
+      });
+    }
+
+    if (/\b(remember|save this|save note|make a note|store this)\b/.test(lower) && /\b(athena|memory|context|spmt|space mountain|this)\b/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_spmt_athena_memory",
+        appId: "spmt",
+        transcript,
+        confidence: 0.9,
+        reason: "Memory language maps to Athena OS shared memory owned by SPMT.",
+        payload: { message: transcript, transcript, visualContext, tenantId, username, destination: requestedDestination || "private", voiceMode: requestedMode || "reply" }
+      });
+    }
+
+    if (/\b(search|find|look up|what do you remember|recall|history|messages|context)\b/.test(lower) && /\b(athena|spmt|space mountain|memory|commlink|apps?|messages?|context)\b/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_spmt_athena_search",
+        appId: "spmt",
+        transcript,
+        confidence: 0.88,
+        reason: "Search and recall language maps to SPMT search so Athena can look across ecosystem context.",
+        payload: { query: transcript, message: transcript, transcript, visualContext, tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply" }
+      });
+    }
+
+    if (/\b(athena os|spmt|space mountain|command bridge|launchpad|shipyard|apps?|control everything|all apps|open app|launch app|dashboard)\b/.test(lower)) {
+      return voiceDecision({
+        mode: "action",
+        commandId: "cmd_spmt_athena_command",
+        appId: "spmt",
+        transcript,
+        confidence: 0.87,
+        reason: "Cross-app control belongs to SPMT/Athena OS, which owns identity, app registry, search, and command routing.",
+        payload: { message: transcript, transcript, intent: "cross-app-control", route: "athena-os", visualContext, tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply" }
       });
     }
 
@@ -1427,12 +1491,12 @@ class MountainViewContext {
 
     return voiceDecision({
       mode: "conversation",
-      commandId: "cmd_streamweaver_voice_commander",
-      appId: "streamweaver",
+      commandId: "cmd_spmt_athena_command",
+      appId: "spmt",
       transcript,
       confidence: 0.55,
-      reason: "No high-confidence action matched, so MountainView kept this as Athena conversation.",
-      payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
+      reason: "No high-confidence app action matched, so MountainView sent the conversation to Athena OS as the ecosystem-level assistant.",
+      payload: { message: transcript, transcript, intent: "conversation", route: "athena-os", visualContext, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
     });
   }
 
@@ -1582,6 +1646,29 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
 
   if (commandId === "cmd_streamweaver_voice_commander") {
     return base;
+  }
+
+  if (commandId.startsWith("cmd_spmt_")) {
+    const spmtMessage = message || readText(payload, "query") || "MountainView glasses command";
+    return {
+      ...base,
+      source: "mountainview-ai",
+      message: spmtMessage,
+      transcript: readText(base, "transcript") || spmtMessage,
+      query: readText(base, "query") || spmtMessage,
+      intent: readText(base, "intent") || "cross-app-control",
+      route: readText(base, "route") || "athena-os",
+      destination: readText(base, "destination") || "ai",
+      voiceMode: readText(base, "voiceMode") || "reply",
+      visualContext: readText(base, "visualContext") || "No visual target locked.",
+      payload: {
+        ...nestedPayload,
+        message: spmtMessage,
+        transcript: readText(base, "transcript") || spmtMessage,
+        tenantId,
+        username
+      }
+    };
   }
 
   if (commandId.startsWith("cmd_vision_")) {
@@ -1782,6 +1869,25 @@ function enrichCommandForVoice(command: JsonRecord): JsonRecord {
 }
 
 function getCommandRoutingProfile(commandId: string, appId: string): CommandRoutingProfile {
+  if (commandId.startsWith("cmd_spmt_") || appId === "spmt") {
+    if (commandId === "cmd_spmt_apps" || commandId === "cmd_spmt_athena_search") {
+      return profile(commandId === "cmd_spmt_athena_search" ? ["query"] : [], ["source", "visualContext"], "low", false, "ready", [
+        "search Athena for my last stream notes",
+        "what apps can I control"
+      ]);
+    }
+    if (commandId === "cmd_spmt_athena_memory") {
+      return profile(["message"], ["visualContext", "tags"], "medium", false, "ready", [
+        "remember this in Athena",
+        "save a note that the glasses can control StreamWeaver"
+      ]);
+    }
+    return profile(["transcript"], ["intent", "destination", "visualContext", "payload"], "medium", false, "ready", [
+      "Athena OS open StreamWeaver",
+      "control every SpaceMountain app from my glasses",
+      "launch the Shipyard"
+    ]);
+  }
   if (commandId === "cmd_streamweaver_voice_commander") {
     return profile(["transcript"], ["destination", "voiceMode", "channel", "visualContext"], "low", false, "ready", [
       "Athena what do you remember about my stream today",

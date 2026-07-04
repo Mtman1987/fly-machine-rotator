@@ -8,3 +8,6 @@ mobile/android/
 artifacts/
 mobile/.expo/
 mobile/.server-logs/
+.android-sdk/
+mobile/*.log
+mobile-*-screen*.png

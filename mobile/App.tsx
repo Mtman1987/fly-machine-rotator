@@ -97,8 +97,8 @@ const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https
 const bleLastDeviceKey = "mountainview_last_ble_device";
 const defaultAimbAddress = "C8:47:8C:15:60:01";
 const voiceRoutes: { id: VoiceDestination; label: string; detail: string }[] = [
-  { id: "ai", label: "AI", detail: "Athena replies by voice" },
-  { id: "private", label: "Private", detail: "Save to owner memory" },
+  { id: "ai", label: "Athena OS", detail: "Control all SpaceMountain apps" },
+  { id: "private", label: "Memory", detail: "Save to Athena context" },
   { id: "twitch", label: "Twitch", detail: "Send through StreamWeaver" },
   { id: "discord", label: "Discord", detail: "Post through Discord routes" }
 ];
@@ -131,7 +131,7 @@ export default function App() {
   const [twitchTargetChannel, setTwitchTargetChannel] = useState("");
   const [visualContext, setVisualContext] = useState("No visual target locked yet.");
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
-  const [voicePrompt, setVoicePrompt] = useState("Hey Athena what do you remember about my stream today?");
+  const [voicePrompt, setVoicePrompt] = useState("Hey Athena open my SpaceMountain apps and tell me what needs attention.");
   const [voiceDestination, setVoiceDestination] = useState<VoiceDestination>("ai");
   const [voiceMode, setVoiceMode] = useState<VoiceCommanderMode>("reply");
   const [translationLanguage, setTranslationLanguage] = useState("Spanish");
@@ -1311,7 +1311,7 @@ export default function App() {
                   </View>
                 </View>
                 <Text style={styles.heroTitle}>Glasses to Athena command bridge</Text>
-                <Text style={styles.heroCopy}>Tap the AiMB talk button once to speak, hear Athena, then answer back without repeating the wake word. Long press arms the StreamWeaver command gate for dictation, Twitch, Discord, private memory, and translation testing.</Text>
+                <Text style={styles.heroCopy}>Tap the AiMB talk button once to speak, hear Athena, then answer back without repeating the wake word. Athena OS routes cross-app commands through SPMT, while StreamWeaver, DiscordStreamHub, Chat-Tag, and HearMeOut keep owning their own actions.</Text>
                 <View style={styles.routeGrid}>
                   {voiceRoutes.map((route) => (
                     <Pressable key={route.id} style={[styles.routeCard, voiceDestination === route.id && styles.routeCardActive]} onPress={() => setVoiceDestination(route.id)}>
@@ -1365,8 +1365,21 @@ export default function App() {
                 </View>
                 <View style={styles.actionRow}>
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={askStreamWeaverVoiceCommander}>
-                    <Text style={styles.secondaryButtonText}>Send typed prompt</Text>
+                    <Text style={styles.secondaryButtonText}>Route typed prompt</Text>
                   </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_spmt_athena_command", voicePrompt)}>
+                    <Text style={styles.secondaryButtonText}>Ask Athena OS</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_spmt_athena_search", voicePrompt)}>
+                    <Text style={styles.secondaryButtonText}>Search Athena</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_spmt_apps", "What apps can I control?")}>
+                    <Text style={styles.secondaryButtonText}>List apps</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
                   <Pressable style={[streamCommandListenerActive ? styles.dangerButton : styles.secondaryButton, styles.actionButton]} onPress={streamCommandListenerActive ? stopStreamWeaverCommandListener : startStreamWeaverCommandListener}>
                     <Text style={streamCommandListenerActive ? styles.dangerButtonText : styles.secondaryButtonText}>{streamCommandListenerActive ? "Stop gate" : "Arm command gate"}</Text>
                   </Pressable>
@@ -1457,6 +1470,7 @@ export default function App() {
               </View>
               <View style={styles.panel}>
                 <Text style={styles.label}>Quick commands</Text>
+                <CommandGroup title="SPMT / Athena OS" commands={commands.filter((command) => command.app_id === "spmt")} onRun={runCommand} />
                 <CommandGroup title="StreamWeaver" commands={commands.filter((command) => command.app_id === "streamweaver")} onRun={runCommand} />
                 <CommandGroup title="HearMeOut" commands={commands.filter((command) => command.app_id === "hearmeout")} onRun={runCommand} />
                 <CommandGroup title="DiscordStreamHub" commands={commands.filter((command) => command.app_id === "discordstreamhub")} onRun={runCommand} />
@@ -1508,6 +1522,9 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_tts", voicePrompt || "Athena is live on stream.")}><Text style={styles.secondaryButtonText}>Athena speaks on stream</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_obs_scenes", "Read OBS scenes")}><Text style={styles.secondaryButtonText}>Read OBS scenes</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_overlay_data", "Show stream overlay data")}><Text style={styles.secondaryButtonText}>Read overlay data</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_spmt_athena_command", voicePrompt || "Open the SpaceMountain command bridge")}><Text style={styles.secondaryButtonText}>Athena OS command</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_spmt_athena_search", voicePrompt || "Search SpaceMountain context")}><Text style={styles.secondaryButtonText}>Search Athena context</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_spmt_apps", "List registered SPMT apps")}><Text style={styles.secondaryButtonText}>List registered apps</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_add_mission", voicePrompt || "Add MountainView reminder tomorrow", "discord")}><Text style={styles.secondaryButtonText}>Add DSH calendar date</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_dsh_calendar_post", "Post the DiscordStreamHub calendar", "discord")}><Text style={styles.secondaryButtonText}>Post DSH calendar</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}><Text style={styles.secondaryButtonText}>Who is live?</Text></Pressable>
