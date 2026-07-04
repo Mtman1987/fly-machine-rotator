@@ -1234,7 +1234,10 @@ class MountainViewContext {
       ["cmd_spmt_athena_memory", "spmt", "Save Athena memory from glasses", "remember this in athena", "POST", "/api/athena/memory", { source: "mountainview-ai", content: "{{message}}", transcript: "{{transcript}}", context: "{{visualContext}}", tags: ["mountainview", "glasses"] }],
       ["cmd_spmt_platform_event", "spmt", "Publish MountainView platform event", "publish mountainview event", "POST", "/api/platform/events", { sourceApp: "mountainview", type: "mountainview.voice_command", summary: "{{message}}", payload: { "transcript": "{{transcript}}", "visualContext": "{{visualContext}}", "destination": "{{destination}}", "voiceMode": "{{voiceMode}}", "route": "{{route}}" } }],
       ["cmd_spmt_apps", "spmt", "List SpaceMountain apps registered in SPMT", "what apps can i control", "GET", "/api/apps", {}],
+      ["cmd_chat_tag_current_it", "chat-tag", "Ask Chat-Tag who is currently it", "who is currently it", "GET", "/api/tag", {}],
       ["cmd_chat_tag_live_members", "chat-tag", "Ask Chat-Tag who is live", "who is live", "GET", "/api/discord/live-members", {}],
+      ["cmd_chat_tag_rank", "chat-tag", "Read my Chat-Tag rank", "what is my rank", "GET", "/api/tag", {}],
+      ["cmd_chat_tag_quackverse_pack", "chat-tag", "Open a Quackverse booster pack", "pull a quackverse booster pack", "POST", "/api/quackverse/pack", { source: "mountainview-ai", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", username: "{{username}}", platform: "mountainview-glasses" }],
       ["cmd_chat_tag_state", "chat-tag", "Read Chat-Tag game state", "chat tag status", "GET", "/api/tag", {}],
       ["cmd_chat_tag_join", "chat-tag", "Join Chat-Tag from glasses", "join chat tag", "POST", "/api/tag", { source: "mountainview-ai", action: "join", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", username: "{{username}}", performedBy: "{{performedBy}}" }],
       ["cmd_chat_tag_tag", "chat-tag", "Tag a Chat-Tag player from glasses", "tag player", "POST", "/api/tag", { source: "mountainview-ai", action: "tag", userId: "{{userId}}", twitchUsername: "{{twitchUsername}}", targetUserId: "{{targetUserId}}", streamerId: "{{streamerId}}", performedBy: "{{performedBy}}", targetLookupError: "{{targetLookupError}}" }],
@@ -1413,16 +1416,21 @@ class MountainViewContext {
       });
     }
 
-    if (/\b(chat[-\s]?tag|battle\s?arena|tag\s+(?:player|game)|who is live|join chat tag)\b/.test(lower)) {
-      const tagAction = /\bjoin\b/.test(lower) ? "cmd_chat_tag_join" : /\btag\b/.test(lower) && !/\bchat[-\s]?tag\b/.test(lower) ? "cmd_chat_tag_tag" : "cmd_chat_tag_live_members";
+    if (/\b(chat[-\s]?tag|battle\s?arena|quackverse|booster\s+pack|pack|currently\s+it|who'?s\s+it|what'?s\s+my\s+rank|rank|who is live|who'?s live|partners?\s+live|crew\s+group|join chat tag|tag\s+(?:player|game))\b/.test(lower)) {
+      const tagAction = /\b(quackverse|booster\s+pack|pull .*pack|open .*pack|pack)\b/.test(lower) ? "cmd_chat_tag_quackverse_pack"
+        : /\b(currently\s+it|who'?s\s+it|who is it)\b/.test(lower) ? "cmd_chat_tag_current_it"
+          : /\b(rank|leaderboard|score)\b/.test(lower) ? "cmd_chat_tag_rank"
+            : /\bjoin\b/.test(lower) ? "cmd_chat_tag_join"
+              : /\btag\b/.test(lower) && !/\bchat[-\s]?tag\b/.test(lower) ? "cmd_chat_tag_tag"
+                : "cmd_chat_tag_live_members";
       return voiceDecision({
         mode: "action",
         commandId: tagAction,
         appId: "chat-tag",
         transcript,
         confidence: 0.89,
-        reason: "Chat-Tag and Battle Arena language maps to the game command bridge.",
-        payload: { destination: requestedDestination || "ai", tenantId, username, targetName: extractChatTagTarget(transcript) }
+        reason: "Chat-Tag, Battle Arena, rank, live crew, and Quackverse language maps to the game command bridge.",
+        payload: { destination: requestedDestination || "ai", tenantId, username, twitchUsername: username, userId: DEFAULT_CHAT_TAG_USER_ID, targetName: extractChatTagTarget(transcript), query: transcript }
       });
     }
 
@@ -1760,8 +1768,10 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
     };
   }
 
-  if (commandId === "cmd_chat_tag" || commandId === "cmd_chat_tag_tag" || commandId === "cmd_chat_tag_join" || commandId === "cmd_chat_tag_qr") {
-    const action = commandId === "cmd_chat_tag_join" ? "join" : readText(base, "action") || (commandId === "cmd_chat_tag_qr" ? "join" : "tag");
+  if (commandId.startsWith("cmd_chat_tag")) {
+    const action = commandId === "cmd_chat_tag_join" ? "join"
+      : commandId === "cmd_chat_tag_quackverse_pack" ? "pack"
+        : readText(base, "action") || (commandId === "cmd_chat_tag_qr" ? "join" : "tag");
     const targetName = readText(base, "targetName") || readText(base, "target") || extractChatTagTarget(message);
     return {
       ...base,
