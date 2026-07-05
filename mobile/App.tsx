@@ -4,7 +4,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { WebView } from "react-native-webview";
 import { parseVoiceCommandForDate } from "./src/dateParser";
 import { addBleButtonListener, addMediaButtonListener, metaWearables, toggleFlashlight } from "./src/metaWearables";
 
@@ -75,6 +76,7 @@ type QrTrigger = {
   command_id: string;
   payload: string;
   action_type: string;
+  qr_svg?: string;
 };
 
 type BleScanDevice = {
@@ -96,6 +98,13 @@ type ActivityLogRecord = {
   status: string;
   detail: string;
   createdAt: string;
+};
+
+type VisualPreview = {
+  title: string;
+  kind: "web" | "image" | "html";
+  source: string;
+  caption?: string;
 };
 
 const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https://mtman-machine-rotator.fly.dev/mountainview/api";
@@ -127,6 +136,7 @@ export default function App() {
   const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
   const [activityLogs, setActivityLogs] = useState<ActivityLogRecord[]>([]);
+  const [visualPreview, setVisualPreview] = useState<VisualPreview | null>(null);
   const [logFilter, setLogFilter] = useState<ActivityLogRecord["category"] | "all">("all");
   const [statusMessage, setStatusMessage] = useState("Ready. Leave owner password blank and tap Connect.");
   const [note, setNote] = useState("");
@@ -278,6 +288,85 @@ export default function App() {
     return typeof reply === "string" && reply.trim() ? reply.trim() : "";
   }
 
+  function looksLikeImageUrl(value: string) {
+    return /^data:image\//i.test(value)
+      || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(value)
+      || /\b(image|img|media|cdn|asset|generated)\b/i.test(value);
+  }
+
+  function findVisualCandidate(value: unknown, depth = 0): VisualPreview | null {
+    if (depth > 7 || value == null) return null;
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!text) return null;
+      if (/<svg[\s>]/i.test(text)) {
+        return { title: "QR / SVG preview", kind: "html", source: svgPreviewHtml(text), caption: "Inline SVG returned by the command." };
+      }
+      const url = text.match(/https?:\/\/[^\s"'<>]+/i)?.[0] ?? (/^data:image\//i.test(text) ? text : "");
+      if (url) {
+        return {
+          title: looksLikeImageUrl(url) ? "Image preview" : "Web preview",
+          kind: looksLikeImageUrl(url) ? "image" : "web",
+          source: url,
+          caption: url
+        };
+      }
+      return null;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findVisualCandidate(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      const preferred = [
+        "imageUrl", "image_url", "generatedImageUrl", "generated_image_url", "previewUrl", "preview_url",
+        "launchUrl", "launch_url", "url", "href", "qr_svg", "qrSvg", "svg", "image", "mediaUrl", "media_url",
+        "output", "result", "response"
+      ];
+      for (const key of preferred) {
+        const found = findVisualCandidate(record[key], depth + 1);
+        if (found) return { ...found, title: visualTitleForKey(key, found.kind) };
+      }
+      for (const item of Object.values(record)) {
+        const found = findVisualCandidate(item, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function visualTitleForKey(key: string, kind: VisualPreview["kind"]) {
+    if (/qr|svg/i.test(key)) return "QR preview";
+    if (/launch|url|href/i.test(key) && kind === "web") return "Embedded app preview";
+    if (/image|media|output|generated/i.test(key)) return "Generated image preview";
+    return kind === "web" ? "Web preview" : "Visual preview";
+  }
+
+  function svgPreviewHtml(svg: string) {
+    return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#071018}svg{max-width:92vw;max-height:92vh;background:white;border-radius:12px;padding:14px}</style></head><body>${svg}</body></html>`;
+  }
+
+  function setPreviewFromResult(title: string, data: unknown) {
+    const preview = findVisualCandidate(data);
+    if (!preview) return;
+    setVisualPreview({ ...preview, title: title || preview.title });
+  }
+
+  function openWebPreview(title: string, url: string) {
+    if (!url.trim()) return;
+    setVisualPreview({ title, kind: looksLikeImageUrl(url) ? "image" : "web", source: url.trim(), caption: url.trim() });
+    setTab("visual");
+  }
+
+  function openSvgPreview(title: string, svg: string, caption?: string) {
+    setVisualPreview({ title, kind: "html", source: svgPreviewHtml(svg), caption });
+    setTab("visual");
+  }
+
   function wakeCommandFromTranscript(transcript: string) {
     const normalized = transcript.trim();
     const match = normalized.match(/\b(?:hey\s+)?(?:athena|annie)\b[:,]?\s*(.*)$/i);
@@ -420,6 +509,7 @@ export default function App() {
           })
         });
         setLog(JSON.stringify(routeData, null, 2));
+        setPreviewFromResult("Athena visual result", routeData);
         appendActivityLog("voice", "Voice route", String(routeData.decision?.mode ?? "routed"), routeData.decision ?? routeData);
         const reply = commandReplyText(routeData.result ?? routeData);
         if (routeData.decision?.mode === "action") await playTone("command");
@@ -468,6 +558,7 @@ export default function App() {
         })
       });
       setLog(`${command?.name ?? actualCommandId}\n${JSON.stringify(data, null, 2)}`);
+      setPreviewFromResult(command?.name ?? actualCommandId, data);
       setStatusMessage(`${command?.name ?? actualCommandId} sent.`);
       const reply = commandReplyText(data);
       if (data.command) await playTone("command");
@@ -680,6 +771,7 @@ export default function App() {
       }
       announce("Uploading image to StreamWeaver relay...");
       const imageBase64 = result.assets[0]?.base64 ?? "";
+      const localUri = result.assets[0]?.uri ?? "";
       const data = await request("/media/streamweaver", {
         method: "POST",
         body: JSON.stringify({
@@ -688,6 +780,12 @@ export default function App() {
         })
       });
       setLog(JSON.stringify(data, null, 2));
+      setVisualPreview({
+        title: "StreamWeaver image relay",
+        kind: localUri ? "image" : "html",
+        source: localUri || `<html><body><pre>${JSON.stringify(data, null, 2)}</pre></body></html>`,
+        caption: "Image/frame sent through MountainView."
+      });
       setStatusMessage("Image sent to StreamWeaver.");
     } catch (error) {
       reportError("StreamWeaver image relay", error);
@@ -724,6 +822,7 @@ export default function App() {
         })
       });
       setLog(JSON.stringify(data, null, 2));
+      setPreviewFromResult("Smart vision result", data);
       updateVisualTargetFromText(JSON.stringify(data), "smart vision");
       setStatusMessage(data.reply ?? "Smart vision capture complete.");
       await speakText(data.reply ?? "Smart vision capture complete.");
@@ -1291,6 +1390,14 @@ export default function App() {
     await listenAndRunVoiceCommander(`I am looking at the ${profile.name} logo. ${voicePromptRef.current}`, context);
   }
 
+  function previewLogoProfile(profile: LogoProfile) {
+    const command = commandForLogo(profile);
+    const accent = logoAccent(profile.app_id);
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;height:100%;background:#071018;color:#f8fbff;font-family:system-ui;display:grid;place-items:center}.card{width:min(520px,90vw);border:1px solid ${accent};border-radius:14px;padding:24px;background:#0b1020}.mark{width:96px;height:96px;border-radius:16px;background:${accent};color:#061018;display:grid;place-items:center;font-weight:900;font-size:30px}code{display:block;white-space:pre-wrap;color:#d9e8ff;background:#111827;border-radius:8px;padding:12px;margin-top:14px}</style></head><body><div class="card"><div class="mark">${logoInitials(profile.name)}</div><h1>${profile.name}</h1><p>${profile.app_id}</p><code>${command?.method ?? "POST"} ${command?.url_template ?? profile.command_id}</code><p>${(profile.aliases ?? []).join(", ")}</p></div></body></html>`;
+    setVisualPreview({ title: `${profile.name} visual target`, kind: "html", source: html, caption: logoVisualContext(profile) });
+    setTab("visual");
+  }
+
   async function saveLogoProfile() {
     try {
       announce("Saving logo profile...");
@@ -1546,6 +1653,46 @@ export default function App() {
             </View>
           )}
 
+          {tab === "visual" && (
+            <View style={styles.panel}>
+              <View style={styles.targetHeader}>
+                <Ionicons name="browsers-outline" size={18} color="#22d3ee" />
+                <Text style={styles.label}>Visual output</Text>
+              </View>
+              {!visualPreview ? (
+                <View style={styles.visualEmpty}>
+                  <Text style={styles.memoryTitle}>No visual result yet</Text>
+                  <Text style={styles.note}>Image generation, QR payloads, app launch URLs, logo cards, and visual command results will show here.</Text>
+                </View>
+              ) : (
+                <View style={styles.visualFrame}>
+                  <View style={styles.visualHeader}>
+                    <Text style={styles.visualTitle}>{visualPreview.title}</Text>
+                    <Text style={styles.visualKind}>{visualPreview.kind}</Text>
+                  </View>
+                  {visualPreview.kind === "image" ? (
+                    <Image source={{ uri: visualPreview.source }} style={styles.visualImage} resizeMode="contain" />
+                  ) : (
+                    <WebView
+                      originWhitelist={["*"]}
+                      source={visualPreview.kind === "web" ? { uri: visualPreview.source } : { html: visualPreview.source }}
+                      style={styles.visualWebView}
+                    />
+                  )}
+                  {!!visualPreview.caption && <Text style={styles.logoBody}>{visualPreview.caption}</Text>}
+                </View>
+              )}
+              <View style={styles.actionRow}>
+                <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => openWebPreview("SpaceMountain", "https://spacemountain.live")}>
+                  <Text style={styles.secondaryButtonText}>SpaceMountain</Text>
+                </Pressable>
+                <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => openWebPreview("SPMT", "https://spmt.live")}>
+                  <Text style={styles.secondaryButtonText}>SPMT</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
           {tab === "memory" && (
             <View style={styles.panel}>
               <Text style={styles.label}>AI memory</Text>
@@ -1686,6 +1833,9 @@ export default function App() {
                         <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => lockLogoTarget(profile)}>
                           <Text style={styles.secondaryButtonText}>Lock</Text>
                         </Pressable>
+                        <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => previewLogoProfile(profile)}>
+                          <Text style={styles.secondaryButtonText}>View</Text>
+                        </Pressable>
                         <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={() => listenWithLogoTarget(profile)}>
                           <Text style={styles.primaryButtonText}>Look + talk</Text>
                         </Pressable>
@@ -1708,6 +1858,11 @@ export default function App() {
                   <Text style={styles.memoryTitle}>{trigger.name}</Text>
                   <Text style={styles.memoryBody}>{trigger.target_app} • {trigger.command_id} • {trigger.action_type}</Text>
                   <Text style={styles.memoryBody}>{trigger.payload}</Text>
+                  {!!trigger.qr_svg && (
+                    <Pressable style={styles.secondaryButton} onPress={() => openSvgPreview(trigger.name, String(trigger.qr_svg), trigger.payload)}>
+                      <Text style={styles.secondaryButtonText}>Open QR preview</Text>
+                    </Pressable>
+                  )}
                 </View>
               ))}
             </View>
@@ -1732,6 +1887,7 @@ export default function App() {
         {[
           ["home", "planet", "Home"],
           ["relay", "image", "Relay"],
+          ["visual", "browsers", "Visual"],
           ["memory", "file-tray-full", "Memory"],
           ["stream", "radio", "Stream"],
           ["devices", "phone-portrait", "Devices"],
@@ -1850,6 +2006,13 @@ const styles = StyleSheet.create({
   logoMeta: { color: "#9fb1cc", fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
   logoEndpoint: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 11, lineHeight: 15 },
   logoBody: { color: "#9fb1cc", fontSize: 12, lineHeight: 17 },
+  visualEmpty: { minHeight: 280, borderRadius: 8, borderWidth: 1, borderColor: "rgba(255,255,255,.12)", backgroundColor: "#0b1020", alignItems: "center", justifyContent: "center", padding: 18, gap: 8 },
+  visualFrame: { borderRadius: 8, borderWidth: 1, borderColor: "rgba(32,213,255,.28)", backgroundColor: "#0b1020", overflow: "hidden", gap: 8 },
+  visualHeader: { padding: 10, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,.1)", flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  visualTitle: { color: "#f8fbff", fontWeight: "900", flex: 1 },
+  visualKind: { color: "#22d3ee", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  visualImage: { width: "100%", height: 360, backgroundColor: "#071018" },
+  visualWebView: { width: "100%", height: 430, backgroundColor: "#071018" },
   hintBox: { padding: 12, borderRadius: 8, backgroundColor: "rgba(117,80,255,.12)", borderWidth: 1, borderColor: "rgba(117,80,255,.32)" },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },
@@ -1864,7 +2027,7 @@ const styles = StyleSheet.create({
   optionChipActive: { borderColor: "#20d5ff", backgroundColor: "rgba(32,213,255,.14)" },
   optionChipText: { color: "#f8fbff", fontWeight: "800" },
   tabs: { position: "absolute", bottom: 18, left: 8, right: 8, flexDirection: "row", justifyContent: "space-between", backgroundColor: "rgba(8,12,25,.96)", borderRadius: 12, padding: 6, borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
-  tab: { width: "10%", minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 3 },
+  tab: { width: "9.1%", minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 3 },
   activeTab: { backgroundColor: "rgba(32,213,255,.14)" },
   tabLabel: { color: "#94a3b8", fontSize: 9, fontWeight: "800" },
   activeTabLabel: { color: "#20d5ff" }
