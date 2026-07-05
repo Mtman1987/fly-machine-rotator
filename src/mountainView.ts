@@ -113,6 +113,7 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       commands: context.listCommands(user.id),
       memory: context.searchMemory(user.id, "", ""),
       people: context.listPeople(user.id),
+      visualProfiles: context.listVisualProfiles(user.id),
       mediaEvents: context.listGlassesMediaEvents(user.id),
       devices: context.listDevices(user.id),
       pollingProfiles: context.listPollingProfiles(user.id),
@@ -199,6 +200,23 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     const user = context.requireAuth(request);
     const body = await readJson(request);
     return json(response, context.rememberPerson(user.id, body));
+  }
+
+  if (method === "GET" && apiPath === "/api/visual-profiles") {
+    const user = context.requireAuth(request);
+    return json(response, { visualProfiles: context.listVisualProfiles(user.id, url.searchParams.get("q") ?? "") });
+  }
+
+  if (method === "POST" && apiPath === "/api/visual-profiles") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 25 * 1024 * 1024);
+    return json(response, context.saveVisualProfile(user.id, body));
+  }
+
+  if (method === "POST" && apiPath === "/api/visual-profiles/match") {
+    const user = context.requireAuth(request);
+    const body = await readJson(request, 25 * 1024 * 1024);
+    return json(response, context.matchVisualProfile(user.id, body));
   }
 
   if (method === "POST" && apiPath === "/api/media/generate") {
@@ -433,8 +451,10 @@ class MountainViewContext {
         status = fetchResult.status;
         responseText = await fetchResult.text();
         if (fetchResult.ok) {
-          this.logCommand(userId, commandId, String(command.app_id), method, url, "success", status, Date.now() - started, responseText.slice(0, 4000), "");
-          return { ok: true, status, response: parseMaybeJson(responseText) };
+          const parsed = parseMaybeJson(responseText);
+          const enriched = enrichCommandResponse(commandId, parsed);
+          this.logCommand(userId, commandId, String(command.app_id), method, url, "success", status, Date.now() - started, JSON.stringify(enriched).slice(0, 4000), "");
+          return { ok: true, status, response: enriched };
         }
         lastError = `HTTP ${fetchResult.status}`;
       } catch (error) {
@@ -730,23 +750,140 @@ class MountainViewContext {
     return { ok: true, person: person.person, memory: memory.record };
   }
 
+  listVisualProfiles(userId: string, query = ""): JsonRecord[] {
+    const rows = this.db.prepare("SELECT * FROM visual_profiles WHERE user_id = ? ORDER BY updated_at DESC LIMIT 150").all(userId) as JsonRecord[];
+    const q = query.trim().toLowerCase();
+    return rows.map(normalizeRow).filter((row) => {
+      if (!q) return true;
+      const haystack = `${row.name ?? ""} ${row.target_app ?? ""} ${row.command_id ?? ""} ${JSON.stringify(row.aliases ?? [])} ${JSON.stringify(row.match_text ?? [])} ${JSON.stringify(row.default_payload ?? {})}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  saveVisualProfile(userId: string, input: JsonRecord): JsonRecord {
+    const now = new Date().toISOString();
+    const name = String(input.name ?? input.displayName ?? input.label ?? "Saved visual profile").trim();
+    const defaultPayload = {
+      ...asRecord(input.defaultPayload),
+      ...asRecord(input.default_payload)
+    };
+    const twitchUsername = String(input.twitchUsername ?? input.twitch_username ?? defaultPayload.twitchUsername ?? defaultPayload.channel ?? "").replace(/^@+/, "").trim();
+    if (twitchUsername) {
+      defaultPayload.twitchUsername = twitchUsername;
+      defaultPayload.channel = String(defaultPayload.channel ?? twitchUsername);
+      defaultPayload.targetName = String(defaultPayload.targetName ?? name);
+    }
+    const visionLabels = extractVisionLabels(input.vision ?? input.results ?? input.analysis);
+    const matchText = [
+      ...normalizeTags(input.matchText ?? input.match_text),
+      ...normalizeTags(input.labels),
+      ...visionLabels,
+      name,
+      twitchUsername,
+      String(input.url ?? input.pageUrl ?? input.imageUrl ?? "")
+    ].filter(Boolean);
+    const imageRef = String(input.imageUrl ?? input.image_ref ?? input.imageRef ?? "");
+    const id = String(input.id ?? `visual_${slugify(name)}_${Date.now()}`);
+    this.db.prepare(`
+      INSERT INTO visual_profiles (id, user_id, name, target_app, command_id, aliases_json, match_text_json, default_payload_json, image_ref, metadata_json, updated_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        target_app = excluded.target_app,
+        command_id = excluded.command_id,
+        aliases_json = excluded.aliases_json,
+        match_text_json = excluded.match_text_json,
+        default_payload_json = excluded.default_payload_json,
+        image_ref = excluded.image_ref,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `).run(
+      id,
+      userId,
+      name,
+      String(input.targetApp ?? input.target_app ?? "streamweaver"),
+      String(input.commandId ?? input.command_id ?? "cmd_streamweaver_twitch_chat_send"),
+      JSON.stringify(normalizeTags(input.aliases)),
+      JSON.stringify([...new Set(matchText.map(String).filter(Boolean))]),
+      JSON.stringify(defaultPayload),
+      imageRef,
+      JSON.stringify({
+        source: String(input.source ?? "mountainview"),
+        notes: String(input.notes ?? input.note ?? ""),
+        savedAt: now
+      }),
+      now,
+      now
+    );
+    const profile = normalizeRow(this.db.prepare("SELECT * FROM visual_profiles WHERE id = ?").get(id) as JsonRecord);
+    this.saveMemory(userId, {
+      kind: "visual-profile",
+      title: `Visual profile: ${name}`,
+      body: buildVisualProfileSummary(profile),
+      tags: ["visual", "profile", String(profile.target_app), twitchUsername].filter(Boolean),
+      metadata: { visualProfileId: id, profile }
+    });
+    return { ok: true, visualProfile: profile };
+  }
+
+  matchVisualProfile(userId: string, input: JsonRecord): JsonRecord {
+    const observed = [
+      String(input.observedText ?? input.text ?? input.message ?? ""),
+      ...normalizeTags(input.labels),
+      ...extractVisionLabels(input.vision ?? input.results ?? input.analysis)
+    ].join(" ").toLowerCase();
+    const profiles = this.listVisualProfiles(userId);
+    const scored = profiles.map((profile) => {
+      const terms = [
+        String(profile.name ?? ""),
+        ...normalizeTags(profile.aliases),
+        ...normalizeTags(profile.match_text),
+        ...Object.values(asRecord(profile.default_payload)).map(String)
+      ].map((term) => term.toLowerCase()).filter((term) => term.length >= 3);
+      const hits = terms.filter((term) => observed.includes(term) || term.includes(observed)).length;
+      const score = terms.length ? hits / Math.min(terms.length, 8) : 0;
+      return { profile, score, hits };
+    }).sort((a, b) => b.score - a.score);
+    const best = scored.find((item) => item.score >= Number(input.threshold ?? 0.18) || item.hits >= 2);
+    const route = best ? {
+      appId: best.profile.target_app,
+      commandId: best.profile.command_id,
+      defaultPayload: best.profile.default_payload,
+      visualContext: buildVisualContextFromProfile(best.profile),
+      reason: "visual-profile-match",
+      confidence: Math.min(0.98, Math.max(0.55, best.score))
+    } : null;
+    this.logCommand(userId, "visual-profile-match", String(best?.profile.target_app ?? "mountainview"), "EVENT", "visual-polling", best ? "success" : "miss", 0, 0, JSON.stringify({ observed, route }).slice(0, 4000), "");
+    return { ok: Boolean(best), matched: Boolean(best), profile: best?.profile ?? null, route };
+  }
+
   async smartCapture(userId: string, input: JsonRecord): Promise<JsonRecord> {
     const vision = await this.analyzeVision(userId, {
       ...input,
       features: input.features ?? ["ocr", "logo_detection", "object_detection", "face_detection"]
     });
+    const visualProfile = input.saveVisualProfile || input.visualProfileName
+      ? this.saveVisualProfile(userId, {
+        ...input,
+        name: String(input.visualProfileName ?? input.name ?? input.displayName ?? "Saved screen"),
+        vision,
+        source: "vision-smart-capture",
+        matchText: extractVisionLabels(vision)
+      })
+      : null;
     const profile = input.savePerson || input.displayName || input.twitchUsername
       ? this.rememberPerson(userId, {
         ...input,
         source: "vision-smart-capture",
-        lastSeenContext: extractVisionLabels(vision.results).slice(0, 8).join(", ")
+        lastSeenContext: extractVisionLabels(vision).slice(0, 8).join(", ")
       })
       : null;
     return {
       ok: true,
       vision,
+      visualProfile,
       profile,
-      reply: buildSmartCaptureReply(vision, profile)
+      reply: buildSmartCaptureReply(vision, profile, visualProfile)
     };
   }
 
@@ -1156,6 +1293,20 @@ class MountainViewContext {
         updated_at TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS visual_profiles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        target_app TEXT NOT NULL,
+        command_id TEXT NOT NULL,
+        aliases_json TEXT NOT NULL,
+        match_text_json TEXT NOT NULL,
+        default_payload_json TEXT NOT NULL,
+        image_ref TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS media_uploads (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -1428,6 +1579,11 @@ class MountainViewContext {
     const tenantId = readText(context, "tenantId") || DEFAULT_STREAMWEAVER_TENANT_ID;
     const username = readText(context, "username") || DEFAULT_STREAMWEAVER_USERNAME;
     const visualContext = readText(context, "visualContext");
+    const visualProfileContext = asRecord(context.visualProfile);
+    const visualProfilePayload = {
+      ...asRecord(visualProfileContext.default_payload),
+      ...asRecord(visualProfileContext.defaultPayload)
+    };
     const activeSession = this.getActiveVoiceSession(userId);
 
     const chatSession = extractTwitchChatSessionIntent(transcript);
@@ -1471,14 +1627,23 @@ class MountainViewContext {
 
     const directMessage = extractDirectMessageIntent(transcript);
     if (directMessage) {
-      const channel = directMessage.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username;
+      const channel = directMessage.channel
+        || readText(visualProfilePayload, "channel")
+        || readText(visualProfilePayload, "twitchUsername")
+        || readText(context, "channel")
+        || extractTwitchChannel(visualContext)
+        || username;
       const destination = directMessage.destination || requestedDestination || "twitch";
-      const commandId = destination === "discord"
+      const commandId = readText(visualProfileContext, "commandId") || readText(visualProfileContext, "command_id") || (destination === "discord"
         ? "cmd_discord_message"
         : destination === "hearmeout" || destination === "private"
           ? "cmd_hearmeout_discord_message"
-          : "cmd_streamweaver_twitch_chat_send";
-      const appId = commandId === "cmd_discord_message" ? "discordstreamhub" : commandId === "cmd_hearmeout_discord_message" ? "hearmeout" : "streamweaver";
+          : "cmd_streamweaver_twitch_chat_send");
+      const appId = commandId === "cmd_discord_message"
+        ? "discordstreamhub"
+        : commandId === "cmd_hearmeout_discord_message"
+          ? "hearmeout"
+          : readText(visualProfileContext, "targetApp") || readText(visualProfileContext, "target_app") || "streamweaver";
       return voiceDecision({
         mode: "action",
         commandId,
@@ -1486,7 +1651,7 @@ class MountainViewContext {
         transcript: directMessage.message,
         confidence: 0.94,
         reason: "Natural language asked to send/post/type a message, so MountainView selected a concrete chat-send tool instead of generic AI conversation.",
-        payload: { destination, voiceMode: "dictation", dispatch: true, channel, channelId: readText(context, "channelId"), tenantId, username, targetName: directMessage.targetName, as: "broadcaster", bridgeToDiscord: true }
+        payload: { ...visualProfilePayload, destination, voiceMode: "dictation", dispatch: true, channel, channelId: readText(context, "channelId") || readText(visualProfilePayload, "channelId"), tenantId, username, targetName: directMessage.targetName || readText(visualProfilePayload, "targetName"), as: "broadcaster", bridgeToDiscord: true, visualProfile: visualProfileContext }
       });
     }
 
@@ -2555,14 +2720,61 @@ function buildPersonMemorySummary(person: JsonRecord): string {
   ].filter(Boolean).join("\n");
 }
 
-function buildSmartCaptureReply(vision: JsonRecord, profile: JsonRecord | null): string {
+function enrichCommandResponse(commandId: string, response: unknown): unknown {
+  if (commandId === "cmd_chat_tag_live_members") {
+    const record = asRecord(response);
+    const liveMembers = Array.isArray(record.liveMembers) ? record.liveMembers.map(asRecord) : [];
+    const names = liveMembers
+      .map((member) => readText(member, "twitchDisplayName") || readText(member, "discordDisplayName") || readText(member, "twitchUsername"))
+      .filter(Boolean);
+    const sample = names.slice(0, 6).join(", ");
+    return {
+      ...record,
+      reply: names.length
+        ? `${names.length} crew members are live: ${sample}${names.length > 6 ? ", and more." : "."}`
+        : "I checked Chat-Tag live members and no tracked crew members are live right now.",
+      liveCount: names.length,
+      liveNames: names
+    };
+  }
+  return response;
+}
+
+function buildVisualProfileSummary(profile: JsonRecord): string {
+  const payload = asRecord(profile.default_payload);
+  const aliases = Array.isArray(profile.aliases) ? profile.aliases.join(", ") : "";
+  const matchText = Array.isArray(profile.match_text) ? profile.match_text.slice(0, 12).join(", ") : "";
+  return [
+    `Name: ${profile.name}`,
+    `Target: ${profile.target_app} / ${profile.command_id}`,
+    payload.channel ? `Channel: ${payload.channel}` : "",
+    payload.twitchUsername ? `Twitch: ${payload.twitchUsername}` : "",
+    aliases ? `Aliases: ${aliases}` : "",
+    matchText ? `Visual terms: ${matchText}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function buildVisualContextFromProfile(profile: JsonRecord): string {
+  const payload = asRecord(profile.default_payload);
+  return [
+    `Visual profile matched: ${profile.name}`,
+    `targetApp=${profile.target_app}`,
+    `command=${profile.command_id}`,
+    payload.channel ? `channel=${payload.channel}` : "",
+    payload.twitchUsername ? `twitch=${payload.twitchUsername}` : ""
+  ].filter(Boolean).join(". ");
+}
+
+function buildSmartCaptureReply(vision: JsonRecord, profile: JsonRecord | null, visualProfile: JsonRecord | null = null): string {
   const labels = Array.isArray(vision.labels) ? vision.labels.slice(0, 6).join(", ") : "";
   const route = asRecord(vision.route).route as JsonRecord | undefined;
   const profileName = profile ? String(asRecord(profile.person).display_name ?? "") : "";
+  const visualName = visualProfile ? String(asRecord(visualProfile.visualProfile).name ?? "") : "";
   return [
     labels ? `I recognized: ${labels}.` : "I captured the scene.",
     route?.targetDeviceName ? `Routing to ${route.targetDeviceName}.` : "",
-    profileName ? `Saved profile memory for ${profileName}.` : ""
+    profileName ? `Saved profile memory for ${profileName}.` : "",
+    visualName ? `Saved visual profile for ${visualName}.` : ""
   ].filter(Boolean).join(" ");
 }
 

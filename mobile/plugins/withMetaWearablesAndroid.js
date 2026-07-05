@@ -48,6 +48,8 @@ function withMetaWearablesAndroid(config, props = {}) {
   config = withAndroidManifest(config, (mod) => {
     const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(mod.modResults);
     mainApplication["meta-data"] = mainApplication["meta-data"] || [];
+    mainApplication.receiver = mainApplication.receiver || [];
+    upsertReceiver(mainApplication, `${PACKAGE_NAME}.MountainViewBluetoothLaunchReceiver`);
     if (enableMetaDat) {
       upsertMetaData(mainApplication, "com.meta.wearable.mwdat.APPLICATION_ID", applicationId);
       upsertMetaData(mainApplication, "com.meta.wearable.mwdat.ANALYTICS_OPT_OUT", String(analyticsOptOut));
@@ -73,6 +75,7 @@ function withMetaWearablesAndroid(config, props = {}) {
     fs.mkdirSync(baseDir, { recursive: true });
     fs.writeFileSync(path.join(baseDir, "MountainViewMetaWearablesModule.kt"), renderModule(appPackage));
     fs.writeFileSync(path.join(baseDir, "MountainViewMetaWearablesPackage.kt"), renderPackage());
+    fs.writeFileSync(path.join(baseDir, "MountainViewBluetoothLaunchReceiver.kt"), renderBluetoothLaunchReceiver(appPackage));
     return mod;
   }]);
 
@@ -89,6 +92,29 @@ function upsertMetaData(application, name, value) {
   items.push({ $: { "android:name": name, "android:value": value } });
 }
 
+function upsertReceiver(application, name) {
+  const existing = application.receiver.find((item) => item.$["android:name"] === name);
+  const intentFilter = {
+    action: [
+      { $: { "android:name": "android.bluetooth.device.action.ACL_CONNECTED" } },
+      { $: { "android:name": "android.bluetooth.device.action.BOND_STATE_CHANGED" } }
+    ]
+  };
+  if (existing) {
+    existing.$["android:exported"] = "false";
+    existing["intent-filter"] = existing["intent-filter"] || [intentFilter];
+    return;
+  }
+  application.receiver.push({
+    $: {
+      "android:name": name,
+      "android:enabled": "true",
+      "android:exported": "false"
+    },
+    "intent-filter": [intentFilter]
+  });
+}
+
 function renderPackage() {
   return `package ${PACKAGE_NAME}
 
@@ -103,6 +129,63 @@ class MountainViewMetaWearablesPackage : ReactPackage {
 
   override fun createViewManagers(reactContext: ReactApplicationContext): MutableList<ViewManager<*, *>> =
     mutableListOf()
+}
+`;
+}
+
+function renderBluetoothLaunchReceiver(appPackage) {
+  return `package ${PACKAGE_NAME}
+
+import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.util.Log
+import java.util.Locale
+
+class MountainViewBluetoothLaunchReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent) {
+    val action = intent.action ?: return
+    if (action != BluetoothDevice.ACTION_ACL_CONNECTED && action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    if (!prefs.getBoolean(PREF_ENABLED, false)) return
+
+    val expectedAddress = prefs.getString(PREF_DEVICE_ADDRESS, "")?.uppercase(Locale.US).orEmpty()
+    val device = if (Build.VERSION.SDK_INT >= 33) {
+      intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+    } else {
+      @Suppress("DEPRECATION")
+      intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+    }
+    val address = device?.address?.uppercase(Locale.US).orEmpty()
+    if (expectedAddress.isNotBlank() && address != expectedAddress) return
+
+    prefs.edit()
+      .putLong(PREF_LAST_LAUNCH_ATTEMPT_AT, System.currentTimeMillis())
+      .putString(PREF_LAST_LAUNCH_DEVICE, address)
+      .putString(PREF_LAST_LAUNCH_ACTION, action)
+      .apply()
+
+    try {
+      val launchIntent = context.packageManager.getLaunchIntentForPackage("${appPackage}") ?: Intent().setClassName("${appPackage}", "${appPackage}.MainActivity")
+      launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      launchIntent.putExtra("mountainview_launch_reason", "glasses-bluetooth-connected")
+      launchIntent.putExtra("mountainview_device_address", address)
+      context.startActivity(launchIntent)
+    } catch (error: Exception) {
+      Log.w("MountainViewLaunch", "Could not open MountainView from Bluetooth connect", error)
+    }
+  }
+
+  companion object {
+    const val PREFS_NAME = "mountainview_glasses_launch"
+    const val PREF_ENABLED = "enabled"
+    const val PREF_DEVICE_ADDRESS = "device_address"
+    const val PREF_LAST_LAUNCH_ATTEMPT_AT = "last_launch_attempt_at"
+    const val PREF_LAST_LAUNCH_DEVICE = "last_launch_device"
+    const val PREF_LAST_LAUNCH_ACTION = "last_launch_action"
+  }
 }
 `;
 }
@@ -170,6 +253,27 @@ class MountainViewMetaWearablesModule(
   private var descriptorWriteInFlight = false
 
   override fun getName(): String = "MountainViewMetaWearables"
+
+  @ReactMethod
+  fun enableGlassesAutoLaunch(address: String, enabled: Boolean, promise: Promise) {
+    try {
+      val normalizedAddress = address.trim().uppercase(Locale.US)
+      val prefs = reactContext.getSharedPreferences(MountainViewBluetoothLaunchReceiver.PREFS_NAME, Context.MODE_PRIVATE)
+      prefs.edit()
+        .putBoolean(MountainViewBluetoothLaunchReceiver.PREF_ENABLED, enabled)
+        .putString(MountainViewBluetoothLaunchReceiver.PREF_DEVICE_ADDRESS, normalizedAddress)
+        .apply()
+      val result = WritableNativeMap()
+      result.putBoolean("androidNativeBridge", true)
+      result.putString("state", if (enabled) "auto-launch-enabled" else "auto-launch-disabled")
+      result.putString("deviceAddress", normalizedAddress)
+      result.putString("note", "MountainView will try to open when Android reports this Bluetooth device connected. Some Android builds restrict background app launches; if blocked, keep the app recent or use the foreground notification path next.")
+      appendMediaButtonLog("glasses auto launch " + (if (enabled) "enabled " else "disabled ") + normalizedAddress)
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("AUTO_LAUNCH_SETUP_FAILED", error.message ?: "Could not configure glasses auto launch.", error)
+    }
+  }
 
   @ReactMethod
   fun playTone(name: String, promise: Promise) {

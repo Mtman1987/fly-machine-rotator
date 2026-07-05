@@ -69,6 +69,19 @@ type LogoProfile = {
   aliases?: string[];
 };
 
+type VisualProfileRecord = {
+  id: string;
+  name: string;
+  target_app: string;
+  command_id: string;
+  aliases?: string[];
+  match_text?: string[];
+  default_payload?: Record<string, unknown>;
+  image_ref?: string;
+};
+
+type MainTab = "home" | "targets" | "apps" | "visual" | "logs" | "relay" | "memory" | "stream" | "devices" | "polling" | "logos" | "qr" | "roadmap";
+
 type QrTrigger = {
   id: string;
   name: string;
@@ -126,12 +139,14 @@ const translationLanguages = ["Spanish", "French", "Japanese", "German"];
 export default function App() {
   const [token, setToken] = useState("");
   const [password, setPassword] = useState("");
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState<MainTab>("home");
   const [commands, setCommands] = useState<Command[]>([]);
   const [memory, setMemory] = useState<MemoryRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [pollingProfiles, setPollingProfiles] = useState<PollingProfile[]>([]);
   const [logoProfiles, setLogoProfiles] = useState<LogoProfile[]>([]);
+  const [visualProfiles, setVisualProfiles] = useState<VisualProfileRecord[]>([]);
+  const [activeVisualProfile, setActiveVisualProfile] = useState<VisualProfileRecord | null>(null);
   const [qrTriggers, setQrTriggers] = useState<QrTrigger[]>([]);
   const [roadmap, setRoadmap] = useState<RoadmapItem[]>([]);
   const [log, setLog] = useState("Waiting for bridge activity.");
@@ -143,6 +158,7 @@ export default function App() {
   const [deviceName, setDeviceName] = useState("Companion Tablet");
   const [pollInterval, setPollInterval] = useState("180");
   const [logoTestText, setLogoTestText] = useState("I see the StreamWeaver logo on my tablet");
+  const [visualProfileName, setVisualProfileName] = useState("fatkids stream");
   const [twitchTargetChannel, setTwitchTargetChannel] = useState("");
   const [visualContext, setVisualContext] = useState("No visual target locked yet.");
   const [qrPayload, setQrPayload] = useState("mountainview://avatar/room-anchor/default");
@@ -399,6 +415,75 @@ export default function App() {
     return "";
   }
 
+  function visualProfilePayload(profile: VisualProfileRecord | null) {
+    return profile?.default_payload ?? {};
+  }
+
+  function visualProfileChannel(profile: VisualProfileRecord | null) {
+    const payload = visualProfilePayload(profile);
+    return String(payload.channel ?? payload.twitchUsername ?? payload.targetChannel ?? "").replace(/^#|^@/, "").trim().toLowerCase();
+  }
+
+  function targetLabel() {
+    if (activeVisualProfile) {
+      const channel = visualProfileChannel(activeVisualProfile);
+      return channel ? `${activeVisualProfile.name} -> ${channel}` : activeVisualProfile.name;
+    }
+    if (twitchTargetChannel.trim()) return `Twitch -> ${twitchTargetChannel.trim()}`;
+    return "No target locked";
+  }
+
+  function lockVisualProfile(profile: VisualProfileRecord) {
+    const channel = visualProfileChannel(profile);
+    setActiveVisualProfile(profile);
+    if (channel) setTwitchTargetChannel(channel);
+    setVisualContext(`Saved target locked: ${profile.name}. App=${profile.target_app}. Command=${profile.command_id}${channel ? `. Channel=${channel}` : ""}.`);
+    setStatusMessage(`${profile.name} is now the active glasses target.`);
+    appendActivityLog("vision", "Saved target locked", profile.target_app, profile);
+  }
+
+  async function saveVisualProfileFromImage() {
+    try {
+      const imageBase64 = await pickImageBase64("visual target");
+      if (!imageBase64) {
+        setStatusMessage("Save target canceled.");
+        return;
+      }
+      const channel = twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(visualContext) || "mtman1987";
+      announce("Saving visual target...");
+      const data = await request("/vision/smart-capture", {
+        method: "POST",
+        body: JSON.stringify({
+          imageBase64,
+          message: voicePrompt,
+          saveVisualProfile: true,
+          visualProfileName: visualProfileName.trim() || "Saved screen",
+          targetApp: "streamweaver",
+          commandId: "cmd_streamweaver_twitch_chat_send",
+          twitchUsername: channel,
+          channel,
+          defaultPayload: {
+            destination: "twitch",
+            channel,
+            twitchUsername: channel,
+            dispatch: true,
+            as: "broadcaster"
+          },
+          providers: "google,amazon"
+        })
+      });
+      setLog(JSON.stringify(data, null, 2));
+      setPreviewFromResult("Saved visual target", data);
+      const savedProfile = ((data.visualProfile?.visualProfile ?? data.visualProfile) as VisualProfileRecord | undefined);
+      await load();
+      if (savedProfile?.id) lockVisualProfile(savedProfile);
+      setStatusMessage(data.reply ?? "Visual target saved.");
+      await speakText(data.reply ?? "Visual target saved.");
+    } catch (error) {
+      reportError("Save visual target", error);
+    }
+  }
+
   async function playTone(name: string, options: { force?: boolean } = {}) {
     try {
       const now = Date.now();
@@ -467,6 +552,7 @@ export default function App() {
     setDevices(data.devices ?? []);
     setPollingProfiles(data.pollingProfiles ?? []);
     setLogoProfiles(data.logoProfiles ?? []);
+    setVisualProfiles(data.visualProfiles ?? []);
     setQrTriggers(data.qrTriggers ?? []);
     setRoadmap(data.roadmap ?? []);
     setLog((data.logs ?? []).map((item: Record<string, string>) => `${item.created_at} ${item.app_id} ${item.status}`).join("\n") || "No activity yet.");
@@ -476,6 +562,8 @@ export default function App() {
   async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean; visualContextOverride?: string } = {}) {
     try {
       const lockedVisualContext = options.visualContextOverride ?? visualContext;
+      const activeProfilePayload = visualProfilePayload(activeVisualProfile);
+      const activeProfileChannel = visualProfileChannel(activeVisualProfile);
       const intent = parseVoiceCommandForDate(message);
       const shouldUseParsedIntent = commandId === "cmd_streamweaver_voice_commander" || commandId === "cmd_dsh_calendar_add_mission";
       const forcedVoiceMode = typeof intent.metadata.forceVoiceMode === "string" ? intent.metadata.forceVoiceMode as VoiceCommanderMode : undefined;
@@ -498,7 +586,8 @@ export default function App() {
               voiceMode,
               tenantId: "94371378",
               username: "mtman1987",
-              channel: twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987",
+              channel: twitchTargetChannel.trim() || activeProfileChannel || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987",
+              visualProfile: activeVisualProfile,
               visualContext: lockedVisualContext,
               translation: {
                 enabled: voiceMode === "translation",
@@ -523,15 +612,17 @@ export default function App() {
       const command = commandMap.get(actualCommandId);
       const translationEnabled = effectiveVoiceMode === "translation";
       const selectedChannel = actualDestination === "twitch"
-        ? (intent.twitchChannel || twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987")
+        ? (intent.twitchChannel || twitchTargetChannel.trim() || activeProfileChannel || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987")
         : "mtman1987";
       const voicePayload = {
+        ...activeProfilePayload,
         message: outboundMessage,
         transcript: outboundMessage,
         destination: actualDestination,
         tenantId: "94371378",
         username: "mtman1987",
         channel: selectedChannel,
+        visualProfile: activeVisualProfile,
         visualContext: lockedVisualContext,
         dispatch: actualDestination === "twitch",
         source: "mountainview-mobile",
@@ -670,11 +761,28 @@ export default function App() {
         setStatusMessage("No paired AiMB glasses found. Pair once, then MountainView can auto-arm.");
         return false;
       }
+      await metaWearables.enableGlassesAutoLaunch(address, true).catch((error) => {
+        appendActivityLog("ble", "Auto-open setup failed", "non-blocking", error instanceof Error ? error.message : String(error));
+      });
       return await armBleDevice(address, reason, false);
     } catch (error) {
       setBleAutoConnectState("Auto-arm unavailable");
       reportSoftError("Auto arm glasses bridge", error);
       return false;
+    }
+  }
+
+  async function enableGlassesAutoOpen() {
+    try {
+      const address = String(glassesStatus.bleAddress ?? "").trim() || await SecureStore.getItemAsync(bleLastDeviceKey) || defaultAimbAddress;
+      const result = await metaWearables.enableGlassesAutoLaunch(address, true);
+      await SecureStore.setItemAsync(bleLastDeviceKey, address);
+      setGlassesStatus((current) => ({ ...current, bleAddress: address, autoLaunch: true }));
+      setLog(JSON.stringify(result, null, 2));
+      setStatusMessage(`MountainView will try to open when ${address} connects.`);
+      appendActivityLog("ble", "Glasses auto-open enabled", address, result);
+    } catch (error) {
+      reportError("Enable glasses auto-open", error);
     }
   }
 
@@ -1464,6 +1572,79 @@ export default function App() {
             <>
               <View style={styles.heroPanel}>
                 <View style={styles.kickerRow}>
+                  <Text style={styles.label}>Talk to Athena</Text>
+                  <View style={[styles.statusPill, replyLoopActive ? styles.statusPillActive : undefined]}>
+                    <Ionicons name={replyLoopActive ? "mic" : "mic-outline"} size={14} color={replyLoopActive ? "#071018" : "#22d3ee"} />
+                    <Text style={[styles.statusPillText, replyLoopActive ? styles.statusPillTextActive : undefined]}>{replyLoopActive ? "Conversation on" : "Ready"}</Text>
+                  </View>
+                </View>
+                <Text style={styles.heroTitle}>What do you want Athena to do?</Text>
+                <Text style={styles.heroCopy}>Use natural speech for SpaceMountain, StreamWeaver, HearMeOut, Chat-Tag, DiscordStreamHub, and saved visual targets.</Text>
+                <View style={styles.targetPanel}>
+                  <View style={styles.targetHeader}>
+                    <Ionicons name="eye-outline" size={16} color="#22d3ee" />
+                    <Text style={styles.targetTitle}>Current target</Text>
+                  </View>
+                  <Text style={styles.targetValue}>{targetLabel()}</Text>
+                  <Text style={styles.note}>{visualContext}</Text>
+                </View>
+                <TextInput value={voicePrompt} onChangeText={setVoicePrompt} placeholder="Hey Athena ..." placeholderTextColor="#7f8ca8" style={styles.input} />
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={() => listenAndRunVoiceCommander()}>
+                    <Ionicons name="mic" size={18} color="#00131a" />
+                    <Text style={styles.primaryButtonText}>{isListening ? "Listening..." : "Talk now"}</Text>
+                  </Pressable>
+                  <Pressable style={[replyLoopActive ? styles.dangerButton : styles.secondaryButton, styles.actionButton]} onPress={replyLoopActive ? stopReplyLoop : () => startReplyLoop("manual-button")}>
+                    <Ionicons name={replyLoopActive ? "stop" : "chatbubble-ellipses-outline"} size={18} color={replyLoopActive ? "#1f0610" : "#f8fbff"} />
+                    <Text style={replyLoopActive ? styles.dangerButtonText : styles.secondaryButtonText}>{replyLoopActive ? "Stop" : "Conversation"}</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={askStreamWeaverVoiceCommander}>
+                    <Text style={styles.secondaryButtonText}>Send typed command</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}>
+                    <Text style={styles.secondaryButtonText}>Who's live?</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={saveVisualProfileFromImage}>
+                    <Text style={styles.secondaryButtonText}>Save what I see</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={enableGlassesAutoOpen}>
+                    <Text style={styles.secondaryButtonText}>Open on glasses connect</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <View style={styles.panel}>
+                <Text style={styles.label}>Mode</Text>
+                <View style={styles.routeGrid}>
+                  {voiceRoutes.map((route) => (
+                    <Pressable key={route.id} style={[styles.routeCard, voiceDestination === route.id && styles.routeCardActive]} onPress={() => setVoiceDestination(route.id)}>
+                      <Text style={styles.routeLabel}>{route.label}</Text>
+                      <Text style={styles.routeDetail}>{route.detail}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.inlineOptions}>
+                  {voiceModes.map((mode) => (
+                    <Pressable key={mode.id} style={[styles.modeChip, voiceMode === mode.id && styles.modeChipActive]} onPress={() => setVoiceMode(mode.id)}>
+                      <Text style={styles.modeChipText}>{mode.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+              <View style={styles.grid}>
+                <StatusCard label="Glasses" value={String(glassesStatus.state ?? "native bridge")} tone="warn" detail={String(glassesStatus.bleAddress ?? defaultAimbAddress)} />
+                <StatusCard label="Athena" value="Cloud ready" tone="good" detail="Commands route through SPMT and the app registry." />
+              </View>
+            </>
+          )}
+
+          {false && tab === "home" && (
+            <>
+              <View style={styles.heroPanel}>
+                <View style={styles.kickerRow}>
                   <Text style={styles.label}>Voice commander</Text>
                   <View style={[styles.statusPill, replyLoopActive ? styles.statusPillActive : undefined]}>
                     <Ionicons name={replyLoopActive ? "mic" : "mic-outline"} size={14} color={replyLoopActive ? "#071018" : "#22d3ee"} />
@@ -1636,6 +1817,99 @@ export default function App() {
                 <CommandGroup title="DiscordStreamHub" commands={commands.filter((command) => command.app_id === "discordstreamhub")} onRun={runCommand} />
                 <CommandGroup title="Chat-Tag" commands={commands.filter((command) => command.app_id === "chat-tag")} onRun={runCommand} />
                 <CommandGroup title="EdenAI" commands={commands.filter((command) => command.app_id === "edenai")} onRun={runCommand} />
+              </View>
+            </>
+          )}
+
+          {tab === "targets" && (
+            <View style={styles.panel}>
+              <Text style={styles.label}>Saved targets</Text>
+              <Text style={styles.note}>Save a stream, chat, app screen, logo, or QR target once. Then Athena can use it when you say things like "tell them hi" or "read this chat."</Text>
+              <TextInput value={visualProfileName} onChangeText={setVisualProfileName} placeholder="Name this screen" placeholderTextColor="#7f8ca8" style={styles.input} />
+              <TextInput
+                value={twitchTargetChannel}
+                onChangeText={(value) => {
+                  setTwitchTargetChannel(value.replace(/^#|^@/, "").trim().toLowerCase());
+                  setVisualContext(value.trim() ? `Manual Twitch target: ${value.trim()}` : "No visual target locked yet.");
+                }}
+                placeholder="Twitch channel, example fatkid4ev4"
+                placeholderTextColor="#7f8ca8"
+                autoCapitalize="none"
+                style={styles.input}
+              />
+              <Pressable style={styles.primaryButton} onPress={saveVisualProfileFromImage}><Text style={styles.primaryButtonText}>Save current screen as target</Text></Pressable>
+              {visualProfiles.length === 0 ? (
+                <View style={styles.hintBox}>
+                  <Text style={styles.memoryTitle}>No saved visual targets yet</Text>
+                  <Text style={styles.memoryBody}>Save the stream/chat/app screen you want Athena to recognize, then lock it here before testing commands.</Text>
+                </View>
+              ) : (
+                visualProfiles.map((profile) => (
+                  <View key={profile.id} style={styles.memoryRow}>
+                    <Text style={styles.memoryTitle}>{profile.name}</Text>
+                    <Text style={styles.memoryBody}>{profile.target_app} • {profile.command_id}</Text>
+                    <Text style={styles.memoryBody}>{visualProfileChannel(profile) || (profile.aliases ?? []).join(", ") || "No channel saved"}</Text>
+                    <View style={styles.actionRow}>
+                      <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={() => lockVisualProfile(profile)}>
+                        <Text style={styles.primaryButtonText}>Use</Text>
+                      </Pressable>
+                      <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => setLog(JSON.stringify(profile, null, 2))}>
+                        <Text style={styles.secondaryButtonText}>Details</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          )}
+
+          {tab === "apps" && (
+            <>
+              <View style={styles.panel}>
+                <Text style={styles.label}>App controls</Text>
+                <Text style={styles.note}>These are the direct tools Athena can call. Use Talk for natural language; use this page when you want to force one app action.</Text>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_spmt_athena_command", voicePrompt)}>
+                    <Text style={styles.secondaryButtonText}>Athena OS</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_spmt_athena_search", voicePrompt)}>
+                    <Text style={styles.secondaryButtonText}>Athena search</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_hearmeout_song_request", voicePrompt)}>
+                    <Text style={styles.secondaryButtonText}>Request song</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_dsh_calendar_add_mission", voicePrompt || "Add MountainView reminder tomorrow", "discord")}>
+                    <Text style={styles.secondaryButtonText}>Add event</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}>
+                    <Text style={styles.secondaryButtonText}>Live crew</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={enableGlassesAutoOpen}>
+                    <Text style={styles.secondaryButtonText}>Auto-open APK</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <View style={styles.panel}>
+                <Text style={styles.label}>Advanced tools</Text>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => setTab("devices")}><Text style={styles.secondaryButtonText}>Bluetooth</Text></Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => setTab("logos")}><Text style={styles.secondaryButtonText}>Logos</Text></Pressable>
+                </View>
+                <View style={styles.actionRow}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => setTab("qr")}><Text style={styles.secondaryButtonText}>QR</Text></Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => setTab("polling")}><Text style={styles.secondaryButtonText}>Polling</Text></Pressable>
+                </View>
+              </View>
+              <View style={styles.panel}>
+                <CommandGroup title="SPMT / Athena OS" commands={commands.filter((command) => command.app_id === "spmt")} onRun={runCommand} />
+                <CommandGroup title="StreamWeaver" commands={commands.filter((command) => command.app_id === "streamweaver")} onRun={runCommand} />
+                <CommandGroup title="HearMeOut" commands={commands.filter((command) => command.app_id === "hearmeout")} onRun={runCommand} />
+                <CommandGroup title="DiscordStreamHub" commands={commands.filter((command) => command.app_id === "discordstreamhub")} onRun={runCommand} />
+                <CommandGroup title="Chat-Tag" commands={commands.filter((command) => command.app_id === "chat-tag")} onRun={runCommand} />
               </View>
             </>
           )}
@@ -1885,19 +2159,13 @@ export default function App() {
 
       <View style={styles.tabs}>
         {[
-          ["home", "planet", "Home"],
-          ["relay", "image", "Relay"],
+          ["home", "mic", "Talk"],
+          ["targets", "eye", "Target"],
+          ["apps", "apps", "Apps"],
           ["visual", "browsers", "Visual"],
-          ["memory", "file-tray-full", "Memory"],
-          ["stream", "radio", "Stream"],
-          ["devices", "phone-portrait", "Devices"],
-          ["polling", "scan", "Scan"],
-          ["logos", "apps", "Logos"],
-          ["qr", "qr-code", "QR"],
-          ["roadmap", "rocket", "Soon"],
           ["logs", "terminal", "Logs"]
         ].map(([id, icon, label]) => (
-          <Pressable key={id} style={[styles.tab, tab === id && styles.activeTab]} onPress={() => { setStatusMessage(`Opened ${label}.`); setTab(id); }}>
+          <Pressable key={id} style={[styles.tab, tab === id && styles.activeTab]} onPress={() => { setStatusMessage(`Opened ${label}.`); setTab(id as MainTab); }}>
             <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={20} color={tab === id ? "#20d5ff" : "#94a3b8"} />
             <Text style={[styles.tabLabel, tab === id && styles.activeTabLabel]} numberOfLines={1}>{label}</Text>
           </Pressable>
@@ -1976,6 +2244,7 @@ const styles = StyleSheet.create({
   targetPanel: { gap: 8, padding: 10, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(167,139,250,.28)" },
   targetHeader: { flexDirection: "row", alignItems: "center", gap: 7 },
   targetTitle: { color: "#f8fafc", fontWeight: "900", fontSize: 12 },
+  targetValue: { color: "#f8fafc", fontSize: 20, lineHeight: 25, fontWeight: "900" },
   grid: { gap: 10 },
   statusCard: { padding: 14, borderRadius: 8, backgroundColor: "#171b31", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   label: { color: "#9fb1cc", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", fontWeight: "700" },
@@ -1986,11 +2255,11 @@ const styles = StyleSheet.create({
   note: { color: "#9fb1cc", fontSize: 13, lineHeight: 19 },
   input: { color: "#f8fbff", backgroundColor: "#0b1020", borderColor: "rgba(255,255,255,.12)", borderWidth: 1, borderRadius: 8, padding: 12 },
   textArea: { minHeight: 110, textAlignVertical: "top" },
-  primaryButton: { backgroundColor: "#22d3ee", borderRadius: 8, padding: 12, alignItems: "center" },
+  primaryButton: { backgroundColor: "#22d3ee", borderRadius: 8, padding: 12, alignItems: "center", justifyContent: "center", gap: 6 },
   primaryButtonText: { color: "#00131a", fontWeight: "900" },
-  dangerButton: { backgroundColor: "#ff6b8a", borderRadius: 8, padding: 12, alignItems: "center" },
+  dangerButton: { backgroundColor: "#ff6b8a", borderRadius: 8, padding: 12, alignItems: "center", justifyContent: "center", gap: 6 },
   dangerButtonText: { color: "#1f0610", fontWeight: "900" },
-  secondaryButton: { borderRadius: 8, padding: 12, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,.14)" },
+  secondaryButton: { borderRadius: 8, padding: 12, alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: "rgba(255,255,255,.14)" },
   secondaryButtonText: { color: "#f8fbff", fontWeight: "800" },
   commandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderRadius: 8, backgroundColor: "#0b1020", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", marginTop: 8 },
   commandTitle: { color: "#f8fbff", fontWeight: "800" },
@@ -2027,7 +2296,7 @@ const styles = StyleSheet.create({
   optionChipActive: { borderColor: "#20d5ff", backgroundColor: "rgba(32,213,255,.14)" },
   optionChipText: { color: "#f8fbff", fontWeight: "800" },
   tabs: { position: "absolute", bottom: 18, left: 8, right: 8, flexDirection: "row", justifyContent: "space-between", backgroundColor: "rgba(8,12,25,.96)", borderRadius: 12, padding: 6, borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
-  tab: { width: "9.1%", minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 3 },
+  tab: { width: "19%", minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 3 },
   activeTab: { backgroundColor: "rgba(32,213,255,.14)" },
   tabLabel: { color: "#94a3b8", fontSize: 9, fontWeight: "800" },
   activeTabLabel: { color: "#20d5ff" }

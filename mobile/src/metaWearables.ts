@@ -26,6 +26,7 @@ type MetaWearablesModule = {
   prepareLocalVoiceOutput(): Promise<Record<string, unknown>>;
   playTone(name: string): Promise<Record<string, unknown>>;
   setFlashlight(enabled: boolean): Promise<Record<string, unknown>>;
+  enableGlassesAutoLaunch(address: string, enabled: boolean): Promise<Record<string, unknown>>;
 };
 
 const nativeModule = NativeModules.MountainViewMetaWearables as MetaWearablesModule | undefined;
@@ -66,7 +67,8 @@ export const metaWearables: MetaWearablesModule = {
   recognizeSpeechOnce: () => nativeModule?.recognizeSpeechOnce?.() ?? unavailable("recognizeSpeechOnce"),
   prepareLocalVoiceOutput: () => nativeModule?.prepareLocalVoiceOutput?.() ?? unavailable("prepareLocalVoiceOutput"),
   playTone: (name: string) => nativeModule?.playTone?.(name) ?? unavailable(`playTone:${name}`),
-  setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`)
+  setFlashlight: (enabled: boolean) => nativeModule?.setFlashlight?.(enabled) ?? unavailable(`setFlashlight:${enabled}`),
+  enableGlassesAutoLaunch: (address: string, enabled: boolean) => nativeModule?.enableGlassesAutoLaunch?.(address, enabled) ?? unavailable(`enableGlassesAutoLaunch:${address}:${enabled}`)
 };
 
 export function addMediaButtonListener(listener: (event: Record<string, unknown>) => void): EmitterSubscription | { remove: () => void } {
