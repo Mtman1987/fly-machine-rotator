@@ -1267,10 +1267,11 @@ class MountainViewContext {
       ["cmd_streamweaver_obs_scenes", "streamweaver", "Read StreamWeaver OBS scenes", "what obs scenes do i have", "GET", "/api/obs/scenes", {}],
       ["cmd_streamweaver_overlay_data", "streamweaver", "Read StreamWeaver overlay data", "show overlay data", "GET", "/api/overlay/{{overlayType}}?tenant={{tenantId}}", {}],
       ["cmd_streamweaver_voice_commander", "streamweaver", "Run StreamWeaver voice commander", "run voice commander", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "{{destination}}", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", payload: "{{payload}}" }],
+      ["cmd_streamweaver_twitch_chat_send", "streamweaver", "Send Twitch chat through StreamWeaver", "type into twitch chat", "POST", "/api/twitch/send-message", { source: "mountainview-ai", message: "{{message}}", as: "{{as}}", targetChannel: "{{channel}}", channel: "{{channel}}", tenantId: "{{tenantId}}", bridgeToDiscord: "{{bridgeToDiscord}}" }],
       ["cmd_streamweaver_twitch_chat_session", "streamweaver", "Start or stop Twitch chat dictation session", "read twitch chat out loud", "POST", "/api/mountainview/voice-commander", { source: "mountainview-ai", transcript: "{{transcript}}", destination: "twitch", wakeWord: "{{wakeWord}}", tenantId: "{{tenantId}}", username: "{{username}}", channel: "{{channel}}", payload: { "mode": "twitch-chat-session", "action": "{{action}}", "channel": "{{channel}}", "targetName": "{{targetName}}", "readAloud": "{{readAloud}}", "dictation": "{{dictation}}" } }],
       ["cmd_twitch_stream_assist", "streamweaver", "Start Twitch screen assist", "start twitch assist", "POST", "/api/twitch/screen-assist/start", { source: "mountainview-ai", trigger: "twitch-logo", transcript: "{{transcript}}", payload: "{{payload}}" }],
       ["cmd_discord_event", "discordstreamhub", "Push Twitch event to DiscordStreamHub", "push event to discord", "POST", "/api/twitch/events", { source: "mountainview-ai", type: "{{eventType}}", serverId: "{{serverId}}", twitchLogin: "{{twitchUsername}}", username: "{{username}}", channel: "{{channel}}", message: "{{message}}" }],
-      ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub channel message", "send discord stream message", "POST", "/api/discord/post", { source: "mountainview-ai", channelId: "{{channelId}}", content: "{{message}}" }],
+      ["cmd_discord_message", "discordstreamhub", "Send DiscordStreamHub channel message", "send discord stream message", "POST", "/api/discord/send-as-user", { source: "mountainview-ai", channelId: "{{channelId}}", content: "{{message}}", username: "{{username}}", avatarUrl: "{{avatarUrl}}" }],
       ["cmd_dsh_calendar_add_mission", "discordstreamhub", "Add DiscordStreamHub calendar mission", "add calendar mission", "POST", "/api/calendar/add-mission", { source: "mountainview-ai", serverId: "{{serverId}}", userId: "{{discordUserId}}", missionName: "{{missionName}}", missionDate: "{{missionDate}}", missionTime: "{{missionTime}}", missionDescription: "{{missionDescription}}" }],
       ["cmd_dsh_calendar_post", "discordstreamhub", "Post DiscordStreamHub calendar", "post calendar to discord", "POST", "/api/calendar/post", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}" }],
       ["cmd_dsh_calendar_generate", "discordstreamhub", "Generate DiscordStreamHub calendar embed", "generate calendar embed", "POST", "/api/calendar/generate", { source: "mountainview-ai", serverId: "{{serverId}}", channelId: "{{channelId}}", includeButtons: "{{includeButtons}}" }],
@@ -1296,6 +1297,7 @@ class MountainViewContext {
       ["cmd_hearmeout_audiobook_request", "hearmeout", "Request HearMeOut audiobook/search item", "request audiobook", "POST", "/api/music/session/request", { source: "mountainview-ai", query: "{{query}}", username: "{{username}}", platform: "{{platform}}", mediaType: "audiobook" }],
       ["cmd_hearmeout_watch_request", "hearmeout", "Request HearMeOut watch item", "request watch party item", "POST", "/api/watch/sessions/{{sessionId}}/request", { source: "mountainview-ai", query: "{{query}}", itemId: "{{itemId}}", userId: "{{userId}}", username: "{{username}}" }],
       ["cmd_hearmeout_watch_control", "hearmeout", "Control HearMeOut watch party", "control watch party", "POST", "/api/watch/sessions/{{sessionId}}/control", { source: "mountainview-ai", action: "{{action}}", position: "{{position}}", targetIndex: "{{targetIndex}}" }],
+      ["cmd_hearmeout_discord_message", "hearmeout", "Send HearMeOut Discord chat message", "send hearmeout chat message", "POST", "/api/discord/send", { source: "mountainview-ai", channelId: "{{channelId}}", content: "{{message}}", username: "{{username}}", avatarUrl: "{{avatarUrl}}" }],
       ["cmd_eden_scene", "edenai", "Analyze current scene with EdenAI", "ask ai what am i looking at", "POST", "/v2/image/explicit_content", { source: "mountainview-ai", image: "{{imageBase64}}", providers: "{{providers}}" }],
       ["cmd_eden_screen_read", "edenai", "Read visible screen text", "read my screen", "POST", "/v2/ocr/ocr", { source: "mountainview-ai", file: "{{imageBase64}}", providers: "{{providers}}", fallbackRoute: "streamweaver" }],
       ["cmd_eden_image_generation", "edenai", "Generate image from glasses context", "generate image from what i see", "POST", "/v2/image/generation", { source: "mountainview-ai", prompt: "{{prompt}}", contextImage: "{{imageBase64}}", providers: "{{providers}}" }],
@@ -1458,26 +1460,33 @@ class MountainViewContext {
     if (activeSession && String(activeSession.mode) === "twitch-chat-dictation") {
       return voiceDecision({
         mode: "action",
-        commandId: "cmd_streamweaver_voice_commander",
+        commandId: "cmd_streamweaver_twitch_chat_send",
         appId: "streamweaver",
         transcript,
         confidence: 0.93,
-        reason: "Active Twitch chat dictation session is running, so MountainView treated the utterance as a reply to the locked channel.",
-        payload: { destination: "twitch", voiceMode: "dictation", dispatch: true, channel: activeSession.targetChannel, targetName: activeSession.targetName, tenantId, username, activeSession }
+        reason: "Active Twitch chat dictation session is running, so MountainView sent the utterance directly to the locked StreamWeaver Twitch chat tool.",
+        payload: { destination: "twitch", voiceMode: "dictation", dispatch: true, channel: activeSession.targetChannel, targetName: activeSession.targetName, tenantId, username, as: "broadcaster", bridgeToDiscord: true, activeSession }
       });
     }
 
     const directMessage = extractDirectMessageIntent(transcript);
     if (directMessage) {
       const channel = directMessage.channel || readText(context, "channel") || extractTwitchChannel(visualContext) || username;
+      const destination = directMessage.destination || requestedDestination || "twitch";
+      const commandId = destination === "discord"
+        ? "cmd_discord_message"
+        : destination === "hearmeout" || destination === "private"
+          ? "cmd_hearmeout_discord_message"
+          : "cmd_streamweaver_twitch_chat_send";
+      const appId = commandId === "cmd_discord_message" ? "discordstreamhub" : commandId === "cmd_hearmeout_discord_message" ? "hearmeout" : "streamweaver";
       return voiceDecision({
         mode: "action",
-        commandId: "cmd_streamweaver_voice_commander",
-        appId: "streamweaver",
+        commandId,
+        appId,
         transcript: directMessage.message,
         confidence: 0.94,
-        reason: "Natural language asked to send/post/type a message, so MountainView selected StreamWeaver dictation instead of Athena conversation.",
-        payload: { destination: directMessage.destination || requestedDestination || "twitch", voiceMode: "dictation", dispatch: true, channel, tenantId, username, targetName: directMessage.targetName }
+        reason: "Natural language asked to send/post/type a message, so MountainView selected a concrete chat-send tool instead of generic AI conversation.",
+        payload: { destination, voiceMode: "dictation", dispatch: true, channel, channelId: readText(context, "channelId"), tenantId, username, targetName: directMessage.targetName, as: "broadcaster", bridgeToDiscord: true }
       });
     }
 
@@ -1686,7 +1695,7 @@ class MountainViewContext {
       });
       return;
     }
-    if (commandId === "cmd_streamweaver_voice_commander" && asRecord(payload).activeSession) {
+    if ((commandId === "cmd_streamweaver_voice_commander" || commandId === "cmd_streamweaver_twitch_chat_send") && asRecord(payload).activeSession) {
       this.recordGlassesMediaEvent(userId, {
         kind: "voice-session-dictation",
         source: "mountainview-router",
@@ -1845,6 +1854,21 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
     return base;
   }
 
+  if (commandId === "cmd_streamweaver_twitch_chat_send") {
+    const target = readText(base, "channel") || readText(base, "targetChannel") || readText(base, "targetName") || username;
+    const channel = resolveSpokenTwitchAlias(target, process.env);
+    return {
+      ...base,
+      message,
+      as: readText(base, "as") || "broadcaster",
+      channel,
+      targetChannel: channel,
+      bridgeToDiscord: payload.bridgeToDiscord ?? nestedPayload.bridgeToDiscord ?? true,
+      destination: "twitch",
+      voiceMode: readText(base, "voiceMode") || "dictation"
+    };
+  }
+
   if (commandId === "cmd_streamweaver_twitch_chat_session") {
     const channel = resolveSpokenTwitchAlias(readText(base, "channel") || readText(base, "targetName") || message, process.env);
     return {
@@ -1949,10 +1973,13 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
     };
   }
 
-  if (commandId === "cmd_discord_message") {
+  if (commandId === "cmd_discord_message" || commandId === "cmd_hearmeout_discord_message") {
     return {
       ...base,
-      channelId: readText(base, "channelId") || DEFAULT_DISCORD_CHANNEL_ID
+      channelId: readText(base, "channelId") || DEFAULT_DISCORD_CHANNEL_ID,
+      content: readText(base, "content") || message,
+      username: readText(base, "username") || "Athena via MountainView",
+      avatarUrl: readText(base, "avatarUrl")
     };
   }
 
@@ -2109,6 +2136,12 @@ function getCommandRoutingProfile(commandId: string, appId: string): CommandRout
       "generate an image of Athena standing in my room"
     ]);
   }
+  if (commandId === "cmd_streamweaver_twitch_chat_send") {
+    return profile(["message", "channel"], ["tenantId", "as", "bridgeToDiscord"], "medium", false, "ready", [
+      "type in fatkids chat hey buddy what's new",
+      "send hello to mamafeisty twitch chat"
+    ]);
+  }
   if (commandId.includes("image") || commandId.includes("vision") || commandId.includes("eden")) {
     return profile(["imageBase64 or imageUrl"], ["prompt", "providers", "visualContext", "displayName"], commandId.includes("face") ? "medium" : "low", commandId.includes("face"), "needs-context", [
       "read what I see",
@@ -2122,7 +2155,7 @@ function getCommandRoutingProfile(commandId: string, appId: string): CommandRout
       "post the calendar to Discord"
     ]);
   }
-  if (commandId === "cmd_discord_message" || commandId === "cmd_discord_event") {
+  if (commandId === "cmd_discord_message" || commandId === "cmd_discord_event" || commandId === "cmd_hearmeout_discord_message") {
     return profile(["channelId or serverId", "message"], ["twitchUsername", "eventType"], "medium", true, "dry-run-first", [
       "send a Discord message that says stream is starting",
       "push this event to DiscordStreamHub"
@@ -2246,6 +2279,9 @@ function tokenizeCommandText(value: string): string[] {
 }
 
 function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
+  const destination = /\bhear\s?me\s?out|hearmeout\b/i.test(text) ? "hearmeout"
+    : /\bdiscord|server\b/i.test(text) ? "discord"
+      : "twitch";
   const typeInChat = text.match(/\b(?:send|post|type|say)\s+(?:in|into|to)\s+(.+?)\s+(?:twitch\s+)?chat\s+["“](.+?)["”]\s*$/i);
   if (typeInChat?.[2]?.trim()) {
     const targetName = cleanSpokenTarget(typeInChat[1] ?? "");
@@ -2253,7 +2289,7 @@ function extractDirectMessageIntent(text: string): { message: string; targetName
       message: typeInChat[2].trim(),
       targetName,
       channel: resolveSpokenTwitchAlias(targetName, process.env),
-      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+      destination
     };
   }
 
@@ -2264,7 +2300,7 @@ function extractDirectMessageIntent(text: string): { message: string; targetName
       message: quoted[2].trim(),
       targetName,
       channel: resolveSpokenTwitchAlias(targetName, process.env),
-      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+      destination
     };
   }
 
@@ -2275,7 +2311,7 @@ function extractDirectMessageIntent(text: string): { message: string; targetName
       message: simple[1].trim(),
       targetName,
       channel: resolveSpokenTwitchAlias(targetName, process.env),
-      destination: /\bdiscord|server\b/i.test(text) ? "discord" : "twitch"
+      destination
     };
   }
 

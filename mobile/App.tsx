@@ -17,8 +17,13 @@ type Command = {
   id: string;
   app_id: string;
   name: string;
+  phrase?: string;
   method: string;
   url_template: string;
+  requiredContext?: string[];
+  naturalExamples?: string[];
+  riskLevel?: string;
+  testReadiness?: string;
 };
 
 type MemoryRecord = {
@@ -379,8 +384,9 @@ export default function App() {
     setStatusMessage("Dashboard data loaded.");
   }
 
-  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean } = {}) {
+  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean; visualContextOverride?: string } = {}) {
     try {
+      const lockedVisualContext = options.visualContextOverride ?? visualContext;
       const intent = parseVoiceCommandForDate(message);
       const shouldUseParsedIntent = commandId === "cmd_streamweaver_voice_commander" || commandId === "cmd_dsh_calendar_add_mission";
       const forcedVoiceMode = typeof intent.metadata.forceVoiceMode === "string" ? intent.metadata.forceVoiceMode as VoiceCommanderMode : undefined;
@@ -403,8 +409,8 @@ export default function App() {
               voiceMode,
               tenantId: "94371378",
               username: "mtman1987",
-              channel: twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(visualContext) || "mtman1987",
-              visualContext,
+              channel: twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987",
+              visualContext: lockedVisualContext,
               translation: {
                 enabled: voiceMode === "translation",
                 language: translationLanguage
@@ -427,7 +433,7 @@ export default function App() {
       const command = commandMap.get(actualCommandId);
       const translationEnabled = effectiveVoiceMode === "translation";
       const selectedChannel = actualDestination === "twitch"
-        ? (intent.twitchChannel || twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(visualContext) || "mtman1987")
+        ? (intent.twitchChannel || twitchTargetChannel.trim() || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987")
         : "mtman1987";
       const voicePayload = {
         message: outboundMessage,
@@ -436,7 +442,7 @@ export default function App() {
         tenantId: "94371378",
         username: "mtman1987",
         channel: selectedChannel,
-        visualContext,
+        visualContext: lockedVisualContext,
         dispatch: actualDestination === "twitch",
         source: "mountainview-mobile",
         voiceMode: effectiveVoiceMode,
@@ -618,8 +624,8 @@ export default function App() {
       else void startStreamWeaverCommandListener();
       return;
     }
-    setStatusMessage("Glasses AI button captured over BLE. Starting Athena reply loop...");
-    void startReplyLoop("glasses-ai-tap");
+    setStatusMessage("Glasses AI button captured over BLE. Listening for one Athena command...");
+    void listenAndRunVoiceCommander(`Hey Athena glasses AI button pressed. ${voicePromptRef.current}`);
   }
 
   async function startMediaButtonCommandMode() {
@@ -1014,7 +1020,7 @@ export default function App() {
     await runCommand("cmd_streamweaver_voice_commander", voicePrompt);
   }
 
-  async function listenAndRunVoiceCommander(fallbackPrompt = voicePrompt) {
+  async function listenAndRunVoiceCommander(fallbackPrompt = voicePrompt, visualContextOverride?: string) {
     try {
       setIsListening(true);
       announce("Listening for Athena command...");
@@ -1025,13 +1031,13 @@ export default function App() {
       if (!transcript) {
         setStatusMessage("No speech recognized. Sending the typed prompt instead.");
         await playTone("stop");
-        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt);
+        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt, voiceDestination, { visualContextOverride });
         return;
       }
       await playTone("capture");
       setVoicePrompt(transcript);
       await trackMobileEvent("speech-recognition", speech, "recognized");
-      await runCommand("cmd_streamweaver_voice_commander", transcript);
+      await runCommand("cmd_streamweaver_voice_commander", transcript, voiceDestination, { visualContextOverride });
     } catch (error) {
       reportError("Listen and ask Athena", error);
     } finally {
@@ -1236,6 +1242,53 @@ export default function App() {
     } catch (error) {
       reportError("Logo route test", error);
     }
+  }
+
+  function commandForLogo(profile: LogoProfile) {
+    return commandMap.get(profile.command_id);
+  }
+
+  function logoInitials(name: string) {
+    return name
+      .split(/\s+|\/|-/)
+      .map((part) => part.trim()[0])
+      .filter(Boolean)
+      .join("")
+      .slice(0, 3)
+      .toUpperCase();
+  }
+
+  function logoAccent(appId: string) {
+    const accents: Record<string, string> = {
+      streamweaver: "#22d3ee",
+      hearmeout: "#f97316",
+      discordstreamhub: "#8b5cf6",
+      "chat-tag": "#32d583",
+      edenai: "#f43f5e",
+      spmt: "#eab308",
+      twitch: "#a78bfa",
+      discord: "#60a5fa"
+    };
+    return accents[appId] ?? "#20d5ff";
+  }
+
+  function logoVisualContext(profile: LogoProfile) {
+    const command = commandForLogo(profile);
+    return `Visual target locked: ${profile.name} logo. App=${profile.app_id}. Command=${profile.command_id}. Endpoint=${command?.method ?? "POST"} ${command?.url_template ?? "unknown"}.`;
+  }
+
+  function lockLogoTarget(profile: LogoProfile) {
+    const context = logoVisualContext(profile);
+    setLogoTestText(`I am looking at the ${profile.name} logo`);
+    setVisualContext(context);
+    setStatusMessage(`${profile.name} locked as the visual command target.`);
+    appendActivityLog("vision", "Logo target locked", profile.app_id, context);
+  }
+
+  async function listenWithLogoTarget(profile: LogoProfile) {
+    const context = logoVisualContext(profile);
+    lockLogoTarget(profile);
+    await listenAndRunVoiceCommander(`I am looking at the ${profile.name} logo. ${voicePromptRef.current}`, context);
   }
 
   async function saveLogoProfile() {
@@ -1611,17 +1664,36 @@ export default function App() {
           {tab === "logos" && (
             <View style={styles.panel}>
               <Text style={styles.label}>App logo recognition</Text>
-              <Text style={styles.note}>Use this as the first polling test: detected screen labels or vision results route to the matching Spacemountain app command.</Text>
+              <Text style={styles.note}>Open this page on another screen, stare at one logo, press the glasses talk button, and Athena will receive that logo as the visual target.</Text>
               <TextInput value={logoTestText} onChangeText={setLogoTestText} placeholder="Detected logo or OCR text" placeholderTextColor="#7f8ca8" style={styles.input} />
               <Pressable style={styles.primaryButton} onPress={testLogoMatch}><Text style={styles.primaryButtonText}>Test logo route</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={saveLogoProfile}><Text style={styles.secondaryButtonText}>Add StreamWeaver logo profile</Text></Pressable>
-              {logoProfiles.map((profile) => (
-                <View key={profile.id} style={styles.memoryRow}>
-                  <Text style={styles.memoryTitle}>{profile.name}</Text>
-                  <Text style={styles.memoryBody}>{profile.app_id} • {profile.command_id}</Text>
-                  <Text style={styles.memoryBody}>{(profile.aliases ?? []).join(", ")}</Text>
-                </View>
-              ))}
+              <View style={styles.logoBoard}>
+                {logoProfiles.map((profile) => {
+                  const command = commandForLogo(profile);
+                  const accent = logoAccent(profile.app_id);
+                  return (
+                    <View key={profile.id} style={[styles.logoCard, { borderColor: accent }]}>
+                      <Pressable style={[styles.logoMark, { backgroundColor: accent }]} onPress={() => lockLogoTarget(profile)}>
+                        <Text style={styles.logoMarkText}>{logoInitials(profile.name)}</Text>
+                      </Pressable>
+                      <Text style={styles.logoTitle}>{profile.name}</Text>
+                      <Text style={styles.logoMeta}>{profile.app_id}</Text>
+                      <Text style={styles.logoEndpoint}>{command ? `${command.method} ${command.url_template}` : profile.command_id}</Text>
+                      <Text style={styles.logoBody}>Command: {profile.command_id}</Text>
+                      <Text style={styles.logoBody}>Needs: {(command?.requiredContext ?? ["message"]).join(", ")}</Text>
+                      <View style={styles.actionRow}>
+                        <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => lockLogoTarget(profile)}>
+                          <Text style={styles.secondaryButtonText}>Lock</Text>
+                        </Pressable>
+                        <Pressable style={[styles.primaryButton, styles.actionButton]} onPress={() => listenWithLogoTarget(profile)}>
+                          <Text style={styles.primaryButtonText}>Look + talk</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
             </View>
           )}
 
@@ -1770,6 +1842,14 @@ const styles = StyleSheet.create({
   commandGroup: { gap: 6, marginTop: 10 },
   commandGroupTitle: { color: "#22d3ee", fontSize: 14, fontWeight: "900", marginTop: 4 },
   memoryRow: { borderLeftWidth: 2, borderLeftColor: "#20d5ff", paddingLeft: 12, paddingVertical: 8, marginTop: 8 },
+  logoBoard: { gap: 10, marginTop: 8 },
+  logoCard: { borderWidth: 1, borderRadius: 8, padding: 12, backgroundColor: "#0b1020", gap: 7 },
+  logoMark: { width: 68, height: 68, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  logoMarkText: { color: "#061018", fontSize: 22, fontWeight: "900" },
+  logoTitle: { color: "#f8fbff", fontSize: 18, fontWeight: "900" },
+  logoMeta: { color: "#9fb1cc", fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
+  logoEndpoint: { color: "#d9e8ff", fontFamily: "Courier", fontSize: 11, lineHeight: 15 },
+  logoBody: { color: "#9fb1cc", fontSize: 12, lineHeight: 17 },
   hintBox: { padding: 12, borderRadius: 8, backgroundColor: "rgba(117,80,255,.12)", borderWidth: 1, borderColor: "rgba(117,80,255,.32)" },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },
