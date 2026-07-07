@@ -305,7 +305,26 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[PU\d+\] could not finish reading HTTP body from instance: error reading a body from connection/i,
     /\[TTS\] inworld failed .* falling back to EdenAI:/i,
     /\[TTS\] OpenAI failed .* falling back to EdenAI/i,
-    /\[Kick\]\s*.+Pusher connection error .*code:\s*1006/i
+    /\[Kick\]\s*.+Pusher connection error .*code:\s*1006/i,
+    /\[Discord Cleanup\] Message delete failed:/i,
+    /Discord API 404: .*"Unknown Message".*"code":\s*10008/i,
+    /\[(?:\d{2}:\d{2})\] error: Ping timeout\./i,
+    /\[(?:\d{2}:\d{2})\] error: Could not connect to server\. Reconnecting in \d+ seconds?\./i,
+    /\[API Error\]\s*\/api\/tag:\s*400\b.*"error":"You don't have a pass!/i,
+    /Discord fetch failed .*\/members\/codex-test-user:\s*400\b.*NUMBER_TYPE_COERCE/i,
+    /Failed to fetch Twitch user:\s*429 Too Many Requests/i,
+    /Failed to fetch Twitch badges.*Too Many Requests/i,
+    /Failed to load badges for new client: Error: Failed to fetch Twitch badges: Too Many Requests/i,
+    /Failed to fetch Twitch channel info for user:/i,
+    /\[(?:BRB|WalkOn)\].*Failed to fetch Twitch user: Too Many Requests/i,
+    /Twitch profile lookup failed .* Failed to fetch Twitch user: Too Many Requests/i,
+    /\[HTTP [^\]]+\] Sending as 'bot': .* Double or nothing failed\./i,
+    /\[DiscordInteractions\] Signature verification failed/i,
+    /Failed to delete message .*:\s*503\b/i,
+    /<title>503 Server Error<\/title>/i,
+    /<h1>Error: Server Error<\/h1>/i,
+    /<h2>The service you requested is not available at this time\./i,
+    /Fontconfig error: Cannot load default config file/i
   ].some((pattern) => pattern.test(message));
 }
 
