@@ -261,7 +261,7 @@ export function isNonActionableErrorMessage(message: string): boolean {
 
 function isExpectedApplicationResponse(message: string): boolean {
   return [
-    /\/api\/quackverse\/pack:\s*429\b.*(?:Daily pack limit reached|"packsRemaining":0|"dailyLimit":\d+)/i,
+    /\/api\/quackverse\/pack:\s*429\b/i,
     /"packsRemaining":0.*"dailyLimit":\d+/i,
     /\/api\/tag:\s*400\b.*You are not it!/i,
     /\/api\/tag:\s*400\b.*"error":"You are not it![^"]+ is it\."/i,
@@ -324,7 +324,10 @@ function isExpectedApplicationResponse(message: string): boolean {
     /<title>503 Server Error<\/title>/i,
     /<h1>Error: Server Error<\/h1>/i,
     /<h2>The service you requested is not available at this time\./i,
-    /Fontconfig error: Cannot load default config file/i
+    /Fontconfig error: Cannot load default config file/i,
+    /ERROR:dbus\/bus\.cc:\d+.*Failed to connect to the bus/i,
+    /ERROR:third_party\/crashpad\/crashpad\/util\/file\/file_io_posix\.cc:\d+.*\/sys\/devices\/system\/cpu\/cpu\d+\/cpufreq\/scaling_(?:cur|max)_freq/i,
+    /TROUBLESHOOTING:\s*https:\/\/pptr\.dev\/troubleshooting/i
   ].some((pattern) => pattern.test(message));
 }
 
