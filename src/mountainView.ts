@@ -1585,6 +1585,9 @@ class MountainViewContext {
     if (!apiKey || this.env.MOUNTAINVIEW_AI_ROUTER_DISABLED === "true") return heuristicDecision;
     if (Number(heuristicDecision.confidence ?? 0) >= 0.94 && String(heuristicDecision.reason ?? "").includes("previous")) return heuristicDecision;
     const commandMode = context.commandMode === true || readText(context, "mode") === "command" || readText(context, "routeMode") === "command";
+    if (Number(heuristicDecision.confidence ?? 0) >= 0.95 && String(heuristicDecision.commandId ?? "") !== "cmd_streamweaver_voice_commander") {
+      return heuristicDecision;
+    }
 
     const commands = this.listCommands(userId)
       .filter((command) => Number(command.enabled ?? 1) === 1)
@@ -1797,12 +1800,15 @@ class MountainViewContext {
 
     const directMessage = extractDirectMessageIntent(transcript);
     if (directMessage) {
-      const channel = directMessage.channel
-        || readText(visualProfilePayload, "channel")
-        || readText(visualProfilePayload, "twitchUsername")
-        || readText(context, "channel")
-        || extractTwitchChannel(visualContext)
-        || username;
+      const target = resolveMessageTarget({
+        spokenTarget: directMessage.targetName,
+        context,
+        visualContext,
+        visualProfilePayload,
+        username,
+        env: this.env
+      });
+      const channel = directMessage.channel || target.channel;
       const destination = directMessage.destination || requestedDestination || "twitch";
       const commandId = readText(visualProfileContext, "commandId") || readText(visualProfileContext, "command_id") || (destination === "discord"
         ? "cmd_discord_message"
@@ -1820,8 +1826,21 @@ class MountainViewContext {
         appId,
         transcript: directMessage.message,
         confidence: 0.94,
-        reason: "Natural language asked to send/post/type a message, so MountainView selected a concrete chat-send tool instead of generic AI conversation.",
-        payload: { ...visualProfilePayload, destination, voiceMode: "dictation", dispatch: true, channel, channelId: readText(context, "channelId") || readText(visualProfilePayload, "channelId"), tenantId, username, targetName: directMessage.targetName || readText(visualProfilePayload, "targetName"), as: "broadcaster", bridgeToDiscord: true, visualProfile: visualProfileContext }
+        reason: `Natural language asked to send/post/type a message, so MountainView selected a concrete chat-send tool. Target resolved by ${target.reason}.`,
+        payload: { ...visualProfilePayload, destination, voiceMode: "dictation", dispatch: true, channel, channelId: readText(context, "channelId") || readText(visualProfilePayload, "channelId"), tenantId, username, targetName: target.targetName, targetResolution: target, as: "broadcaster", bridgeToDiscord: true, visualProfile: visualProfileContext }
+      });
+    }
+
+    const hearMeOutRoomIntent = extractHearMeOutRoomIntent(transcript);
+    if (hearMeOutRoomIntent) {
+      return voiceDecision({
+        mode: "action",
+        commandId: String(hearMeOutRoomIntent.commandId),
+        appId: "hearmeout",
+        transcript,
+        confidence: Number(hearMeOutRoomIntent.confidence),
+        reason: String(hearMeOutRoomIntent.reason),
+        payload: { ...asRecord(hearMeOutRoomIntent.payload), tenantId, username, platform: "mountainview-glasses" }
       });
     }
 
@@ -2751,7 +2770,7 @@ function hasContextField(payload: JsonRecord, key: string): boolean {
   if (normalized === "roomidorsessionid") return Boolean(readText(payload, "roomId") || readText(payload, "sessionId"));
   if (normalized === "displaynameorpersonid") return Boolean(readText(payload, "displayName") || readText(payload, "personId"));
   if (normalized === "promptorimagebase64") return Boolean(readText(payload, "prompt") || readText(payload, "imageBase64"));
-  return Boolean(readText(payload, key));
+  return Boolean(readTextAnyCase(payload, key));
 }
 
 function preferredMissingField(commandId: string, requirement: string): string {
@@ -2932,6 +2951,62 @@ function extractHearMeOutMediaIntent(text: string, requestedDestination = ""): J
   };
 }
 
+function extractHearMeOutRoomIntent(text: string): JsonRecord | undefined {
+  const lower = text.toLowerCase();
+  if (!/\bhear\s?me\s?out|hearmeout|room|voice room|watch party\b/.test(lower)) return undefined;
+  if (/\b(what|which|list|show|open)\b/.test(lower) && /\b(room|rooms|voice rooms|watch parties)\b/.test(lower)) {
+    return {
+      commandId: "cmd_hearmeout",
+      confidence: 0.96,
+      reason: "User asked for open HearMeOut rooms, so MountainView routed to the session state/listing command instead of treating it as a song request.",
+      payload: {
+        roomId: DEFAULT_HEARMEOUT_ROOM_ID,
+        intent: "list-rooms"
+      }
+    };
+  }
+  const join = text.match(/\b(?:join|enter|open)\s+(?:the\s+)?(?:hear\s?me\s?out\s+)?(?:room|voice room|watch party)?\s*(?:called|named)?\s*["“]?([a-z0-9 _-]{2,48})["”]?/i);
+  if (join?.[1]?.trim()) {
+    const roomName = cleanRoomName(join[1]);
+    return {
+      commandId: "cmd_hearmeout_voice_room",
+      confidence: 0.9,
+      reason: "User asked to join/register into a HearMeOut room.",
+      payload: {
+        roomId: roomName || DEFAULT_HEARMEOUT_ROOM_ID,
+        roomName,
+        intent: "join-room"
+      }
+    };
+  }
+  const create = text.match(/\b(?:create|make|start)\s+(?:a\s+)?(?:new\s+)?(?:hear\s?me\s?out\s+)?(?:room|voice room|watch party)\s*(?:called|named)?\s*["“]?([a-z0-9 _-]{2,48})["”]?/i);
+  if (create?.[1]?.trim()) {
+    const roomName = cleanRoomName(create[1]);
+    return {
+      commandId: "cmd_hearmeout_voice_room",
+      confidence: 0.86,
+      reason: "User asked to create a HearMeOut room. MountainView can register into the room now and carries create-room intent for the next HearMeOut route upgrade.",
+      payload: {
+        roomId: roomName || DEFAULT_HEARMEOUT_ROOM_ID,
+        roomName,
+        createIfMissing: true,
+        intent: "create-room"
+      }
+    };
+  }
+  return undefined;
+}
+
+function cleanRoomName(value: string): string {
+  return value
+    .replace(/\b(?:and|then|please|thanks|thank you|join it|go there)\b.*$/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
 function cleanHearMeOutQuery(text: string): string {
   const cleaned = text
     .replace(/\b(?:hey\s+)?(?:athena|annie)\b/ig, "")
@@ -2970,6 +3045,37 @@ function cleanSpokenTarget(value: string): string {
     .trim();
 }
 
+function resolveMessageTarget(input: {
+  spokenTarget: string;
+  context: JsonRecord;
+  visualContext: string;
+  visualProfilePayload: JsonRecord;
+  username: string;
+  env: NodeJS.ProcessEnv;
+}): { channel: string; targetName: string; reason: string } {
+  const direct = cleanSpokenTarget(input.spokenTarget);
+  const visualProfileChannel = readText(input.visualProfilePayload, "channel") || readText(input.visualProfilePayload, "twitchUsername") || readText(input.visualProfilePayload, "targetChannel");
+  const explicitChannel = readText(input.context, "channel") || readText(input.context, "targetChannel");
+  const visualChannel = extractTwitchChannel(input.visualContext);
+  const visualName = extractKnownTargetName(input.visualContext);
+  const contextName = readText(input.visualProfilePayload, "targetName") || readText(input.visualProfilePayload, "name");
+  const targetName = direct || contextName || visualName || visualProfileChannel || explicitChannel || visualChannel || input.username;
+  const rawChannel = direct || visualProfileChannel || explicitChannel || visualChannel || visualName || input.username;
+  const channel = resolveSpokenTwitchAlias(rawChannel, input.env) || normalizeTwitchChannel(input.username);
+  const reason = direct ? "spoken target"
+    : visualProfileChannel || contextName ? "locked visual profile"
+      : explicitChannel ? "app context"
+        : visualChannel || visualName ? "visual context"
+          : "default username";
+  return { channel, targetName, reason };
+}
+
+function extractKnownTargetName(text: string): string {
+  const lower = text.toLowerCase();
+  const known = ["mamafeisty", "mtman1987", "fatkid4ev4", "lovesnightmare"];
+  return known.find((name) => lower.includes(name)) ?? "";
+}
+
 function normalizeTwitchChannel(value: string): string {
   return value
     .toLowerCase()
@@ -2984,6 +3090,9 @@ function resolveSpokenTwitchAlias(value: string, env: NodeJS.ProcessEnv): string
     fatkids: "fatkid4ev4",
     fatkid: "fatkid4ev4",
     fatkid4eva: "fatkid4ev4",
+    mama: "mamafeisty",
+    mamafeisty: "mamafeisty",
+    mamafiesty: "mamafeisty",
     lovesnightmare: "lovesnightmare",
     lovesnightmares: "lovesnightmare",
   };
@@ -3008,6 +3117,14 @@ function extractTwitchChannel(text: string): string {
 function readText(source: JsonRecord, key: string): string {
   const value = source[key];
   return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+}
+
+function readTextAnyCase(source: JsonRecord, key: string): string {
+  const direct = readText(source, key);
+  if (direct) return direct;
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const found = Object.keys(source).find((sourceKey) => sourceKey.replace(/[^a-z0-9]/gi, "").toLowerCase() === normalized);
+  return found ? readText(source, found) : "";
 }
 
 function normalizeLookupName(value: unknown): string {
