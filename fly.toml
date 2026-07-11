@@ -35,6 +35,14 @@ primary_region = "ord"
   auto_start_machines = true
   min_machines_running = 1
 
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+    timeout = "5s"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1

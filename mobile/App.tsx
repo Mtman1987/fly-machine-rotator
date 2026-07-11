@@ -559,7 +559,7 @@ export default function App() {
     setStatusMessage("Dashboard data loaded.");
   }
 
-  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean; visualContextOverride?: string } = {}) {
+  async function runCommand(commandId: string, message = "MountainView mobile trigger", destination: VoiceDestination = voiceDestination, options: { speakReply?: boolean; visualContextOverride?: string; commandMode?: boolean } = {}) {
     try {
       const lockedVisualContext = options.visualContextOverride ?? visualContext;
       const activeProfilePayload = visualProfilePayload(activeVisualProfile);
@@ -584,6 +584,8 @@ export default function App() {
             context: {
               destination,
               voiceMode,
+              commandMode: options.commandMode === true,
+              routeMode: options.commandMode === true ? "command" : "chat",
               tenantId: "94371378",
               username: "mtman1987",
               channel: twitchTargetChannel.trim() || activeProfileChannel || extractTwitchChannelFromVisualContext(lockedVisualContext) || "mtman1987",
@@ -804,7 +806,7 @@ export default function App() {
     if (now - lastMediaTriggerRef.current < 1500) return;
     lastMediaTriggerRef.current = now;
     setStatusMessage(`${keyName.replace("KEYCODE_", "")} captured. Listening for Athena command...`);
-    await listenAndRunVoiceCommander(`Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`);
+    await listenAndRunVoiceCommander(`Hey Athena glasses button ${keyName} pressed. ${voicePromptRef.current}`, undefined, true);
   }
 
   async function handleBleButtonEvent(event: Record<string, unknown>) {
@@ -1227,7 +1229,7 @@ export default function App() {
     await runCommand("cmd_streamweaver_voice_commander", voicePrompt);
   }
 
-  async function listenAndRunVoiceCommander(fallbackPrompt = voicePrompt, visualContextOverride?: string) {
+  async function listenAndRunVoiceCommander(fallbackPrompt = voicePrompt, visualContextOverride?: string, commandMode = false) {
     try {
       setIsListening(true);
       announce("Listening for Athena command...");
@@ -1238,13 +1240,13 @@ export default function App() {
       if (!transcript) {
         setStatusMessage("No speech recognized. Sending the typed prompt instead.");
         await playTone("stop");
-        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt, voiceDestination, { visualContextOverride });
+        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt, voiceDestination, { visualContextOverride, commandMode });
         return;
       }
       await playTone("capture");
       setVoicePrompt(transcript);
       await trackMobileEvent("speech-recognition", speech, "recognized");
-      await runCommand("cmd_streamweaver_voice_commander", transcript, voiceDestination, { visualContextOverride });
+      await runCommand("cmd_streamweaver_voice_commander", transcript, voiceDestination, { visualContextOverride, commandMode });
     } catch (error) {
       reportError("Listen and ask Athena", error);
     } finally {
@@ -1372,7 +1374,7 @@ export default function App() {
           setVoicePrompt(transcript);
           await trackMobileEvent("streamweaver-command-listener-speech", speech, "recognized");
           setStatusMessage(`Sending spoken command: ${transcript}`);
-          await runCommand("cmd_streamweaver_voice_commander", transcript, "twitch");
+          await runCommand("cmd_streamweaver_voice_commander", transcript, "twitch", { commandMode: true });
         } else {
           setStatusMessage("StreamWeaver command listener active...");
         }

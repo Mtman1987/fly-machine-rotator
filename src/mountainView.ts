@@ -471,7 +471,7 @@ class MountainViewContext {
       response: parseMaybeJson(responseText)
     });
     return {
-      ok: true,
+      ok: false,
       localOnly: true,
       queued: true,
       command: fallback.event,
@@ -490,10 +490,11 @@ class MountainViewContext {
     const transcript = readText(input, "transcript") || readText(input, "message");
     if (!transcript) throw new HttpError(400, "Transcript is required.");
     const context = asRecord(input.context);
-    const decision = this.decideVoiceRoute(userId, transcript, context);
+    const heuristicDecision = this.decideVoiceRoute(userId, transcript, context);
+    const decision = await this.refineVoiceDecisionWithAi(userId, transcript, context, heuristicDecision);
     const decisionPayload = asRecord(decision.payload);
     const decisionTranscript = String(decision.transcript ?? transcript);
-    const payload = {
+    const payload: JsonRecord = {
       ...context,
       ...decisionPayload,
       message: decisionTranscript,
@@ -507,6 +508,14 @@ class MountainViewContext {
         routingDecision: decision
       }
     };
+    const clarification = this.findMissingCommandContext(decision, payload);
+    if (clarification) {
+      Object.assign(payload, clarification);
+      payload.payload = {
+        ...asRecord(payload.payload),
+        ...clarification
+      };
+    }
     if (input.dryRun === true || context.dryRun === true) {
       this.recordGlassesMediaEvent(userId, {
         kind: "voice-route-dry-run",
@@ -517,9 +526,11 @@ class MountainViewContext {
       });
       return { ok: true, dryRun: true, decision, payload };
     }
-    const result = String(decision.commandId) === "cmd_streamweaver_twitch_chat_session"
-      ? this.recordLocalVoiceSessionWorkflow(userId, decision, payload)
-      : await this.executeCommand(userId, String(decision.commandId), payload);
+    const result = asRecord(payload).needsClarification === true
+      ? this.recordVoiceClarificationWorkflow(userId, decision, payload)
+      : String(decision.commandId) === "cmd_streamweaver_twitch_chat_session"
+        ? this.recordLocalVoiceSessionWorkflow(userId, decision, payload)
+        : await this.executeCommand(userId, String(decision.commandId), payload);
     this.applyVoiceSessionDecision(userId, decision, payload, result);
     this.recordGlassesMediaEvent(userId, {
       kind: "voice-route-decision",
@@ -528,7 +539,7 @@ class MountainViewContext {
       status: String(decision.mode ?? "conversation"),
       metadata: { transcript, decision, result: summarizeCommandResult(result) }
     });
-    return { ok: true, decision, result };
+    return { ok: result.ok !== false, decision, result };
   }
 
   listVoiceLogs(userId: string): JsonRecord {
@@ -1565,6 +1576,130 @@ class MountainViewContext {
     return headers;
   }
 
+  private hasSpmtBridgeAuth(): boolean {
+    return Boolean(this.env.SPMT_API_KEY || this.env.SPMT_PLATFORM_API_KEY || this.env.ATHENA_OS_API_KEY);
+  }
+
+  private async refineVoiceDecisionWithAi(userId: string, transcript: string, context: JsonRecord, heuristicDecision: JsonRecord): Promise<JsonRecord> {
+    const apiKey = this.env.OPENAI_API_KEY;
+    if (!apiKey || this.env.MOUNTAINVIEW_AI_ROUTER_DISABLED === "true") return heuristicDecision;
+    if (Number(heuristicDecision.confidence ?? 0) >= 0.94 && String(heuristicDecision.reason ?? "").includes("previous")) return heuristicDecision;
+    const commandMode = context.commandMode === true || readText(context, "mode") === "command" || readText(context, "routeMode") === "command";
+
+    const commands = this.listCommands(userId)
+      .filter((command) => Number(command.enabled ?? 1) === 1)
+      .map((command) => {
+        const profile = getCommandRoutingProfile(String(command.id ?? ""), String(command.app_id ?? ""));
+        return {
+          commandId: command.id,
+          appId: command.app_id,
+          name: command.name,
+          phrase: command.phrase,
+          requiredContext: profile.requiredContext,
+          optionalContext: profile.optionalContext,
+          examples: profile.naturalExamples
+        };
+      });
+    const threshold = Number(this.env.MOUNTAINVIEW_AI_ROUTER_THRESHOLD ?? 0.72);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Number(this.env.MOUNTAINVIEW_AI_ROUTER_TIMEOUT_MS ?? 6000));
+    try {
+      const result = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.env.MOUNTAINVIEW_AI_ROUTER_MODEL || "gpt-4o-mini",
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You route MountainView smart-glasses speech to app commands.",
+                "Return JSON only: {mode, commandId, appId, confidence, transcript, payload, missingFields, reason}.",
+                "Pick one command from the provided command list only.",
+                commandMode
+                  ? "Command mode is active: prefer tool/action routing when any app intent is plausible, and use missingFields instead of guessing required values."
+                  : "Chat mode is active: if the user is just chatting with Athena or intent is ambiguous, choose cmd_streamweaver_voice_commander as conversation.",
+                "If an action is clear but required context is missing, include missingFields and a concise reason."
+              ].join(" ")
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                transcript,
+                context,
+                commandMode,
+                heuristicDecision,
+                spmtBridgeAuthConfigured: this.hasSpmtBridgeAuth(),
+                commands
+              })
+            }
+          ]
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!result.ok) return heuristicDecision;
+      const data = await result.json() as JsonRecord;
+      const content = String(asRecord(Array.isArray(data.choices) ? asRecord(data.choices[0]).message : {}).content ?? "");
+      const ai = parseMaybeJson(content) as JsonRecord;
+      const commandId = readText(ai, "commandId");
+      const command = commands.find((entry) => String(entry.commandId) === commandId);
+      const confidence = Number(ai.confidence ?? 0);
+      if (!command || confidence < threshold) {
+        if (!commandMode) {
+          return voiceDecision({
+            mode: "conversation",
+            commandId: "cmd_streamweaver_voice_commander",
+            appId: "streamweaver",
+            transcript,
+            confidence: Math.max(0.5, confidence),
+            reason: "AI router did not find a command above threshold, so MountainView treated this as just chatting.",
+            payload: {
+              destination: normalizeVoiceDestination(readText(context, "destination")) || "ai",
+              voiceMode: normalizeVoiceMode(readText(context, "voiceMode")) || "reply",
+              tenantId: readText(context, "tenantId") || DEFAULT_STREAMWEAVER_TENANT_ID,
+              username: readText(context, "username") || DEFAULT_STREAMWEAVER_USERNAME,
+              aiRouter: { threshold, rejectedCommandId: commandId || "", rejectedConfidence: confidence }
+            }
+          });
+        }
+        return heuristicDecision;
+      }
+      const payload: JsonRecord = {
+        ...asRecord(ai.payload),
+        aiRouter: {
+          threshold,
+          heuristicCommandId: heuristicDecision.commandId,
+          heuristicConfidence: heuristicDecision.confidence
+        }
+      };
+      const missingFields = Array.isArray(ai.missingFields) ? ai.missingFields.map(String).filter(Boolean) : [];
+      if (missingFields.length) {
+        payload.needsClarification = true;
+        payload.missing = missingFields[0];
+        payload.missingRequirement = missingFields[0];
+        payload.clarificationPrompt = clarificationPromptFor(commandId, String(command.appId), missingFields[0], payload);
+      }
+      return voiceDecision({
+        mode: normalizeDecisionMode(readText(ai, "mode")) || normalizeDecisionMode(String(heuristicDecision.mode ?? "action")) || "action",
+        commandId,
+        appId: String(command.appId),
+        transcript: readText(ai, "transcript") || transcript,
+        confidence,
+        reason: readText(ai, "reason") || "AI router selected this command from the MountainView tool catalog.",
+        payload
+      });
+    } catch {
+      clearTimeout(timeout);
+      return heuristicDecision;
+    }
+  }
+
   private logCommand(userId: string, commandId: string, appId: string, method: string, url: string, status: string, responseStatus: number, durationMs: number, responseBody: string, error: string): void {
     this.db.prepare(`
       INSERT INTO command_logs (id, user_id, command_id, app_id, method, url, status, response_status, duration_ms, response_body, error, created_at)
@@ -1585,6 +1720,41 @@ class MountainViewContext {
       ...asRecord(visualProfileContext.defaultPayload)
     };
     const activeSession = this.getActiveVoiceSession(userId);
+
+    if (activeSession && (String(activeSession.mode) === "pending-command-context" || String(activeSession.mode) === "pending-hearmeout-media-request")) {
+      const pending = asRecord(activeSession.metadata);
+      if (/\b(cancel|never mind|nevermind|stop|forget it)\b/.test(lower)) {
+        return voiceDecision({
+          mode: "action",
+          commandId: "cmd_streamweaver_voice_commander",
+          appId: "streamweaver",
+          transcript: "Cancelled the pending command.",
+          confidence: 0.96,
+          reason: "User cancelled the pending MountainView command clarification.",
+          payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username, endPendingSession: true }
+        });
+      }
+      const pendingCommandId = readText(pending, "commandId") || "cmd_streamweaver_voice_commander";
+      const missingField = readText(pending, "missing") || "message";
+      const pendingPayload = asRecord(pending.payload);
+      const filledValue = cleanPendingContextValue(pendingCommandId, missingField, transcript);
+      return voiceDecision({
+        mode: "action",
+        commandId: pendingCommandId,
+        appId: readText(pending, "appId") || "streamweaver",
+        transcript,
+        confidence: 0.94,
+        reason: "User answered MountainView's previous clarification, so the reply fills the missing command context.",
+        payload: {
+          ...pendingPayload,
+          [missingField]: filledValue,
+          tenantId,
+          username,
+          pendingSessionId: activeSession.id,
+          mediaType: readText(pending, "mediaType") || readText(pendingPayload, "mediaType")
+        }
+      });
+    }
 
     const chatSession = extractTwitchChatSessionIntent(transcript);
 
@@ -1655,6 +1825,19 @@ class MountainViewContext {
       });
     }
 
+    const mediaIntent = extractHearMeOutMediaIntent(transcript, requestedDestination);
+    if (mediaIntent) {
+      return voiceDecision({
+        mode: "action",
+        commandId: String(mediaIntent.commandId),
+        appId: "hearmeout",
+        transcript,
+        confidence: Number(mediaIntent.confidence),
+        reason: String(mediaIntent.reason),
+        payload: { ...asRecord(mediaIntent.payload), tenantId, username }
+      });
+    }
+
     if (
       /\b(be right back|brb|back from break|stop brb|shout\s*out|shoutout)\b/.test(lower) ||
       (/\b(generate|make|create)\b/.test(lower) && /\b(image|picture|photo|avatar)\b/.test(lower))
@@ -1714,6 +1897,17 @@ class MountainViewContext {
     }
 
     if (/\b(remember|save this|save note|make a note|store this)\b/.test(lower) && /\b(athena|memory|context|spmt|space mountain|this)\b/.test(lower)) {
+      if (!this.hasSpmtBridgeAuth()) {
+        return voiceDecision({
+          mode: "action",
+          commandId: "cmd_streamweaver_voice_commander",
+          appId: "streamweaver",
+          transcript,
+          confidence: 0.87,
+          reason: "SPMT/Athena OS bridge auth is not configured, so MountainView routed memory-style speech to the working StreamWeaver voice commander instead of a 401-only SPMT endpoint.",
+          payload: { destination: requestedDestination || "private", voiceMode: requestedMode || "reply", tenantId, username, visualContext }
+        });
+      }
       return voiceDecision({
         mode: "action",
         commandId: "cmd_spmt_athena_memory",
@@ -1726,6 +1920,17 @@ class MountainViewContext {
     }
 
     if (/\b(search|find|look up|what do you remember|recall|history|messages|context)\b/.test(lower) && /\b(athena|spmt|space mountain|memory|commlink|apps?|messages?|context)\b/.test(lower)) {
+      if (!this.hasSpmtBridgeAuth()) {
+        return voiceDecision({
+          mode: "action",
+          commandId: "cmd_streamweaver_voice_commander",
+          appId: "streamweaver",
+          transcript,
+          confidence: 0.84,
+          reason: "SPMT/Athena OS search auth is not configured, so MountainView routed recall/search speech to StreamWeaver's working AI path.",
+          payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username, visualContext }
+        });
+      }
       return voiceDecision({
         mode: "action",
         commandId: "cmd_spmt_athena_search",
@@ -1738,6 +1943,17 @@ class MountainViewContext {
     }
 
     if (/\b(athena os|spmt|space mountain|command bridge|launchpad|shipyard|apps?|control everything|all apps|open app|launch app|dashboard)\b/.test(lower)) {
+      if (!this.hasSpmtBridgeAuth()) {
+        return voiceDecision({
+          mode: "action",
+          commandId: "cmd_streamweaver_voice_commander",
+          appId: "streamweaver",
+          transcript,
+          confidence: 0.82,
+          reason: "SPMT/Athena OS command bridge auth is not configured, so MountainView used StreamWeaver's voice commander as the current Athena runtime.",
+          payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username, visualContext }
+        });
+      }
       return voiceDecision({
         mode: "action",
         commandId: "cmd_spmt_athena_command",
@@ -1760,6 +1976,18 @@ class MountainViewContext {
         confidence: Number(catalog.confidence),
         reason: `Matched command catalog phrase/name: ${catalog.reason}`,
         payload: { tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", routingProfile: profile }
+      });
+    }
+
+    if (!this.hasSpmtBridgeAuth()) {
+      return voiceDecision({
+        mode: "conversation",
+        commandId: "cmd_streamweaver_voice_commander",
+        appId: "streamweaver",
+        transcript,
+        confidence: 0.62,
+        reason: "No high-confidence app action matched and SPMT/Athena OS auth is not configured, so MountainView used StreamWeaver as the active Athena voice runtime.",
+        payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username, visualContext }
       });
     }
 
@@ -1824,9 +2052,87 @@ class MountainViewContext {
     };
   }
 
+  private findMissingCommandContext(decision: JsonRecord, payload: JsonRecord): JsonRecord | null {
+    if (asRecord(payload).needsClarification === true || readText(payload, "pendingSessionId")) return null;
+    const commandId = String(decision.commandId ?? "");
+    const appId = String(decision.appId ?? "");
+    if (!commandId) return null;
+    const effectivePayload = withCommandDefaults(commandId, payload);
+    const missingRequirement = findMissingRequirement(commandId, appId, effectivePayload);
+    if (!missingRequirement) return null;
+    const missing = preferredMissingField(commandId, missingRequirement);
+    return {
+      needsClarification: true,
+      missing,
+      missingRequirement,
+      clarificationPrompt: clarificationPromptFor(commandId, appId, missing, effectivePayload),
+      pendingPayload: scrubPendingPayload(effectivePayload)
+    };
+  }
+
+  private recordVoiceClarificationWorkflow(userId: string, decision: JsonRecord, payload: JsonRecord): JsonRecord {
+    const reply = readText(payload, "clarificationPrompt") || "What would you like me to use for that command?";
+    return {
+      ok: true,
+      localOnly: true,
+      needsClarification: true,
+      status: 202,
+      response: {
+        reply,
+        commandId: String(decision.commandId ?? ""),
+        appId: String(decision.appId ?? ""),
+        missing: readText(payload, "missing") || "query",
+        decision
+      },
+      command: {
+        commandId: String(decision.commandId ?? ""),
+        appId: String(decision.appId ?? ""),
+        status: "waiting-for-context",
+        payload,
+        userId
+      }
+    };
+  }
+
   private applyVoiceSessionDecision(userId: string, decision: JsonRecord, payload: JsonRecord, result: JsonRecord): void {
     const commandId = String(decision.commandId ?? "");
     const action = readText(payload, "action") || readText(asRecord(payload.payload), "action");
+    if (readText(payload, "pendingSessionId")) {
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE voice_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+        .run(now, now, readText(payload, "pendingSessionId"), userId);
+    }
+    if (asRecord(payload).needsClarification === true) {
+      const now = new Date().toISOString();
+      const id = `voice_session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      this.db.prepare("UPDATE voice_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE user_id = ? AND status = 'active'")
+        .run(now, now, userId);
+      this.db.prepare(`
+        INSERT INTO voice_sessions (id, user_id, mode, target_app, target_channel, target_name, status, metadata_json, started_at, updated_at, ended_at)
+        VALUES (?, ?, 'pending-command-context', ?, ?, ?, 'active', ?, ?, ?, '')
+      `).run(id, userId, String(decision.appId ?? "mountainview"), readText(payload, "channel") || String(decision.appId ?? "mountainview"), readText(payload, "missing") || "query", JSON.stringify({
+        commandId,
+        appId: String(decision.appId ?? ""),
+        mediaType: readText(payload, "mediaType"),
+        missing: readText(payload, "missing") || "query",
+        originalTranscript: readText(payload, "transcript"),
+        payload: asRecord(payload.pendingPayload),
+        result: summarizeCommandResult(result)
+      }), now, now);
+      this.recordGlassesMediaEvent(userId, {
+        kind: "voice-session-start",
+        source: "mountainview-router",
+        targetApp: String(decision.appId ?? "mountainview"),
+        status: "waiting-for-context",
+        metadata: { sessionId: id, commandId, missing: readText(payload, "missing") || "query", payload, result: summarizeCommandResult(result) }
+      });
+      return;
+    }
+    if (asRecord(payload).endPendingSession === true) {
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE voice_sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE user_id = ? AND status = 'active'")
+        .run(now, now, userId);
+    }
     if (commandId === "cmd_streamweaver_twitch_chat_session" && action === "start") {
       const now = new Date().toISOString();
       const channel = readText(payload, "channel") || DEFAULT_STREAMWEAVER_USERNAME;
@@ -2413,6 +2719,90 @@ function scoreCommandContextFit(command: JsonRecord, context: JsonRecord): numbe
   return score;
 }
 
+function findMissingRequirement(commandId: string, appId: string, payload: JsonRecord): string {
+  const profile = getCommandRoutingProfile(commandId, appId);
+  for (const requirement of profile.requiredContext) {
+    const alternatives = requirement.toLowerCase().split(/\s+or\s+/);
+    if (!alternatives.some((key) => hasContextField(payload, key))) return requirement;
+  }
+  if (commandId === "cmd_hearmeout_song_request" || commandId === "cmd_hearmeout_audiobook_request" || commandId === "cmd_hearmeout_watch_request") {
+    const query = readText(payload, "query") || readText(payload, "message") || readText(payload, "transcript");
+    if (isGenericMediaQuery(query)) return "query";
+  }
+  if (commandId === "cmd_chat_tag_tag" || commandId === "cmd_chat_tag") {
+    if (!readText(payload, "targetUserId") && !readText(payload, "targetName")) return "targetName";
+  }
+  if (commandId === "cmd_dsh_calendar_add_mission") {
+    if (!readText(payload, "missionName")) return "missionName";
+    if (!readText(payload, "missionDate")) return "missionDate";
+  }
+  if (commandId === "cmd_streamweaver_twitch_chat_send" || commandId === "cmd_discord_message" || commandId === "cmd_hearmeout_discord_message") {
+    const message = readText(payload, "message") || readText(payload, "content");
+    if (!message || /^(send|post|type|message)$/i.test(message)) return "message";
+  }
+  return "";
+}
+
+function hasContextField(payload: JsonRecord, key: string): boolean {
+  const normalized = key.replace(/\s+/g, "");
+  if (normalized === "imagebase64orimageurl") return Boolean(readText(payload, "imageBase64") || readText(payload, "imageUrl"));
+  if (normalized === "targetuseridortargetname") return Boolean(readText(payload, "targetUserId") || readText(payload, "targetName"));
+  if (normalized === "channelidorserverid") return Boolean(readText(payload, "channelId") || readText(payload, "serverId"));
+  if (normalized === "roomidorsessionid") return Boolean(readText(payload, "roomId") || readText(payload, "sessionId"));
+  if (normalized === "displaynameorpersonid") return Boolean(readText(payload, "displayName") || readText(payload, "personId"));
+  if (normalized === "promptorimagebase64") return Boolean(readText(payload, "prompt") || readText(payload, "imageBase64"));
+  return Boolean(readText(payload, key));
+}
+
+function preferredMissingField(commandId: string, requirement: string): string {
+  const normalized = requirement.toLowerCase();
+  if (commandId.startsWith("cmd_hearmeout") && normalized.includes("query")) return "query";
+  if (commandId.startsWith("cmd_chat_tag") && normalized.includes("target")) return "targetName";
+  if (commandId.startsWith("cmd_dsh_calendar") && normalized.includes("missiondate")) return "missionDate";
+  if (normalized.includes("message") || normalized.includes("content")) return "message";
+  if (normalized.includes("image")) return "imageBase64";
+  if (normalized.includes("channel")) return "channelId";
+  return requirement.split(/\s+or\s+/i)[0].trim();
+}
+
+function clarificationPromptFor(commandId: string, appId: string, missing: string, payload: JsonRecord): string {
+  if (commandId.startsWith("cmd_hearmeout")) {
+    const mediaType = readText(payload, "mediaType");
+    if (mediaType === "watch" || commandId.includes("watch")) return "What would you like to watch, Commander?";
+    if (mediaType === "audiobook" || commandId.includes("audiobook")) return "What audiobook would you like, Commander?";
+    return "What song would you like, Commander?";
+  }
+  if (commandId.startsWith("cmd_chat_tag") && missing.toLowerCase().includes("target")) return "Who should I target in Chat-Tag, Commander?";
+  if (commandId.startsWith("cmd_dsh_calendar")) {
+    if (missing === "missionDate") return "What date should I put on the calendar, Commander?";
+    if (missing === "missionName") return "What should I call the calendar event, Commander?";
+    return "What calendar detail is missing, Commander?";
+  }
+  if (commandId === "cmd_streamweaver_twitch_chat_send") return "What should I send to Twitch chat, Commander?";
+  if (appId === "discordstreamhub" || commandId === "cmd_discord_message") return "What should I send to Discord, Commander?";
+  if (missing.toLowerCase().includes("image")) return "I need an image first. Should I capture or upload one?";
+  return `What ${missing} should I use for that command, Commander?`;
+}
+
+function scrubPendingPayload(payload: JsonRecord): JsonRecord {
+  const copy = { ...payload };
+  delete copy.routingDecision;
+  delete copy.needsClarification;
+  delete copy.clarificationPrompt;
+  delete copy.pendingPayload;
+  return copy;
+}
+
+function cleanPendingContextValue(commandId: string, missingField: string, transcript: string): string {
+  if (commandId.startsWith("cmd_hearmeout") && missingField === "query") return cleanHearMeOutQuery(transcript) || transcript.trim();
+  return transcript.trim();
+}
+
+function isGenericMediaQuery(value: string): boolean {
+  const cleaned = cleanHearMeOutQuery(value || value.trim());
+  return !cleaned || /^(a|the|some)?\s*(song|music|track|playlist|audiobook|audio book|book|movie|video|show|episode)?\s*$/i.test(cleaned);
+}
+
 function summarizeCommandResult(result: JsonRecord): JsonRecord {
   const response = asRecord(result.response);
   return {
@@ -2431,6 +2821,10 @@ function normalizeVoiceDestination(value: string): string {
 
 function normalizeVoiceMode(value: string): string {
   return ["reply", "dictation", "translation"].includes(value) ? value : "";
+}
+
+function normalizeDecisionMode(value: string): "conversation" | "action" | "" {
+  return value === "conversation" || value === "action" ? value : "";
 }
 
 function tokenizeCommandText(value: string): string[] {
@@ -2481,6 +2875,77 @@ function extractDirectMessageIntent(text: string): { message: string; targetName
   }
 
   return undefined;
+}
+
+function extractHearMeOutMediaIntent(text: string, requestedDestination = ""): JsonRecord | undefined {
+  const lower = text.toLowerCase();
+  const mentionsHearMeOut = /\bhear\s?me\s?out|hearmeout\b/.test(lower) || requestedDestination === "hearmeout";
+  const hasMediaWord = /\b(song|music|playlist|track|album|audiobook|audio book|book|movie|video|show|episode|watch party|queue)\b/.test(lower);
+  const hasMediaVerb = /\b(play|resume|continue|restart|start|pause|hold|skip|next|stop|end|queue|request|add|put on|throw on|how about|how 'bout|listen to|watch)\b/.test(lower);
+  if (!mentionsHearMeOut && !(hasMediaWord && hasMediaVerb)) return undefined;
+
+  if (/\b(pause|hold|skip|next|stop|end|resume|continue|restart|where we left off)\b/.test(lower)) {
+    return {
+      commandId: /\b(movie|video|show|episode|watch party)\b/.test(lower) ? "cmd_hearmeout_watch_control" : "cmd_hearmeout_music_control",
+      confidence: 0.9,
+      reason: "Natural media-control language maps to a HearMeOut play/pause/resume/skip control command.",
+      payload: {
+        action: extractMusicAction(text),
+        platform: "mountainview-glasses"
+      }
+    };
+  }
+
+  const mediaType = /\b(audiobook|audio book|book)\b/.test(lower) ? "audiobook"
+    : /\b(movie|video|show|episode|watch party)\b/.test(lower) ? "watch"
+      : "song";
+  const query = cleanHearMeOutQuery(text);
+  const isGeneric = !query || /^(a|the|some)?\s*(song|music|track|playlist|audiobook|audio book|book|movie|video|show|episode)?\s*$/i.test(query);
+  if (isGeneric) {
+    return {
+      commandId: mediaType === "audiobook" ? "cmd_hearmeout_audiobook_request" : mediaType === "watch" ? "cmd_hearmeout_watch_request" : "cmd_hearmeout_song_request",
+      confidence: 0.86,
+      reason: "User asked for a HearMeOut media action but did not provide the title yet, so MountainView opened a clarification turn.",
+      payload: {
+        needsClarification: true,
+        missing: "query",
+        mediaType,
+        platform: "mountainview-glasses",
+        clarificationPrompt: mediaType === "watch"
+          ? "What would you like to watch, Commander?"
+          : mediaType === "audiobook"
+            ? "What audiobook would you like, Commander?"
+            : "What song would you like, Commander?"
+      }
+    };
+  }
+
+  return {
+    commandId: mediaType === "audiobook" ? "cmd_hearmeout_audiobook_request" : mediaType === "watch" ? "cmd_hearmeout_watch_request" : "cmd_hearmeout_song_request",
+    confidence: 0.91,
+    reason: "Natural media request language maps to a concrete HearMeOut queue request.",
+    payload: {
+      query,
+      mediaType: mediaType === "song" ? "" : mediaType,
+      platform: "mountainview-glasses"
+    }
+  };
+}
+
+function cleanHearMeOutQuery(text: string): string {
+  const cleaned = text
+    .replace(/\b(?:hey\s+)?(?:athena|annie)\b/ig, "")
+    .replace(/\bhear\s?me\s?out|hearmeout\b/ig, "")
+    .replace(/\b(?:app|through|from|in|on|please|thank you|thanks|commander)\b/ig, " ")
+    .replace(/\b(?:can you|could you|would you|i want you to|how about|how 'bout)\b/ig, " ")
+    .replace(/\b(?:play|resume|continue|restart|start|queue|request|add|put on|throw on|listen to|watch)\b/ig, " ")
+    .replace(/\b(?:me|my|a|the|some)\b/ig, " ")
+    .replace(/\b(?:song|music|track|playlist|audiobook|audio book|book|movie|video|show|episode|watch party)\b/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["“]+|["”]+$/g, "")
+    .trim();
+  return /^(me|my|a|the|some|please)$/i.test(cleaned) ? "" : cleaned;
 }
 
 function extractTwitchChatSessionIntent(text: string): { targetName: string; channel: string; readAloud: boolean } | undefined {
