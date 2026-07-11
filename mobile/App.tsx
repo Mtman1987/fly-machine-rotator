@@ -124,10 +124,10 @@ const apiBaseUrl = Constants.expoConfig?.extra?.mountainViewApiBaseUrl ?? "https
 const bleLastDeviceKey = "mountainview_last_ble_device";
 const defaultAimbAddress = "C8:47:8C:15:60:01";
 const voiceRoutes: { id: VoiceDestination; label: string; detail: string }[] = [
-  { id: "ai", label: "Athena OS", detail: "Control all SpaceMountain apps" },
-  { id: "private", label: "Memory", detail: "Save to Athena context" },
-  { id: "twitch", label: "Twitch", detail: "Send through StreamWeaver" },
-  { id: "discord", label: "Discord", detail: "Post through Discord routes" }
+  { id: "ai", label: "Athena", detail: "Chat or choose an action" },
+  { id: "private", label: "Memory", detail: "Save private notes" },
+  { id: "twitch", label: "Twitch", detail: "Send via StreamWeaver" },
+  { id: "discord", label: "Discord", detail: "Send via Discord routes" }
 ];
 const voiceModes: { id: VoiceCommanderMode; label: string; detail: string }[] = [
   { id: "reply", label: "Reply loop", detail: "Listen, answer, reopen mic" },
@@ -153,7 +153,7 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLogRecord[]>([]);
   const [visualPreview, setVisualPreview] = useState<VisualPreview | null>(null);
   const [logFilter, setLogFilter] = useState<ActivityLogRecord["category"] | "all">("all");
-  const [statusMessage, setStatusMessage] = useState("Ready. Leave owner password blank and tap Connect.");
+  const [statusMessage, setStatusMessage] = useState("Ready. Connect, pair any Bluetooth headset, and talk to Athena.");
   const [note, setNote] = useState("");
   const [deviceName, setDeviceName] = useState("Companion Tablet");
   const [pollInterval, setPollInterval] = useState("180");
@@ -730,10 +730,10 @@ export default function App() {
         bleAddress: address,
         notifications
       }));
-      setBleAutoConnectState("AiMB bridge armed");
-      setStatusMessage("AiMB bridge armed. Glasses button events are subscribed.");
+      setBleAutoConnectState("Bluetooth controls armed");
+      setStatusMessage("Bluetooth controls armed. Headset/media button events are subscribed.");
       setLog(JSON.stringify({ reason, connect, services, notifications }, null, 2));
-      appendActivityLog("ble", "AiMB bridge armed", "armed", { reason, address, connect, services, notifications });
+      appendActivityLog("ble", "Bluetooth controls armed", "armed", { reason, address, connect, services, notifications });
       await trackMobileEvent("ble-auto-arm", { reason, address, connect, services, notifications }, "armed");
       return true;
     } catch (error) {
@@ -781,10 +781,10 @@ export default function App() {
       await SecureStore.setItemAsync(bleLastDeviceKey, address);
       setGlassesStatus((current) => ({ ...current, bleAddress: address, autoLaunch: true }));
       setLog(JSON.stringify(result, null, 2));
-      setStatusMessage(`MountainView will try to open when ${address} connects.`);
-      appendActivityLog("ble", "Glasses auto-open enabled", address, result);
+      setStatusMessage(`MountainView will try to open when Bluetooth device ${address} connects.`);
+      appendActivityLog("ble", "Bluetooth auto-open enabled", address, result);
     } catch (error) {
-      reportError("Enable glasses auto-open", error);
+      reportError("Enable Bluetooth auto-open", error);
     }
   }
 
@@ -800,7 +800,7 @@ export default function App() {
       "KEYCODE_MEDIA_NEXT",
       "KEYCODE_MEDIA_PREVIOUS"
     ]);
-    setLog((current) => `Glasses button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
+    setLog((current) => `Bluetooth button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
     await trackMobileEvent("media-button", { event, commandMode: mediaCommandModeRef.current }, mediaCommandModeRef.current ? "command-mode" : "observed");
     if (!mediaCommandModeRef.current || !triggerKeys.has(keyName)) return;
     if (now - lastMediaTriggerRef.current < 1500) return;
@@ -813,30 +813,30 @@ export default function App() {
     const action = String(event.action ?? "unknown");
     const now = Date.now();
     appendActivityLog("ble", "BLE button", action, event);
-    setLog((current) => `BLE glasses button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
+    setLog((current) => `BLE button event\n${JSON.stringify(event, null, 2)}\n\n${current}`);
     await trackMobileEvent("ble-button", { event }, action);
     if (action !== "ai-talk-tap" && action !== "ai-talk-long-start") return;
     if (now - lastBleAiTriggerRef.current < 2500) return;
     lastBleAiTriggerRef.current = now;
     if (action === "ai-talk-long-start") {
-      setStatusMessage("Glasses long press captured. Toggling StreamWeaver command gate...");
+      setStatusMessage("Bluetooth long press captured. Toggling StreamWeaver command gate...");
       if (voiceMode === "reply") setVoiceMode("dictation");
       if (streamCommandListenerActiveRef.current) stopStreamWeaverCommandListener();
       else void startStreamWeaverCommandListener();
       return;
     }
-    setStatusMessage("Glasses AI button captured over BLE. Listening for one Athena command...");
+    setStatusMessage("Bluetooth talk button captured. Listening for one Athena command...");
     void listenAndRunVoiceCommander(`Hey Athena glasses AI button pressed. ${voicePromptRef.current}`);
   }
 
   async function startMediaButtonCommandMode() {
     try {
-      announce("Starting glasses media button command mode...");
+      announce("Starting headset media button command mode...");
       const result = await metaWearables.startMediaButtonCommandMode();
       setMediaCommandMode(true);
       setLog(JSON.stringify(result, null, 2));
       await trackMobileEvent("media-button-command-mode", result, "active");
-      setStatusMessage("Command mode active. Press the glasses play/pause button to talk to Athena.");
+      setStatusMessage("Command mode active. Press the headset play/pause button to talk to Athena.");
     } catch (error) {
       reportError("Media button command mode", error);
     }
@@ -978,11 +978,11 @@ export default function App() {
 
   async function checkGlassesSdk() {
     try {
-      announce("Checking Android glasses bridge...");
+      announce("Checking Android Bluetooth bridge...");
       const status = await metaWearables.getSdkStatus();
       setGlassesStatus(status);
       setLog(JSON.stringify(status, null, 2));
-      setStatusMessage(`Glasses bridge status: ${String(status.state ?? "checked")}`);
+      setStatusMessage(`Bluetooth bridge status: ${String(status.state ?? "checked")}`);
     } catch (error) {
       reportError("Bridge status", error);
     }
@@ -990,30 +990,30 @@ export default function App() {
 
   async function registerGlasses() {
     try {
-      announce("Starting glasses registration...");
+      announce("Starting Bluetooth bridge registration...");
       const result = await metaWearables.startRegistration();
       setGlassesStatus(result);
       setLog(JSON.stringify(result, null, 2));
       setStatusMessage(`Registration result: ${String(result.state ?? "complete")}`);
     } catch (error) {
-      reportError("Register glasses", error);
+      reportError("Register Bluetooth device", error);
     }
   }
 
   async function captureGlassesPhoto() {
     try {
-      announce("Requesting glasses photo...");
+      announce("Requesting direct device photo diagnostic...");
       const result = await metaWearables.capturePhoto();
       setLog(JSON.stringify(result, null, 2));
       setStatusMessage(`Photo request result: ${String(result.state ?? "complete")}`);
     } catch (error) {
-      reportError("Capture glasses photo", error);
+      reportError("Capture direct device photo", error);
     }
   }
 
   async function startGlassesAudioStream() {
     try {
-      announce("Starting glasses audio relay...");
+      announce("Starting direct device audio relay diagnostic...");
       const result = await metaWearables.startAudioStream();
       setLog(JSON.stringify(result, null, 2));
       await request("/glasses/media-event", {
@@ -1028,7 +1028,7 @@ export default function App() {
 
   async function startGlassesVideoStream() {
     try {
-      announce("Starting glasses video relay...");
+      announce("Starting direct device video relay diagnostic...");
       const result = await metaWearables.startVideoStream();
       setLog(JSON.stringify(result, null, 2));
       await request("/glasses/media-event", {
@@ -1145,7 +1145,7 @@ export default function App() {
           }
         })
       });
-      setStatusMessage(devices.length > 0 ? `Found ${devices.length} BLE devices. Tap the glasses row to connect.` : "No BLE devices found. Put glasses in pairing mode and scan again.");
+      setStatusMessage(devices.length > 0 ? `Found ${devices.length} BLE devices. Tap a row to inspect/connect.` : "No BLE devices found. Pair the headset in Android Bluetooth or scan again.");
     } catch (error) {
       reportError("BLE scan", error);
     }
@@ -1173,7 +1173,7 @@ export default function App() {
           }
         })
       });
-      setStatusMessage(devices.length > 0 ? `Found ${devices.length} paired Bluetooth devices. Tap the glasses row to inspect/connect.` : "No paired Bluetooth devices returned by Android.");
+      setStatusMessage(devices.length > 0 ? `Found ${devices.length} paired Bluetooth devices. Tap a row to inspect/connect.` : "No paired Bluetooth devices returned by Android.");
     } catch (error) {
       reportError("Paired Bluetooth lookup", error);
     }
@@ -1208,7 +1208,7 @@ export default function App() {
       announce("Subscribing to BLE button/audio notifications...");
       const result = await metaWearables.subscribeGenericBleNotifications();
       setLog(JSON.stringify(result, null, 2));
-      setStatusMessage("BLE notifications subscribed. Press the glasses AI/talk button, then load the BLE log.");
+      setStatusMessage("BLE notifications subscribed. Press the device talk/media button, then load the BLE log.");
     } catch (error) {
       reportError("BLE notification subscribe", error);
     }
@@ -1580,8 +1580,8 @@ export default function App() {
                     <Text style={[styles.statusPillText, replyLoopActive ? styles.statusPillTextActive : undefined]}>{replyLoopActive ? "Conversation on" : "Ready"}</Text>
                   </View>
                 </View>
-                <Text style={styles.heroTitle}>What do you want Athena to do?</Text>
-                <Text style={styles.heroCopy}>Use natural speech for SpaceMountain, StreamWeaver, HearMeOut, Chat-Tag, DiscordStreamHub, and saved visual targets.</Text>
+                <Text style={styles.heroTitle}>Talk to Athena</Text>
+                <Text style={styles.heroCopy}>Use any Bluetooth headset for voice. MountainView uses the phone mic/camera when the glasses do not expose camera or mic control directly.</Text>
                 <View style={styles.targetPanel}>
                   <View style={styles.targetHeader}>
                     <Ionicons name="eye-outline" size={16} color="#22d3ee" />
@@ -1611,10 +1611,10 @@ export default function App() {
                 </View>
                 <View style={styles.actionRow}>
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={saveVisualProfileFromImage}>
-                    <Text style={styles.secondaryButtonText}>Save what I see</Text>
+                    <Text style={styles.secondaryButtonText}>Use phone camera</Text>
                   </Pressable>
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={enableGlassesAutoOpen}>
-                    <Text style={styles.secondaryButtonText}>Open on glasses connect</Text>
+                    <Text style={styles.secondaryButtonText}>Auto-open on Bluetooth</Text>
                   </Pressable>
                 </View>
               </View>
@@ -1637,8 +1637,9 @@ export default function App() {
                 </View>
               </View>
               <View style={styles.grid}>
-                <StatusCard label="Glasses" value={String(glassesStatus.state ?? "native bridge")} tone="warn" detail={String(glassesStatus.bleAddress ?? defaultAimbAddress)} />
-                <StatusCard label="Athena" value="Cloud ready" tone="good" detail="Commands route through SPMT and the app registry." />
+                <StatusCard label="Input" value="Bluetooth headset" tone="good" detail="Talk button/media buttons can trigger Athena when Android exposes them." />
+                <StatusCard label="Camera" value="Phone camera" tone="good" detail="Image and vision features use the phone camera until direct glasses photos are mapped." />
+                <StatusCard label="Advanced" value={String(glassesStatus.state ?? "optional")} tone="warn" detail="BLE/RDGlass diagnostics are only for button mapping and recovery." />
               </View>
             </>
           )}
@@ -1839,7 +1840,7 @@ export default function App() {
                 autoCapitalize="none"
                 style={styles.input}
               />
-              <Pressable style={styles.primaryButton} onPress={saveVisualProfileFromImage}><Text style={styles.primaryButtonText}>Save current screen as target</Text></Pressable>
+              <Pressable style={styles.primaryButton} onPress={saveVisualProfileFromImage}><Text style={styles.primaryButtonText}>Save target with phone camera</Text></Pressable>
               {visualProfiles.length === 0 ? (
                 <View style={styles.hintBox}>
                   <Text style={styles.memoryTitle}>No saved visual targets yet</Text>
@@ -1918,11 +1919,11 @@ export default function App() {
 
           {tab === "relay" && (
               <View style={styles.panel}>
-                <Text style={styles.label}>StreamWeaver relay</Text>
-                <Text style={styles.note}>Use Smart vision capture to lock the current Twitch stream/app context, then say things like send message "hello mama" while Twitch dictation is selected.</Text>
-                <Pressable style={styles.primaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.primaryButtonText}>Smart vision capture</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(true)}><Text style={styles.secondaryButtonText}>Capture and save profile</Text></Pressable>
-              <Pressable style={styles.primaryButton} onPress={sendImageToStreamWeaver}><Text style={styles.primaryButtonText}>Send image/frame</Text></Pressable>
+                <Text style={styles.label}>Phone camera relay</Text>
+                <Text style={styles.note}>Use the phone camera for vision, image relay, and saved screen targets. Direct glasses photo capture stays in Advanced until the command channel is fully mapped.</Text>
+                <Pressable style={styles.primaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.primaryButtonText}>Analyze phone image</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(true)}><Text style={styles.secondaryButtonText}>Analyze and save target</Text></Pressable>
+              <Pressable style={styles.primaryButton} onPress={sendImageToStreamWeaver}><Text style={styles.primaryButtonText}>Send phone image to StreamWeaver</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_image_generate", voicePrompt)}><Text style={styles.secondaryButtonText}>Generate StreamWeaver image</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_streamweaver_image_regenerate", voicePrompt)}><Text style={styles.secondaryButtonText}>Regenerate from context</Text></Pressable>
               <Text style={styles.note}>Images can be analyzed by EdenAI, saved as profile context, routed to a companion device, or generated through StreamWeaver.</Text>
@@ -1989,8 +1990,8 @@ export default function App() {
             <View style={styles.panel}>
               <Text style={styles.label}>Live stream controls</Text>
               <Pressable style={styles.primaryButton} onPress={() => runCommand("cmd_stream_start", "Start stream")}><Text style={styles.primaryButtonText}>Start stream</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={startGlassesAudioStream}><Text style={styles.secondaryButtonText}>Start glasses audio relay</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={startGlassesVideoStream}><Text style={styles.secondaryButtonText}>Start glasses video relay</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => listenAndRunVoiceCommander()}><Text style={styles.secondaryButtonText}>Use headset voice command</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => smartVisionCapture(false)}><Text style={styles.secondaryButtonText}>Send phone camera context</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={askStreamWeaverVoiceCommander}><Text style={styles.secondaryButtonText}>Run StreamWeaver voice commander</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_room", "Join voice room")}><Text style={styles.secondaryButtonText}>Join HearMeOut voice room</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_stream_stop", "Stop stream")}><Text style={styles.secondaryButtonText}>Stop stream</Text></Pressable>
@@ -2017,7 +2018,7 @@ export default function App() {
           {tab === "logs" && (
             <View style={styles.panel}>
               <Text style={styles.label}>Activity logs</Text>
-              <Text style={styles.note}>API calls, BLE signals, voice intents, calendar parsing, flashlight attempts, and vision actions are kept here for mapping the glasses.</Text>
+              <Text style={styles.note}>API calls, Bluetooth button events, voice intents, calendar parsing, flashlight diagnostics, and phone-camera vision actions are kept here for testing.</Text>
               <View style={styles.inlineOptions}>
                 {(["all", "api", "ble", "voice", "calendar", "flashlight", "vision", "system"] as const).map((category) => (
                   <Pressable key={category} style={[styles.optionChip, logFilter === category && styles.optionChipActive]} onPress={() => setLogFilter(category)}>
@@ -2049,7 +2050,8 @@ export default function App() {
 
           {tab === "devices" && (
             <View style={styles.panel}>
-              <Text style={styles.label}>Device mesh</Text>
+              <Text style={styles.label}>Devices and Bluetooth</Text>
+              <Text style={styles.note}>Normal mode works with any Bluetooth headset. Advanced BLE tools are only needed if you want headset buttons to trigger Athena or to map AiMB/RDGlass-specific events.</Text>
               <TextInput value={deviceName} onChangeText={setDeviceName} placeholder="Device name" placeholderTextColor="#7f8ca8" style={styles.input} />
               <Pressable style={styles.primaryButton} onPress={saveDevice}><Text style={styles.primaryButtonText}>Register companion device</Text></Pressable>
               {devices.map((device) => (
