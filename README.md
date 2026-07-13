@@ -2,7 +2,11 @@
 
 Small external Node.js/TypeScript worker that rotates one active Fly Machine per managed app and continuously monitors Fly logs for unique errors. It is designed for stateful chat bots where duplicate active workers can produce duplicate messages.
 
-The worker never deletes Machines. It starts a stopped standby, waits until that Machine is healthy, and only then stops the previous active Machine. If it finds more than one active Machine, it stops extras and reports the correction.
+The current production-design audit, read-only repair simulation, volume topology, safety findings, and staged roadmap are documented in [docs/PRODUCTION_DESIGN_AND_SIMULATION.md](docs/PRODUCTION_DESIGN_AND_SIMULATION.md).
+
+The worker never deletes Machines. For an app whose active Machine has no volume, it starts a stopped standby, waits until that Machine is healthy, and only then stops the previous active Machine. For an app whose active Machine has a volume, it currently performs a lease-protected in-place stop/start so the same volume remains attached; this clears ephemeral root state but includes downtime. If it finds more than one active Machine, it stops extras and reports the correction.
+
+Important: the current AI review cycle also performs a real rotation before generating proposals. Treat repair/review automation as experimental until the production-design gates in the linked document are implemented.
 
 ## Behavior
 
@@ -11,14 +15,14 @@ For each app in `FLY_ROTATOR_APPS`:
 1. List Machines with `GET /v1/apps/{app_name}/machines`.
 2. Acquire a per-app lock using a Fly Machine lease on the active Machine.
 3. Pick the current active Machine from `started`, `starting`, or `running` states.
-4. Pick a stopped standby from `stopped`, `suspended`, or `created` states.
-5. If no standby exists, create one from the active Machine `config` with `skip_launch: true`.
-6. Start the standby with `POST /v1/apps/{app_name}/machines/{machine_id}/start`.
-7. Poll `GET /v1/apps/{app_name}/machines/{machine_id}` until the Machine is active and health checks pass.
+4. If the active Machine has a volume, stop/start that same Machine under its lease and verify it becomes healthy again.
+5. Otherwise, pick a standby from `stopped` or `suspended` states.
+6. If no standby exists, create and launch one from the active Machine configuration; otherwise start the existing standby.
+7. Poll `GET /v1/apps/{app_name}/machines/{machine_id}` until the Machine is active and its available health checks pass.
 8. Stop the previous active Machine with `POST /v1/apps/{app_name}/machines/{machine_id}/stop`.
 9. Verify exactly one Machine is active. If there are extras, stop extras and report a warning.
 10. Send a Discord summary with before/after Machine IDs and states.
-11. When deployed with the default `monitor` command, the long-lived machine also auto-runs rotations every 12 hours and retries failed rotations after 1 hour.
+11. When deployed with the default `monitor` command, the long-lived Machine also auto-runs rotations every 12 hours and retries failed rotations after 1 hour.
 12. Rotation status and log-monitor failures are merged into one rolling Discord webhook message with a downloadable 24-hour log attachment.
 
 The worker uses the official Fly Machines REST API documented at:
