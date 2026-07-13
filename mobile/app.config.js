@@ -1,7 +1,7 @@
 const app = require("./app.json");
 
 module.exports = () => {
-  const metaAppId = process.env.MOUNTAINVIEW_META_APP_ID || "mountainview-meta-app-id-not-set";
+  const bridgeAppId = process.env.MOUNTAINVIEW_BRIDGE_APP_ID || process.env.MOUNTAINVIEW_META_APP_ID || "mountainview-bridge-app-id-not-set";
   const enableMetaDat = process.env.MOUNTAINVIEW_ENABLE_META_DAT === "true";
   return {
     ...app.expo,
@@ -30,7 +30,7 @@ module.exports = () => {
       ],
       config: {
         ...(app.expo.android?.config || {}),
-        metaWearablesAndroidAppId: metaAppId
+        metaWearablesAndroidAppId: bridgeAppId
       }
     },
     plugins: [
@@ -41,7 +41,7 @@ module.exports = () => {
         "./plugins/withMetaWearablesAndroid",
         {
           mwdatVersion: "0.7.0",
-          applicationId: metaAppId,
+          applicationId: bridgeAppId,
           enableMetaDat,
           analyticsOptOut: true
         }
