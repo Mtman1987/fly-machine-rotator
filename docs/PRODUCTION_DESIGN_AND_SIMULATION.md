@@ -599,4 +599,3 @@ The rotator is ready to keep the ecosystem healthy only when:
 10. Volume apps use external canonical state, proven replication, or an honest in-place restart policy with measured downtime.
 11. Desired capacity and worker leadership are verified without the global exactly-one assumption.
 12. A restore and rollback game day proves that the rotator cannot turn an error into a larger outage.
-
