@@ -6,7 +6,7 @@ The current production-design audit, read-only repair simulation, volume topolog
 
 The worker never deletes Machines. For an app whose active Machine has no volume, it starts a stopped standby, waits until that Machine is healthy, and only then stops the previous active Machine. For an app whose active Machine has a volume, it currently performs a lease-protected in-place stop/start so the same volume remains attached; this clears ephemeral root state but includes downtime. If it finds more than one active Machine, it stops extras and reports the correction.
 
-Important: the current AI review cycle also performs a real rotation before generating proposals. Treat repair/review automation as experimental until the production-design gates in the linked document are implemented.
+The AI review cycle is separated from Machine rotation. Automatic apply remains disabled by default and now requires deterministic code-incident, confidence, clean-snapshot, patch-size, and quality gates. Treat repair automation as experimental until the remaining isolation, full-test, canary, and rollback gates in the linked design are implemented.
 
 ## Behavior
 

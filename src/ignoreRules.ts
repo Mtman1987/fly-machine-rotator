@@ -103,6 +103,9 @@ export function matchesRule(rule: IgnoreRule, event: Pick<StoredErrorEvent, "app
 }
 
 export function deriveIgnoreRegex(message: string): string {
+  if (/You are not in the game!/i.test(message)) {
+    return String.raw`You are not in the game!`;
+  }
   if (/You are not it! .* is it\./i.test(message)) {
     return String.raw`You are not it! .+ is it\.`;
   }

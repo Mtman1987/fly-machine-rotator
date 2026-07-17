@@ -13,6 +13,7 @@ import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { handleMountainViewRequest } from "./mountainView.js";
 import { isNonActionableErrorMessage } from "./logMonitor.js";
+import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -1309,11 +1310,9 @@ async function assertFreshFixSnapshot(record: FixRecord, repoPath: string): Prom
 
 async function runReviewCycle(env: NodeJS.ProcessEnv): Promise<{ message: string }> {
   const ignored = await autoIgnoreKnownNoise(env);
-  const results = await executeTrackedRotation([], env, "dashboard-review");
-  await refreshUnifiedReport(env, results);
   const generated = await generateFixesForCurrentErrors(env);
   return {
-    message: `Review cycle complete. ignored=${ignored.ignored} rotation=${formatRotationSummary(results)} fixes generated=${generated.generated} failed=${generated.failed}.`
+    message: `Review cycle complete. ignored=${ignored.ignored} fixes generated=${generated.generated} failed=${generated.failed}.`
   };
 }
 
@@ -1330,11 +1329,27 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
   let checked = 0;
   let pushed = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const event of currentEvents) {
     const record = store.get(buildFixId(event.appName, event.fingerprint));
     if (!record || record.changes.length === 0) {
       failed += 1;
+      continue;
+    }
+
+    const eligibility = evaluateAutoFixEligibility(event, record);
+    if (!eligibility.eligible) {
+      appendFixAttempt(record, {
+        attemptedAt: new Date().toISOString(),
+        action: "apply",
+        ok: false,
+        summary: "Automatic apply skipped by deterministic eligibility gate.",
+        details: eligibility.reasons.join(" ")
+      });
+      updateFixQualityGate(record);
+      store.upsert(record);
+      skipped += 1;
       continue;
     }
 
@@ -1392,7 +1407,7 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
   }
 
   return {
-    message: `${review.message} auto-fix applied=${applied} checked=${checked} pushed=${pushed} failed=${failed}.`
+    message: `${review.message} auto-fix applied=${applied} checked=${checked} pushed=${pushed} skipped=${skipped} failed=${failed}.`
   };
 }
 
@@ -1429,8 +1444,7 @@ async function maybePushCheckedFixBranch(
 }
 
 function shouldPushFixBranches(env: NodeJS.ProcessEnv): boolean {
-  if (env.ROTATOR_FIX_BRANCH_PUSH === "false" || env.ROTATOR_AUTOFIX_PUSH === "false") return false;
-  return Boolean(env.GITHUB_TOKEN);
+  return env.ROTATOR_AUTOFIX_PUSH === "true" && env.ROTATOR_FIX_BRANCH_PUSH !== "false" && Boolean(env.GITHUB_TOKEN);
 }
 
 async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ generated: number; failed: number }> {
@@ -1552,7 +1566,7 @@ function dedupeErrorEvents(events: StoredErrorEvent[]): StoredErrorEvent[] {
   const seen = new Set<string>();
   const values: StoredErrorEvent[] = [];
   for (const event of [...events].reverse()) {
-    const id = buildFixId(event.appName, event.fingerprint);
+    const id = classifyIncident(event).key;
     if (seen.has(id)) continue;
     seen.add(id);
     values.push(event);

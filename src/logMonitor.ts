@@ -311,6 +311,9 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[(?:\d{2}:\d{2})\] error: Ping timeout\./i,
     /\[(?:\d{2}:\d{2})\] error: Could not connect to server\. Reconnecting in \d+ seconds?\./i,
     /\[API Error\]\s*\/api\/tag:\s*400\b.*"error":"You don't have a pass!/i,
+    /\[API Error\]\s*\/api\/tag:\s*404\b.*"error":"You are not in the game!/i,
+    /\[Bot\] Tag API response:.*"error":"You are not in the game!.*"__status":404/i,
+    /\[Bot\] Tag error: You are not in the game!/i,
     /Discord fetch failed .*\/members\/codex-test-user:\s*400\b.*NUMBER_TYPE_COERCE/i,
     /Failed to fetch Twitch user:\s*429 Too Many Requests/i,
     /Failed to fetch Twitch badges.*Too Many Requests/i,
@@ -417,6 +420,12 @@ function normalizeErrorMessage(message: string): string {
 
 function suggestFix(message: string): string {
   const lower = message.toLowerCase();
+  if (lower.includes("shared chat source-only send") && lower.includes("permission")) {
+    return "Try the stored bot or broadcaster user token after the app-token send is rejected, preserve the permission reason, and do not restart the process for a non-restartable OAuth grant problem.";
+  }
+  if (lower.includes("failed to edit message") && /\b(?:500|502|503|504)\b/.test(lower)) {
+    return "Discord returned a transient 5xx while editing a message. Retry with bounded backoff, then emit one grouped incident only if all attempts fail.";
+  }
   if (lower.includes("admin access check failed") && lower.includes("/api/admin/access") && lower.includes("404")) {
     return "StreamWeaver is calling DiscordStreamHub /api/admin/access and getting a Next.js 404 page back. Check that the route exists in the deployed DSH app, verify the base URL points at the correct deployment, and fail closed with a compact error instead of logging the full HTML 404 response.";
   }

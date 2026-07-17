@@ -1,6 +1,6 @@
 # Fly Machine Rotator Production Design and Workflow Simulation
 
-Updated: 2026-07-13
+Updated: 2026-07-16
 
 Status: evidence-backed design audit; no production repair, repository write, push, deploy, or Machine rotation was performed for this simulation
 
@@ -43,7 +43,7 @@ flowchart LR
     C --> G["GitHub fix branches"]
 
     S["12-hour scheduler"] --> X["Machine rotator"]
-    D -->|"Run rotation or current review cycle"| X
+    D -->|"Run rotation"| X
     X --> A["Fly Machines API"]
     X --> H["/data/rotation-history.json"]
 ```
@@ -56,15 +56,14 @@ The rotator also hosts MountainView. The maintenance engine and MountainView sho
 
 ### Run AI review cycle
 
-The current review cycle is not a read-only review or a generation-only operation. It performs these operations in order:
+The review cycle now performs these operations without rotating Machines:
 
 1. Adds ignore rules for messages recognized as known noise.
 2. Removes matching events from current error history.
-3. Runs a real rotation across every configured app.
-4. Updates the Discord report.
-5. Generates or refreshes a proposal for every remaining unique app/fingerprint pair.
+3. Groups related fingerprints into deterministic incident families.
+4. Generates or refreshes a proposal for every remaining incident.
 
-This coupling is unsafe and surprising. Generating fixes must never restart applications.
+Machine rotation remains a separate explicit action.
 
 ### Generate fix or Refresh fix
 
@@ -95,15 +94,15 @@ It does not automatically restore the checkout if the patch or later checks fail
 
 ### Run checks
 
-The rotator installs dependencies in the long-running production rotator Machine and runs only `npm run typecheck` for the mapped repository. If checks pass and a `GITHUB_TOKEN` exists, the current default can push the branch unless either push flag is explicitly set to `false`. This makes the separate `Push branch` button misleading.
+The rotator installs dependencies in the long-running production rotator Machine and runs only `npm run typecheck` for the mapped repository. Automatic branch push now requires the explicit `ROTATOR_AUTOFIX_PUSH=true` opt-in as well as a `GITHUB_TOKEN`.
 
 ### Run auto-fix cycle
 
 The current auto-fix cycle:
 
-1. Runs the entire review cycle, including a real Machine rotation.
+1. Runs the generation-only review cycle without rotating Machines.
 2. Iterates over every active event.
-3. Applies any proposal containing a change, regardless of its quality-gate verdict or confidence.
+3. Applies only deterministically code-owned proposals that satisfy confidence, clean-snapshot, patch-size, change-reason, and quality gates.
 4. Runs the repository's typecheck.
 5. May push the branch.
 
@@ -290,7 +289,7 @@ Raw events remain immutable for retention, audit, and classifier evaluation.
 
 ### P1 — Replace confidence theater with enforceable eligibility
 
-The present quality score is based mainly on the model's label, number of changes, whether typecheck ran, and whether a branch/verification record exists. The auto-fix loop does not enforce its verdict.
+The quality score is based mainly on the model's label, number of changes, whether typecheck ran, and whether a branch/verification record exists. The auto-fix loop now blocks proposals with a blocked verdict and adds deterministic pre-apply eligibility checks; the remaining gates below are still required before unattended production deployment.
 
 An auto-eligible proposal must pass deterministic gates:
 
