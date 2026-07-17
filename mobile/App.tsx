@@ -138,7 +138,7 @@ const translationLanguages = ["Spanish", "French", "Japanese", "German"];
 
 export default function App() {
   const [token, setToken] = useState("");
-  const [password, setPassword] = useState("");
+  const [authVisible, setAuthVisible] = useState(false);
   const [tab, setTab] = useState<MainTab>("home");
   const [commands, setCommands] = useState<Command[]>([]);
   const [memory, setMemory] = useState<MemoryRecord[]>([]);
@@ -529,18 +529,21 @@ export default function App() {
   }
 
   async function login() {
+    announce("Opening secure SPMT sign-in...");
+    setAuthVisible(true);
+  }
+
+  async function handleAuthMessage(raw: string) {
     try {
-      announce("Connecting to MountainView backend...");
-      const data = await request("/login", {
-        method: "POST",
-        body: JSON.stringify({ email: "owner@spacemountain.live", password })
-      }, "");
+      const data = JSON.parse(raw);
+      if (data?.type !== "mountainview-auth" || !data?.token) throw new Error("SPMT did not return a MountainView session.");
       setToken(data.token);
       await SecureStore.setItemAsync("mountainview_token", data.token);
+      setAuthVisible(false);
       await load(data.token);
-      setStatusMessage("Connected. MountainView command bridge is ready.");
+      setStatusMessage("Connected with SPMT. MountainView command bridge is ready.");
     } catch (error) {
-      reportError("Login", error);
+      reportError("SPMT sign-in", error);
     }
   }
 
@@ -1563,10 +1566,23 @@ export default function App() {
 
       {!connected ? (
         <View style={styles.panel}>
-          <Text style={styles.label}>Owner login</Text>
-          <Text style={styles.note}>Development auth is disabled on Fly. Leave this blank and tap Connect.</Text>
-          <TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="Owner password optional" placeholderTextColor="#7f8ca8" style={styles.input} />
-          <Pressable style={styles.primaryButton} onPress={login}><Text style={styles.primaryButtonText}>Connect</Text></Pressable>
+          <Text style={styles.label}>SPMT account</Text>
+          <Text style={styles.note}>MountainView uses the same identity as the rest of the SpaceMountain suite. No separate owner password is required.</Text>
+          {authVisible ? (
+            <>
+              <WebView
+                originWhitelist={["https://*"]}
+                source={{ uri: `${apiBaseUrl.replace(/\/api\/?$/, "")}/auth/login?client=mobile` }}
+                onMessage={(event) => void handleAuthMessage(event.nativeEvent.data)}
+                sharedCookiesEnabled
+                thirdPartyCookiesEnabled
+                style={styles.authWebView}
+              />
+              <Pressable style={styles.secondaryButton} onPress={() => setAuthVisible(false)}><Text style={styles.secondaryButtonText}>Cancel</Text></Pressable>
+            </>
+          ) : (
+            <Pressable style={styles.primaryButton} onPress={login}><Text style={styles.primaryButtonText}>Sign in with SPMT</Text></Pressable>
+          )}
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
@@ -2286,6 +2302,7 @@ const styles = StyleSheet.create({
   visualKind: { color: "#22d3ee", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
   visualImage: { width: "100%", height: 360, backgroundColor: "#071018" },
   visualWebView: { width: "100%", height: 430, backgroundColor: "#071018" },
+  authWebView: { width: "100%", height: 520, marginVertical: 12, backgroundColor: "#071018" },
   hintBox: { padding: 12, borderRadius: 8, backgroundColor: "rgba(117,80,255,.12)", borderWidth: 1, borderColor: "rgba(117,80,255,.32)" },
   memoryTitle: { color: "#f8fbff", fontWeight: "800" },
   memoryBody: { color: "#9fb1cc", marginTop: 3 },

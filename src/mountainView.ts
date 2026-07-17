@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 
 type JsonRecord = Record<string, unknown>;
+type MountainViewUser = { id: string; email: string; role: string };
 type CommandRoutingProfile = {
   requiredContext: string[];
   optionalContext: string[];
@@ -99,10 +100,46 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
     });
   }
 
+  if (method === "GET" && url.pathname === "/mountainview/auth/login") {
+    const state = randomBytes(24).toString("base64url");
+    const target = url.searchParams.get("client") === "mobile" ? "mobile" : "web";
+    setCookie(response, "mountainview_oauth_state", state, { maxAge: 600, path: "/mountainview", secure: isProduction(env) });
+    setCookie(response, "mountainview_oauth_target", target, { maxAge: 600, path: "/mountainview", secure: isProduction(env) });
+    const authorizeUrl = new URL("/api/oauth/authorize", context.serviceBaseUrl("spmt"));
+    authorizeUrl.searchParams.set("client_id", "mountainview");
+    authorizeUrl.searchParams.set("redirect_uri", context.oauthRedirectUri());
+    authorizeUrl.searchParams.set("state", state);
+    return redirect(response, authorizeUrl.toString());
+  }
+
+  if (method === "GET" && url.pathname === "/mountainview/auth/callback") {
+    const cookies = parseCookies(request.headers.cookie);
+    const state = url.searchParams.get("state") ?? "";
+    const code = url.searchParams.get("code") ?? "";
+    if (!state || !code || !safeSecretEqual(state, cookies.mountainview_oauth_state ?? "")) {
+      throw new HttpError(400, "Invalid or expired MountainView sign-in state.");
+    }
+    const session = await context.exchangeSpmtCode(code);
+    clearCookie(response, "mountainview_oauth_state", "/mountainview", isProduction(env));
+    clearCookie(response, "mountainview_oauth_target", "/mountainview", isProduction(env));
+    if (cookies.mountainview_oauth_target === "mobile") {
+      response.setHeader("cache-control", "no-store");
+      html(response, renderMobileAuthHandoff(session.token));
+      return true;
+    }
+    setCookie(response, "mountainview_session", session.token, { maxAge: 30 * 24 * 60 * 60, path: "/mountainview", secure: isProduction(env) });
+    return redirect(response, "/mountainview");
+  }
+
+  if (method === "POST" && apiPath === "/api/logout") {
+    const token = context.readSessionToken(request);
+    context.logout(token);
+    clearCookie(response, "mountainview_session", "/mountainview", isProduction(env));
+    return json(response, { ok: true });
+  }
+
   if (method === "POST" && apiPath === "/api/login") {
-    const body = await readJson(request);
-    const session = context.login(String(body.email ?? "owner@spacemountain.live"), String(body.password ?? ""));
-    return json(response, session);
+    throw new HttpError(410, "Password login was removed. Sign in with SPMT.");
   }
 
   if (method === "GET" && apiPath === "/api/bootstrap") {
@@ -309,7 +346,7 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
   }
 
   if (method === "POST" && apiPath === "/api/settings/token") {
-    const user = context.requireAuth(request);
+    const user = context.requireAuth(request, true);
     const body = await readJson(request);
     return json(response, context.saveServiceToken(user.id, String(body.serviceId ?? ""), String(body.token ?? "")));
   }
@@ -345,29 +382,63 @@ class MountainViewContext {
     return new MountainViewContext(env, config);
   }
 
-  login(email: string, password: string): JsonRecord {
-    const authDisabled = this.env.MOUNTAINVIEW_AUTH_DISABLED === "true";
-    if (authDisabled && this.env.NODE_ENV === "production") {
-      throw new HttpError(503, "MountainView authentication cannot be disabled in production.");
-    }
-    const ownerPassword = this.env.MOUNTAINVIEW_OWNER_PASSWORD || (this.env.NODE_ENV === "production" ? "" : "mountainview-dev");
-    if (!authDisabled && !ownerPassword) throw new HttpError(503, "MountainView owner authentication is not configured.");
-    if (!authDisabled && !safeEqual(password, ownerPassword)) throw new HttpError(401, "Invalid MountainView credentials.");
+  serviceBaseUrl(serviceId: string): string {
+    const service = this.config.services.find((candidate) => candidate.id === serviceId);
+    if (!service?.baseUrl) throw new HttpError(503, `MountainView service ${serviceId} is not configured.`);
+    return service.baseUrl;
+  }
+
+  oauthRedirectUri(): string {
+    return new URL("/mountainview/auth/callback", this.serviceBaseUrl("mountainview")).toString();
+  }
+
+  async exchangeSpmtCode(code: string): Promise<{ token: string; user: MountainViewUser }> {
+    const clientSecret = this.env.MOUNTAINVIEW_CLIENT_SECRET;
+    if (!clientSecret) throw new HttpError(503, "MountainView SPMT OAuth is not configured.");
+    const response = await fetch(new URL("/api/oauth/token", this.serviceBaseUrl("spmt")), {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        code,
+        client_id: "mountainview",
+        client_secret: clientSecret,
+        redirect_uri: this.oauthRedirectUri()
+      })
+    });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) throw new HttpError(502, `SPMT OAuth exchange failed: ${readText(payload, "error") || response.status}`);
+    const spmtUser = asRecord(payload.user);
+    const id = readText(spmtUser, "id");
+    const email = readText(spmtUser, "email");
+    if (!id || !email) throw new HttpError(502, "SPMT OAuth returned an incomplete identity.");
+    const isAdmin = spmtUser.isAdmin === true || spmtUser.is_admin === true;
+    return this.createSession({ id, email, role: isAdmin ? "admin" : "user" });
+  }
+
+  createSession(user: MountainViewUser): { token: string; user: MountainViewUser } {
     const now = new Date().toISOString();
-    const userId = "owner";
     this.db.prepare(`
       INSERT INTO users (id, email, role, created_at)
-      VALUES (?, ?, 'admin', ?)
-      ON CONFLICT(id) DO UPDATE SET email = excluded.email
-    `).run(userId, email, now);
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET email = excluded.email, role = excluded.role
+    `).run(user.id, user.email, user.role, now);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     this.db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-      .run(tokenHash, userId, now, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
-    return { token, user: { id: userId, email, role: "admin" } };
+      .run(tokenHash, user.id, now, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
+    return { token, user };
   }
 
-  requireAuth(request: IncomingMessage, admin = false): { id: string; email: string; role: string } {
+  readSessionToken(request: IncomingMessage): string {
+    const bearer = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return bearer || parseCookies(request.headers.cookie).mountainview_session || "";
+  }
+
+  logout(token: string): void {
+    if (token) this.db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+  }
+
+  requireAuth(request: IncomingMessage, admin = false): MountainViewUser {
     if (this.env.MOUNTAINVIEW_AUTH_DISABLED === "true") {
       if (this.env.NODE_ENV === "production") throw new HttpError(503, "MountainView authentication cannot be disabled in production.");
       const now = new Date().toISOString();
@@ -378,7 +449,7 @@ class MountainViewContext {
       `).run(now);
       return { id: "owner", email: "owner@spacemountain.live", role: "admin" };
     }
-    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    const token = this.readSessionToken(request);
     const tokenHash = hashToken(token);
     const row = this.db.prepare(`
       SELECT users.id, users.email, users.role
@@ -3427,10 +3498,62 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
 }
 
-function safeEqual(left: string, right: string): boolean {
+export function safeSecretEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isProduction(env: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV === "production" || Boolean(env.FLY_APP_NAME);
+}
+
+export function parseCookies(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  return Object.fromEntries(header.split(";").map((part) => {
+    const separator = part.indexOf("=");
+    const key = separator >= 0 ? part.slice(0, separator).trim() : part.trim();
+    const value = separator >= 0 ? part.slice(separator + 1).trim() : "";
+    try {
+      return [key, decodeURIComponent(value)];
+    } catch {
+      return [key, value];
+    }
+  }).filter(([key]) => Boolean(key)));
+}
+
+function setCookie(
+  response: ServerResponse,
+  name: string,
+  value: string,
+  options: { maxAge: number; path: string; secure: boolean }
+): void {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    `Path=${options.path}`,
+    `Max-Age=${options.maxAge}`,
+    "HttpOnly",
+    "SameSite=Lax"
+  ];
+  if (options.secure) parts.push("Secure");
+  const existing = response.getHeader("set-cookie");
+  const cookies = Array.isArray(existing) ? [...existing, parts.join("; ")] : existing ? [String(existing), parts.join("; ")] : [parts.join("; ")];
+  response.setHeader("set-cookie", cookies);
+}
+
+function clearCookie(response: ServerResponse, name: string, path: string, secure: boolean): void {
+  setCookie(response, name, "", { maxAge: 0, path, secure });
+}
+
+function redirect(response: ServerResponse, location: string): true {
+  response.writeHead(302, { location, "cache-control": "no-store" });
+  response.end();
+  return true;
+}
+
+export function renderMobileAuthHandoff(token: string): string {
+  const payload = JSON.stringify({ type: "mountainview-auth", token }).replace(/</g, "\\u003c");
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>MountainView connected</title></head><body><p>MountainView is connected to your SPMT account.</p><script>window.ReactNativeWebView?.postMessage(${JSON.stringify(payload)});</script></body></html>`;
 }
 
 function json(response: ServerResponse, payload: unknown): true {
@@ -3506,7 +3629,7 @@ function appDisplayName(appId: string): string {
   }
 }
 
-function renderMountainViewHtml(): string {
+export function renderMountainViewHtml(): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3528,7 +3651,7 @@ function renderMountainViewHtml(): string {
       <div class="top-actions">
         <a class="link-btn" href="/mountainview/apk">Download APK</a>
         <a class="link-btn secondary" href="/">Rotator dashboard</a>
-        <button class="secondary" onclick="login()">Connect owner</button>
+        <button class="secondary" onclick="login()">Sign in with SPMT</button>
       </div>
     </div>
 
@@ -3671,10 +3794,10 @@ function renderMountainViewHtml(): string {
   </main>
   <nav class="tabs"><button data-tab="home" class="active" onclick="show('home',this)">Home</button><button data-tab="commands" onclick="show('commands',this)">Commands</button><button data-tab="relay" onclick="show('relay',this)">Relay</button><button data-tab="memory" onclick="show('memory',this)">Memory</button><button data-tab="stream" onclick="show('stream',this)">Stream</button><button data-tab="devices" onclick="show('devices',this)">Devices</button><button data-tab="polling" onclick="show('polling',this)">Polling</button><button data-tab="logos" onclick="show('logos',this)">Logos</button><button data-tab="qr" onclick="show('qr',this)">QR</button><button data-tab="roadmap" onclick="show('roadmap',this)">Roadmap</button><button data-tab="settings" onclick="show('settings',this)">Settings</button></nav>
   <script>
-    let token = localStorage.mvToken || ""; let state = {commands:[], memory:[], logs:[]};
-    const api = async (path, options={}) => { const res = await fetch('/mountainview/api' + path, { ...options, headers: { 'content-type':'application/json', authorization: token ? 'Bearer '+token : '', ...(options.headers||{}) } }); const data = await res.json(); if(!res.ok || data.error) throw new Error(data.error || 'Request failed'); return data; };
-    async function login(){ const password = prompt('MountainView owner password'); if(!password) return; const data = await api('/login',{method:'POST',body:JSON.stringify({email:'owner@spacemountain.live',password})}); token=data.token; localStorage.mvToken=token; await load(); }
-    async function load(){ if(!token) return; const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderDevices(); renderPolling(); renderLogoProfiles(); renderQrTriggers(); renderRoadmap(); renderLogs(); }
+    let state = {commands:[], memory:[], logs:[]};
+    const api = async (path, options={}) => { const res = await fetch('/mountainview/api' + path, { ...options, credentials:'same-origin', headers: { 'content-type':'application/json', ...(options.headers||{}) } }); const data = await res.json(); if(!res.ok || data.error) throw new Error(data.error || 'Request failed'); return data; };
+    async function login(){ window.location.assign('/mountainview/auth/login'); }
+    async function load(){ const data = await api('/bootstrap'); state=data; renderCommands(); renderMemory(); renderDevices(); renderPolling(); renderLogoProfiles(); renderQrTriggers(); renderRoadmap(); renderLogs(); }
     function show(id, btn){ document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active')); document.getElementById(id).classList.add('active'); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); if(id==='memory') loadMemory(); }
     function renderCommands(){ const commands=state.commands||[]; const html = commands.map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+' • '+esc(c.method)+' '+esc(c.url_template)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); commandList.innerHTML=html; quickCommands.innerHTML=commands.slice(0,8).map(c=>'<div class="cmd"><div><strong>'+esc(c.name)+'</strong><span>'+esc(c.app_id)+'</span></div><button class="secondary" onclick="runSystemCommand(\\''+esc(c.id)+'\\')">Run</button></div>').join(''); const groups={StreamWeaver:commands.filter(c=>c.app_id==='streamweaver'),HearMeOut:commands.filter(c=>c.app_id==='hearmeout'),DiscordStreamHub:commands.filter(c=>c.app_id==='discordstreamhub'),'Chat-Tag':commands.filter(c=>c.app_id==='chat-tag'),EdenAI:commands.filter(c=>c.app_id==='edenai')}; commandGroups.innerHTML=Object.entries(groups).map(([name,items])=>'<div class="memory"><strong>'+esc(name)+'</strong><div class="sub">'+items.length+' commands ready</div></div>').join(''); }
     async function runSystemCommand(id){ const message = prompt('Payload message', 'MountainView trigger') || ''; const data = await api('/commands/execute',{method:'POST',body:JSON.stringify({commandId:id,payload:{message,payload:{message},metadata:{source:'dashboard'}}})}); appendLog(JSON.stringify(data,null,2)); await load(); }
