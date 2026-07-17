@@ -330,7 +330,11 @@ class MountainViewContext {
     const dbFile = env.MOUNTAINVIEW_DB_FILE ?? "/data/mountainview.db";
     this.db = new Database(dbFile);
     this.db.pragma("journal_mode = WAL");
-    this.tokenKey = createHash("sha256").update(env.MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY ?? env.FLY_API_TOKEN ?? "mountainview-dev-key").digest();
+    const encryptionKey = env.MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY;
+    if (!encryptionKey && env.NODE_ENV === "production") {
+      throw new Error("MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY is required in production.");
+    }
+    this.tokenKey = createHash("sha256").update(encryptionKey || "mountainview-local-dev-key").digest();
     this.migrate();
     this.seedDefaults();
   }
@@ -343,7 +347,11 @@ class MountainViewContext {
 
   login(email: string, password: string): JsonRecord {
     const authDisabled = this.env.MOUNTAINVIEW_AUTH_DISABLED === "true";
-    const ownerPassword = this.env.MOUNTAINVIEW_OWNER_PASSWORD ?? this.env.ROTATOR_ACTION_TOKEN ?? "mountainview-dev";
+    if (authDisabled && this.env.NODE_ENV === "production") {
+      throw new HttpError(503, "MountainView authentication cannot be disabled in production.");
+    }
+    const ownerPassword = this.env.MOUNTAINVIEW_OWNER_PASSWORD || (this.env.NODE_ENV === "production" ? "" : "mountainview-dev");
+    if (!authDisabled && !ownerPassword) throw new HttpError(503, "MountainView owner authentication is not configured.");
     if (!authDisabled && !safeEqual(password, ownerPassword)) throw new HttpError(401, "Invalid MountainView credentials.");
     const now = new Date().toISOString();
     const userId = "owner";
@@ -361,6 +369,7 @@ class MountainViewContext {
 
   requireAuth(request: IncomingMessage, admin = false): { id: string; email: string; role: string } {
     if (this.env.MOUNTAINVIEW_AUTH_DISABLED === "true") {
+      if (this.env.NODE_ENV === "production") throw new HttpError(503, "MountainView authentication cannot be disabled in production.");
       const now = new Date().toISOString();
       this.db.prepare(`
         INSERT INTO users (id, email, role, created_at)

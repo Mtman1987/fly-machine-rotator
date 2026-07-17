@@ -21,6 +21,13 @@ describe("incident classifier", () => {
     expect(direct).toMatchObject({ key: "streamweaver-new:outbound-shared-chat-delivery", disposition: "auth_config", autoFixEligible: false });
   });
 
+  it("groups Kick chatroom resolution echoes as one tenant authorization incident", () => {
+    const direct = classifyIncident(event("streamweaver-new", "one", "[Kick] Connection error: Could not resolve chatroom ID for ladyheidi."));
+    const cascade = classifyIncident(event("streamweaver-new", "two", "[MultiPlatform] Event error: {", ["error: Could not resolve chatroom ID for ladyheidi."]));
+    expect(cascade.key).toBe(direct.key);
+    expect(direct).toMatchObject({ key: "streamweaver-new:kick-chatroom-authorization", disposition: "auth_config", autoFixEligible: false });
+  });
+
   it("groups Discord edit 5xx responses as transient external failures", () => {
     expect(classifyIncident(event("discord-stream-hub-new", "one", "Failed to edit message: 500 Internal Server Error"))).toMatchObject({ key: "discord-stream-hub-new:message-edit-5xx", disposition: "transient_external", autoFixEligible: false });
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNonActionableErrorMessage, looksLikeError } from "../src/logMonitor.js";
+import { isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
 
 describe("log monitor noise filtering", () => {
   it.each([
@@ -69,6 +69,13 @@ describe("log monitor noise filtering", () => {
 
   it("keeps real app failures actionable", () => {
     expect(looksLikeError("[Next.js ERROR] [AI Image] Error: Custom SeaArt models require modelNo:modelVerNo.")).toBe(true);
+  });
+
+  it("does not mistake chatroom for an out-of-memory signal", () => {
+    const suggestion = suggestFix("Could not resolve chatroom ID for ladyheidi. Re-authorize Kick Broadcaster to fix.");
+    expect(suggestion).toContain("re-authorize");
+    expect(suggestion).toContain("do not add");
+    expect(suggestion).not.toContain("memory usage");
   });
 
   it.each([

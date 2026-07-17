@@ -418,8 +418,11 @@ function normalizeErrorMessage(message: string): string {
   return message;
 }
 
-function suggestFix(message: string): string {
+export function suggestFix(message: string): string {
   const lower = message.toLowerCase();
+  if (lower.includes("could not resolve chatroom id")) {
+    return "Verify StreamWeaver uses Kick's current /public/v1/users and /public/v1/channels response contracts. If the stored tenant grant still cannot resolve its broadcaster ID, re-authorize that tenant's Kick Broadcaster connection; do not add this authentication failure to the ignore list.";
+  }
   if (lower.includes("shared chat source-only send") && lower.includes("permission")) {
     return "Try the stored bot or broadcaster user token after the app-token send is rejected, preserve the permission reason, and do not restart the process for a non-restartable OAuth grant problem.";
   }
@@ -495,7 +498,7 @@ function suggestFix(message: string): string {
   if (lower.includes("etimedout") || lower.includes("timeout")) {
     return "Check upstream latency, retry/backoff settings, regional placement, and whether a dependency is overloaded or unreachable.";
   }
-  if (lower.includes("out of memory") || lower.includes("oom")) {
+  if (lower.includes("out of memory") || /(?:^|\W)oom(?:\W|$)/i.test(message)) {
     return "Check memory usage around the failing path, reduce concurrency or buffering, and consider increasing the Machine memory size.";
   }
   if (lower.includes("unauthorized") || lower.includes("forbidden") || lower.includes("401") || lower.includes("403")) {

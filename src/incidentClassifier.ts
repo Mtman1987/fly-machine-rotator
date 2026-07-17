@@ -23,6 +23,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   )) {
     return classification("streamweaver-new:outbound-shared-chat-delivery", "auth_config", "Shared-chat delivery depends on stored Twitch authorization and must not be patched automatically.");
   }
+  if (event.appName === "streamweaver-new" && lower.includes("could not resolve chatroom id")) {
+    return classification("streamweaver-new:kick-chatroom-authorization", "auth_config", "The stored tenant Kick grant cannot resolve its broadcaster/chat identity; repair the API contract or re-authorize that tenant instead of generating a code patch from each log echo.");
+  }
   if (event.appName === "discord-stream-hub-new" && (
     lower.includes("failed to edit message") || lower.includes("message update failed")
   ) && /\b(?:500|502|503|504)\b/.test(lower)) {
