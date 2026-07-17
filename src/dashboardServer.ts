@@ -22,9 +22,11 @@ export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
     try {
       await routeRequest(request, response, env);
     } catch (error) {
-      const statusCode = error instanceof HttpError ? error.statusCode : 500;
-      response.writeHead(statusCode, { "content-type": "text/plain; charset=utf-8" });
-      response.end(error instanceof Error ? error.stack ?? error.message : String(error));
+      const statusCode = getHttpErrorStatus(error);
+      if (statusCode >= 500) console.error("dashboard request failed", error);
+      const message = statusCode < 500 && error instanceof Error ? error.message : "Internal server error";
+      response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+      response.end(JSON.stringify({ ok: false, error: message }));
     }
   });
   server.listen(port, "0.0.0.0", () => {
@@ -1253,6 +1255,15 @@ export function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv
   const expectedHash = createHash('sha256').update(expected).digest();
   const suppliedHash = createHash('sha256').update(supplied).digest();
   if (!supplied || !timingSafeEqual(expectedHash, suppliedHash)) throw new HttpError(401, "Invalid rotator dashboard action token.");
+}
+
+export function getHttpErrorStatus(error: unknown): number {
+  if (error instanceof HttpError) return error.statusCode;
+  if (error && typeof error === 'object' && 'statusCode' in error) {
+    const statusCode = Number((error as { statusCode?: unknown }).statusCode);
+    if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599) return statusCode;
+  }
+  return 500;
 }
 
 async function refreshUnifiedReport(env: NodeJS.ProcessEnv, latestRotationResults?: Parameters<typeof upsertUnifiedDiscordReport>[1]): Promise<void> {

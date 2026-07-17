@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IncomingMessage } from "node:http";
-import { authorizeAction } from "../src/dashboardServer.js";
+import { authorizeAction, getHttpErrorStatus } from "../src/dashboardServer.js";
 
 function request(headers: IncomingMessage["headers"]): IncomingMessage {
   return { headers } as IncomingMessage;
@@ -17,5 +17,10 @@ describe("rotator dashboard action authorization", () => {
     expect(() => authorizeAction(request({}), { ROTATOR_DASHBOARD_ACTION_TOKEN: "correct" })).toThrow(/Invalid/);
     expect(() => authorizeAction(request({ authorization: "Bearer wrong" }), { ROTATOR_DASHBOARD_ACTION_TOKEN: "correct" })).toThrow(/Invalid/);
     expect(() => authorizeAction(request({}), {})).toThrow(/not configured/);
+  });
+
+  it("preserves status codes from MountainView route errors", () => {
+    expect(getHttpErrorStatus({ statusCode: 401 })).toBe(401);
+    expect(getHttpErrorStatus(new Error("boom"))).toBe(500);
   });
 });
