@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { dirname, join } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { generateFixRecord, StoredErrorEvent } from "./aiFixer.js";
@@ -999,11 +1000,20 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
   <script>
     const actionStatus = document.getElementById('action-status');
 
+    function actionHeaders(extra = {}) {
+      let token = window.sessionStorage.getItem('rotatorActionToken') || '';
+      if (!token) {
+        token = window.prompt('Rotator dashboard action token') || '';
+        if (token) window.sessionStorage.setItem('rotatorActionToken', token);
+      }
+      return { ...extra, ...(token ? { 'x-rotator-action-token': token } : {}) };
+    }
+
     async function runAction(path, label) {
       actionStatus.textContent = (label || 'Working') + '...';
       actionStatus.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       try {
-        const response = await fetch(path, { method: 'POST' });
+        const response = await fetch(path, { method: 'POST', headers: actionHeaders() });
         const text = await response.text();
         if (!response.ok) throw new Error(text || ('Request failed with ' + response.status));
         const payload = text ? JSON.parse(text) : { ok: true };
@@ -1039,7 +1049,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       try {
         const response = await fetch('/actions/fixes/save?id=' + encodeURIComponent(id), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: actionHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ changes })
         });
         const text = await response.text();
@@ -1234,9 +1244,15 @@ function confidenceLabelToScore(confidence: FixRecord["confidence"]): number {
   return 25;
 }
 
-function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): void {
-  void request;
-  void env;
+export function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): void {
+  const expected = String(env.ROTATOR_DASHBOARD_ACTION_TOKEN || '').trim();
+  if (!expected) throw new HttpError(503, "Dashboard actions are unavailable because ROTATOR_DASHBOARD_ACTION_TOKEN is not configured.");
+  const bearer = String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const suppliedHeader = request.headers['x-rotator-action-token'];
+  const supplied = String(Array.isArray(suppliedHeader) ? suppliedHeader[0] : suppliedHeader || bearer).trim();
+  const expectedHash = createHash('sha256').update(expected).digest();
+  const suppliedHash = createHash('sha256').update(supplied).digest();
+  if (!supplied || !timingSafeEqual(expectedHash, suppliedHash)) throw new HttpError(401, "Invalid rotator dashboard action token.");
 }
 
 async function refreshUnifiedReport(env: NodeJS.ProcessEnv, latestRotationResults?: Parameters<typeof upsertUnifiedDiscordReport>[1]): Promise<void> {
