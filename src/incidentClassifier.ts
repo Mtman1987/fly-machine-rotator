@@ -28,6 +28,13 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   ) && /\b(?:500|502|503|504)\b/.test(lower)) {
     return classification("discord-stream-hub-new:message-edit-5xx", "transient_external", "Discord returned a retryable 5xx response; retry and observe before proposing code.");
   }
+  if (event.appName === "chat-tag-new" && lower.includes("[announce]") && (
+    lower.includes("discord webhook failed") ||
+    lower.includes("failed to fetch/embed image") ||
+    lower.includes("unknown scheme")
+  )) {
+    return classification("chat-tag-new:discord-announce-delivery", "transient_external", "The Discord announce retry and attachment fallback form one external-delivery incident.");
+  }
   if (/\b(?:syntaxerror|referenceerror|typeerror)\b/i.test(event.message) && /(?:\/app\/|src\/|src\\)/i.test(evidence)) {
     return { key: `${event.appName}:code:${event.fingerprint}`, disposition: "code", autoFixEligible: true, reason: "A source-backed runtime exception is eligible for a gated code proposal." };
   }

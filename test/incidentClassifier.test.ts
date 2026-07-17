@@ -24,4 +24,11 @@ describe("incident classifier", () => {
   it("groups Discord edit 5xx responses as transient external failures", () => {
     expect(classifyIncident(event("discord-stream-hub-new", "one", "Failed to edit message: 500 Internal Server Error"))).toMatchObject({ key: "discord-stream-hub-new:message-edit-5xx", disposition: "transient_external", autoFixEligible: false });
   });
+
+  it("groups Chat-Tag announce retry and attachment fallback echoes", () => {
+    const first = classifyIncident(event("chat-tag-new", "one", "[Announce] Discord webhook failed: 500"));
+    const fallback = classifyIncident(event("chat-tag-new", "two", "[Announce] failed to fetch/embed image", ["[cause]: Error: unknown scheme"]));
+    expect(fallback.key).toBe(first.key);
+    expect(first).toMatchObject({ key: "chat-tag-new:discord-announce-delivery", disposition: "transient_external" });
+  });
 });
