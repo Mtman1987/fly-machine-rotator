@@ -1,6 +1,7 @@
 param(
   [string]$BaseUrl = "https://mtman-machine-rotator.fly.dev/mountainview/api",
-  [string]$Password = "mountainview-dev",
+  [Parameter(Mandatory = $true)]
+  [string]$AccessToken,
   [string]$TenantId = "94371378",
   [string]$Username = "mtman1987",
   [string]$Channel = "mtman1987",
@@ -20,9 +21,7 @@ param(
   )
 )
 
-$loginBody = @{ email = "owner@spacemountain.live"; password = $Password } | ConvertTo-Json
-$session = Invoke-RestMethod -Uri "$BaseUrl/login" -Method Post -ContentType "application/json" -Body $loginBody -TimeoutSec 20
-$headers = @{ Authorization = "Bearer $($session.token)" }
+$headers = @{ Authorization = "Bearer $AccessToken" }
 
 $rows = foreach ($phrase in $Phrases) {
   $body = @{

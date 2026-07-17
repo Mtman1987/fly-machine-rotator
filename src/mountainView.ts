@@ -88,9 +88,24 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
   }
 
   if (method === "GET" && apiPath === "/api/status") {
+    const oauthConfigured = Boolean(String(env.MOUNTAINVIEW_CLIENT_SECRET || "").trim());
+    const tokenStorageConfigured = Boolean(String(env.MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY || "").trim());
+    const imageAnalysisConfigured = Boolean(
+      String(env.EDENAI_API_KEY || env.GEMINI_API_KEY || env.OPENAI_API_KEY || "").trim(),
+    );
     return json(response, {
       ok: true,
       app: "MountainView AI",
+      status: oauthConfigured && tokenStorageConfigured ? "configured" : "degraded",
+      capabilities: {
+        spmtAuthentication: oauthConfigured ? "configured" : "unavailable",
+        encryptedTokenStorage: tokenStorageConfigured ? "ready" : "unavailable",
+        imageAnalysis: imageAnalysisConfigured ? "configured" : "unavailable",
+        directGlassesConnection: "unavailable",
+        glassesLiveStreaming: "unavailable",
+        flashControl: "unavailable",
+        commandRouting: "configured",
+      },
       device: {
         connected: false,
         bridgeMode: "phone-side",
