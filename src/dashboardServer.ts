@@ -44,8 +44,15 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/healthz") {
-    response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-    response.end("ok");
+    const requiredSecrets = ["MOUNTAINVIEW_CLIENT_SECRET", "MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY", "MOUNTAINVIEW_STREAMWEAVER_SECRET"];
+    const missingSecrets = env.NODE_ENV === "production"
+      ? requiredSecrets.filter((name) => !String(env[name] || "").trim())
+      : [];
+    response.writeHead(missingSecrets.length ? 503 : 200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      ok: missingSecrets.length === 0,
+      ...(missingSecrets.length ? { missingSecrets } : {}),
+    }));
     return;
   }
 

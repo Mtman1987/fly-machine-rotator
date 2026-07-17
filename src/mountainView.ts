@@ -1650,7 +1650,9 @@ class MountainViewContext {
 
   private async authHeaders(userId: string, serviceId: string, defaults: Record<string, string> = {}): Promise<Record<string, string>> {
     const headers: Record<string, string> = { "content-type": "application/json", ...defaults };
-    if (serviceId === "streamweaver") headers["x-mountainview-bridge"] = "1";
+    if (serviceId === "streamweaver") {
+      headers["x-mountainview-bridge"] = "1";
+    }
     if (serviceId === "chat-tag") {
       const chatTagSecret = this.env.CHAT_TAG_BOT_SECRET || this.env.CHAT_TAG_SECRET || this.env.BOT_SECRET_KEY;
       if (chatTagSecret) {
@@ -1668,6 +1670,11 @@ class MountainViewContext {
     }
     const row = this.db.prepare("SELECT encrypted_token FROM service_tokens WHERE user_id = ? AND service_id = ?").get(userId, serviceId) as { encrypted_token: string } | undefined;
     if (row) headers.authorization = `Bearer ${this.decrypt(row.encrypted_token)}`;
+    if (serviceId === "streamweaver") {
+      const bridgeSecret = String(this.env.MOUNTAINVIEW_STREAMWEAVER_SECRET || "").trim();
+      if (!bridgeSecret) throw new HttpError(503, "MountainView to StreamWeaver bridge is not configured.");
+      headers.authorization = `Bearer ${bridgeSecret}`;
+    }
     return headers;
   }
 
