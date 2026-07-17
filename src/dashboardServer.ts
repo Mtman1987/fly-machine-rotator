@@ -367,6 +367,8 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
   const totalRuns = runtime.totalRuns > 0 ? runtime.totalRuns : rotationHistory.length;
   const rawErrors = pruneLast24Hours(await readErrorHistory(env));
   const ignoreStore = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
+  const prunedUnsafeRules = ignoreStore.pruneUnsafe();
+  if (prunedUnsafeRules > 0) await ignoreStore.save();
   const ignoredErrors = rawErrors.filter((event) => ignoreStore.matches(event));
   const errors = dedupeErrorEvents(rawErrors.filter((event) => !ignoreStore.matches(event)));
   const counts = summarizeFailureCounts(rawErrors);
@@ -1273,6 +1275,9 @@ async function refreshUnifiedReport(env: NodeJS.ProcessEnv, latestRotationResult
 
 async function ignoreErrorFingerprint(id: string, env: NodeJS.ProcessEnv): Promise<{ message: string }> {
   const event = await findErrorEventById(id, env);
+  if (!isNonActionableErrorMessage(event.message)) {
+    throw new HttpError(409, "Actionable errors cannot be added to the ignore list. Fix or handle the incident instead.");
+  }
   const store = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
   store.add(buildFingerprintIgnoreRule(event));
   await store.save();
@@ -1282,6 +1287,9 @@ async function ignoreErrorFingerprint(id: string, env: NodeJS.ProcessEnv): Promi
 
 async function ignoreErrorPattern(id: string, env: NodeJS.ProcessEnv): Promise<{ message: string }> {
   const event = await findErrorEventById(id, env);
+  if (!isNonActionableErrorMessage(event.message)) {
+    throw new HttpError(409, "Actionable errors cannot be added to the ignore list. Fix or handle the incident instead.");
+  }
   const store = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
   store.add(buildPatternIgnoreRule(event));
   await store.save();
@@ -1298,6 +1306,7 @@ async function removeIgnoreRule(ruleId: string, env: NodeJS.ProcessEnv): Promise
 
 async function autoIgnoreKnownNoise(env: NodeJS.ProcessEnv): Promise<{ ignored: number; message: string }> {
   const store = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
+  const pruned = store.pruneUnsafe();
   const events = dedupeErrorEvents(pruneLast24Hours(await readErrorHistory(env)));
   let ignored = 0;
 
@@ -1310,16 +1319,16 @@ async function autoIgnoreKnownNoise(env: NodeJS.ProcessEnv): Promise<{ ignored: 
     ignored += 1;
   }
 
-  if (ignored > 0) {
+  if (ignored > 0 || pruned > 0) {
     await store.save();
     await removeMatchingIgnoredEvents(env, store);
   }
 
   return {
     ignored,
-    message: ignored > 0
-      ? `Added ${ignored} known-noise ignore rule(s) and removed matching events.`
-      : "No known-noise events found."
+    message: ignored > 0 || pruned > 0
+      ? `Added ${ignored} known-noise ignore rule(s), removed ${pruned} unsafe rule(s), and refreshed matching events.`
+      : "No known-noise events found and no unsafe ignore rules remained."
   };
 }
 

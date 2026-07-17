@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyIncident } from "../src/incidentClassifier.js";
-import { deriveIgnoreRegex } from "../src/ignoreRules.js";
+import { deriveIgnoreRegex, isUnsafeIgnoreRule } from "../src/ignoreRules.js";
 
 const event = (appName: string, fingerprint: string, message: string, context: string[] = []) => ({ appName, fingerprint, message, context });
 
@@ -37,5 +37,18 @@ describe("incident classifier", () => {
     const fallback = classifyIncident(event("chat-tag-new", "two", "[Announce] failed to fetch/embed image", ["[cause]: Error: unknown scheme"]));
     expect(fallback.key).toBe(first.key);
     expect(first).toMatchObject({ key: "chat-tag-new:discord-announce-delivery", disposition: "transient_external" });
+  });
+
+  it("keeps auth failures, rate limits, and platform command mismatches visible without guessing", () => {
+    expect(classifyIncident(event("discord-stream-hub-new", "sig", "[DiscordInteractions] Signature verification failed"))).toMatchObject({ disposition: "auth_config", autoFixEligible: false });
+    expect(classifyIncident(event("streamweaver-new", "rate", "Failed to fetch Twitch user: 429 Too Many Requests"))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
+    expect(classifyIncident(event("discord-stream-hub-new", "shell", "powershell executable file not found"))).toMatchObject({ disposition: "code", autoFixEligible: true });
+  });
+
+  it("prunes historical rules that hide actionable incidents", () => {
+    const createdAt = new Date().toISOString();
+    expect(isUnsafeIgnoreRule({ id: "sig", kind: "app_message_regex", pattern: "Signature verification failed", createdAt })).toBe(true);
+    expect(isUnsafeIgnoreRule({ id: "rate", kind: "app_message_regex", note: "429 Too Many Requests", createdAt })).toBe(true);
+    expect(isUnsafeIgnoreRule({ id: "noise", kind: "app_message_regex", pattern: "You are not in the game!", createdAt })).toBe(false);
   });
 });

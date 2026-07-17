@@ -42,7 +42,6 @@ describe("log monitor noise filtering", () => {
       "[PM07] failed to change machine state: machine getting replaced, refusing to start",
       "[PM07] failed to change machine state: unable to start machine from current state: 'created'",
       "ERROR error signaling (SIGTERM) main child process: ESRCH: No such process",
-      "2026/07/01 13:42:46 ERROR unexpected error executing command error=\"exec: \"powershell\": executable file not found in $PATH\"",
       "Error: failed to pipe response",
       "⨯ Error: failed to pipe response",
       "  [cause]: TypeError: terminated",
@@ -69,6 +68,18 @@ describe("log monitor noise filtering", () => {
 
   it("keeps real app failures actionable", () => {
     expect(looksLikeError("[Next.js ERROR] [AI Image] Error: Custom SeaArt models require modelNo:modelVerNo.")).toBe(true);
+  });
+
+  it.each([
+    "[DiscordInteractions] Signature verification failed { bodyLength: 736, timestamp: '1783403924' }",
+    "Failed to delete message 123 in 456: 503",
+    "<title>503 Server Error</title>",
+    "Failed to fetch Twitch user: 429 Too Many Requests",
+    "[22:03] error: Ping timeout.",
+    "ERROR unexpected error executing command error=\"exec: powershell: executable file not found in $PATH\""
+  ])("never auto-ignores security, dependency, rate-limit, or platform-code failures: %s", (message) => {
+    expect(isNonActionableErrorMessage(message)).toBe(false);
+    expect(looksLikeError(message)).toBe(true);
   });
 
   it("does not mistake chatroom for an out-of-memory signal", () => {

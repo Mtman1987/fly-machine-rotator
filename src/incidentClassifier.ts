@@ -31,12 +31,24 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   ) && /\b(?:500|502|503|504)\b/.test(lower)) {
     return classification("discord-stream-hub-new:message-edit-5xx", "transient_external", "Discord returned a retryable 5xx response; retry and observe before proposing code.");
   }
+  if (event.appName === "discord-stream-hub-new" && lower.includes("signature verification failed")) {
+    return classification("discord-stream-hub-new:signature-verification", "auth_config", "A failed Discord signature check is a security signal and must remain visible; verify the public key, raw request body, and timestamp handling.");
+  }
+  if (/\b(?:429|too many requests)\b/.test(lower) && lower.includes("twitch")) {
+    return classification(`${event.appName}:twitch-rate-limit`, "transient_external", "Twitch rate limiting needs shared caching, request coalescing, and bounded backoff; it must not be hidden as noise.");
+  }
   if (event.appName === "chat-tag-new" && lower.includes("[announce]") && (
     lower.includes("discord webhook failed") ||
     lower.includes("failed to fetch/embed image") ||
     lower.includes("unknown scheme")
   )) {
     return classification("chat-tag-new:discord-announce-delivery", "transient_external", "The Discord announce retry and attachment fallback form one external-delivery incident.");
+  }
+  if (/\b(?:500|502|503|504)\b/.test(lower) || lower.includes("server error")) {
+    return classification(`${event.appName}:upstream-5xx`, "transient_external", "An upstream 5xx remains observable until bounded retries succeed or the dependency recovers.");
+  }
+  if (lower.includes("powershell") && lower.includes("executable file not found")) {
+    return classification(`${event.appName}:platform-command-mismatch`, "code", "The deployed Linux runtime attempted to invoke a Windows-only executable.");
   }
   if (/\b(?:syntaxerror|referenceerror|typeerror)\b/i.test(event.message) && /(?:\/app\/|src\/|src\\)/i.test(evidence)) {
     return { key: `${event.appName}:code:${event.fingerprint}`, disposition: "code", autoFixEligible: true, reason: "A source-backed runtime exception is eligible for a gated code proposal." };

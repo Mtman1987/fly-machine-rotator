@@ -49,6 +49,14 @@ export class IgnoreRuleStore {
     return true;
   }
 
+  pruneUnsafe(): number {
+    const before = this.values.length;
+    for (let index = this.values.length - 1; index >= 0; index -= 1) {
+      if (isUnsafeIgnoreRule(this.values[index])) this.values.splice(index, 1);
+    }
+    return before - this.values.length;
+  }
+
   matches(event: Pick<StoredErrorEvent, "appName" | "fingerprint" | "message">): boolean {
     return this.values.some((rule) => matchesRule(rule, event));
   }
@@ -100,6 +108,32 @@ export function matchesRule(rule: IgnoreRule, event: Pick<StoredErrorEvent, "app
     }
   }
   return false;
+}
+
+export function isUnsafeIgnoreRule(rule: IgnoreRule): boolean {
+  const text = [rule.id, rule.pattern, rule.note]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  const unsafeSignals = [
+    "signature verification failed",
+    "too many requests",
+    "failed to fetch twitch channel info",
+    "no response from twitch",
+    "ping timeout",
+    "could not connect to server",
+    "powershell",
+    "server error",
+    "service error",
+    "failed to delete message",
+    "communityspotlight",
+    "discord cleanup",
+    "/api/quackverse/pack"
+  ];
+  if (unsafeSignals.some((signal) => text.includes(signal))) return true;
+
+  // Catch explicit HTTP 5xx rules while leaving escaped generic digit patterns alone.
+  return /(^|\D)50[0-4](\D|$)/.test(text);
 }
 
 export function deriveIgnoreRegex(message: string): string {
