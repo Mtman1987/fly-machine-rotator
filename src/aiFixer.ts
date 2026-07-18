@@ -348,6 +348,7 @@ function buildPrompt(
 async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.OPENAI_FIX_MODEL ?? "gpt-4.1-mini";
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    signal: AbortSignal.timeout(providerTimeoutMs(env)),
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
@@ -388,6 +389,7 @@ async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
 async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.EDENAI_FIX_MODEL ?? "anthropic/claude-sonnet-4-5";
   const response = await fetch("https://api.edenai.run/v3/chat/completions", {
+    signal: AbortSignal.timeout(providerTimeoutMs(env)),
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.EDENAI_API_KEY}`,
@@ -428,6 +430,7 @@ async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
 async function requestGeminiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.GEMINI_FIX_MODEL ?? "gemini-2.5-flash";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`, {
+    signal: AbortSignal.timeout(providerTimeoutMs(env)),
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -473,6 +476,11 @@ async function requestGeminiFixPlan(prompt: string, repoPath: string, env: NodeJ
   }
 
   return normalizeModelPlan(parseModelPlanContent(content), repoPath);
+}
+
+function providerTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const configured = Number(env.ROTATOR_AI_PROVIDER_TIMEOUT_MS ?? 45_000);
+  return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, configured)) : 45_000;
 }
 
 export function extractJsonPayload(content: string): string {

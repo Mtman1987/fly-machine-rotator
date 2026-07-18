@@ -1499,7 +1499,31 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
 
   for (const event of events) {
     try {
+      const incident = classifyIncident(event);
       const existing = store.get(buildFixId(event.appName, event.fingerprint));
+      if (incident.disposition !== "code" && incident.disposition !== "unknown") {
+        const now = new Date().toISOString();
+        const record: FixRecord = {
+          id: buildFixId(event.appName, event.fingerprint),
+          appName: event.appName,
+          fingerprint: event.fingerprint,
+          status: "generated",
+          generatedAt: now,
+          updatedAt: now,
+          diagnosis: incident.reason,
+          summary: `${incident.disposition}: ${incident.key}`,
+          confidence: "high",
+          confidenceScore: 92,
+          confidenceSignals: ["deterministic incident classifier", `incident family: ${incident.key}`, "AI patch generation skipped for a non-code incident"],
+          sourceSummary: "Classified by the rotator incident policy before provider invocation.",
+          changes: [],
+          attempts: existing?.attempts ?? []
+        };
+        updateFixQualityGate(record);
+        store.upsert(record);
+        generated += 1;
+        continue;
+      }
       const related = store.list().filter((item) => item.repoId === existing?.repoId || item.appName === event.appName);
       const record = await generateFixRecord(event, env, { existing, related });
       store.upsert(record);

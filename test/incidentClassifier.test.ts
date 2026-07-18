@@ -52,6 +52,18 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("hmo-dj-worker", "source", "No YouTube audio/video stream resolved"))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
   });
 
+  it("keeps restart, auth, and external provider incidents away from the coding model", () => {
+    expect(classifyIncident(event("streamweaver-new", "health", "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly."))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
+    expect(classifyIncident(event("streamweaver-new", "oauth", "Missing broadcaster token or refresh token"))).toMatchObject({ key: "streamweaver-new:missing-broadcaster-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "tts", "TTS generation failed: HTTP 401"))).toMatchObject({ key: "streamweaver-new:tts-provider-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "seaart", "SeaArt task timed out"))).toMatchObject({ key: "streamweaver-new:seaart-generation-timeout", disposition: "transient_external" });
+  });
+
+  it("routes current source-owned null and JSON failures to AI review", () => {
+    expect(classifyIncident(event("chat-tag-bot-new", "null", "Periodic loop failed: Cannot read properties of null (reading 'players')"))).toMatchObject({ disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("hearmeout-main", "json", "SyntaxError: Expected property name or '}' in JSON at position 1"))).toMatchObject({ disposition: "code", autoFixEligible: true });
+  });
+
   it("prunes historical rules that hide actionable incidents", () => {
     const createdAt = new Date().toISOString();
     expect(isUnsafeIgnoreRule({ id: "sig", kind: "app_message_regex", pattern: "Signature verification failed", createdAt })).toBe(true);

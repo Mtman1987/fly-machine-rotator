@@ -1,5 +1,5 @@
-import { StoredErrorEvent } from "./aiFixer.js";
-import { FixRecord } from "./fixStore.js";
+import type { StoredErrorEvent } from "./aiFixer.js";
+import type { FixRecord } from "./fixStore.js";
 
 export type IncidentDisposition = "expected_user" | "auth_config" | "transient_external" | "code" | "unknown";
 
@@ -28,6 +28,36 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "streamweaver-new" && lower.includes("could not resolve chatroom id")) {
     return classification("streamweaver-new:kick-chatroom-authorization", "auth_config", "The stored tenant Kick grant cannot resolve its broadcaster/chat identity; repair the API contract or re-authorize that tenant instead of generating a code patch from each log echo.");
+  }
+  if (lower.includes("health check") && lower.includes("has failed") && lower.includes("app is not responding properly")) {
+    return classification(`${event.appName}:fly-health-transition`, "transient_external", "Fly observed a health-check transition, commonly during a scheduled restart. Confirm recovery before escalating; a single transition is not a code-fix request.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("missing broadcaster token or refresh token")) {
+    return classification("streamweaver-new:missing-broadcaster-authorization", "auth_config", "A tenant has no usable broadcaster grant. Re-authorize that tenant; do not ask the coding model to manufacture OAuth tokens.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("tts generation failed") && /\b401\b/.test(lower)) {
+    return classification("streamweaver-new:tts-provider-authorization", "auth_config", "The configured TTS provider rejected its credential. Repair the tenant provider credential or routing configuration.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("seaart task timed out")) {
+    return classification("streamweaver-new:seaart-generation-timeout", "transient_external", "SeaArt did not finish the generation within the polling window. Retry with bounded polling and only escalate after repeated terminal timeouts.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("failed to create webhook") && /\b404\b/.test(lower)) {
+    return classification("streamweaver-new:discord-webhook-unavailable", "auth_config", "The target Discord channel cannot create or expose a webhook. Verify the channel mapping and Manage Webhooks permission; the bot fallback should remain available.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("edenai returned no visible text")) {
+    return classification("streamweaver-new:private-chat-empty-provider-response", "code", "The private-chat provider returned no displayable content; retry/fallback and structured content extraction belong in the app adapter.");
+  }
+  if (event.appName === "chat-tag-bot-new" && lower.includes("cannot read properties of null") && lower.includes("players")) {
+    return classification("chat-tag-bot-new:null-live-announcement-payload", "code", "The periodic live-announcement response can be null and must be validated before reading players.");
+  }
+  if (event.appName === "hearmeout-main" && lower.includes("expected property name") && lower.includes("json")) {
+    return classification("hearmeout-main:malformed-json-input", "code", "A request path parses malformed JSON without returning a controlled 400 response.");
+  }
+  if (lower.includes("could not establish signal connection") && lower.includes("websocket")) {
+    return classification(`${event.appName}:websocket-signal-connect`, "transient_external", "The realtime signalling websocket failed to establish. Retry with bounded backoff before treating it as an application defect.");
+  }
+  if (/\[(?:pp|pu)\d+\]/i.test(evidence) && lower.includes("connection reset")) {
+    return classification(`${event.appName}:fly-proxy-connection-reset`, "transient_external", "Fly proxy transport reset a connection. Keep it observable only when bounded client retry also fails.");
   }
   if (event.appName === "discord-stream-hub-new" && (
     lower.includes("failed to edit message") || lower.includes("message update failed")
