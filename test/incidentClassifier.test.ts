@@ -65,6 +65,11 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("hearmeout-main", "json", "SyntaxError: Expected property name or '}' in JSON at position 1"))).toMatchObject({ disposition: "code", autoFixEligible: true });
   });
 
+  it("does not let nearby auth logs contaminate the current error classification", () => {
+    expect(classifyIncident(event("streamweaver-new", "webhook", "Webhook send failed: Failed to create webhook: 404", ["Could not resolve chatroom ID for ladyheidi"]))).toMatchObject({ key: "streamweaver-new:discord-webhook-unavailable" });
+    expect(classifyIncident(event("streamweaver-new", "empty", "[Private Chat API] EdenAI returned no visible text", ["TTS generation failed: HTTP 401"]))).toMatchObject({ key: "streamweaver-new:private-chat-empty-provider-response", disposition: "code" });
+  });
+
   it("prunes historical rules that hide actionable incidents", () => {
     const createdAt = new Date().toISOString();
     expect(isUnsafeIgnoreRule({ id: "sig", kind: "app_message_regex", pattern: "Signature verification failed", createdAt })).toBe(true);
