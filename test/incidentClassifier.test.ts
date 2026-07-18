@@ -49,6 +49,7 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("chat-tag-bot-new", "kick", "[API Error] /api/kick/broadcast: 401 Unauthorized"))).toMatchObject({ disposition: "auth_config", autoFixEligible: false });
     expect(classifyIncident(event("discord-stream-hub-new", "body", "[ForwardForum] Error: TypeError: Body is unusable: Body has already been read"))).toMatchObject({ disposition: "code", autoFixEligible: true });
     expect(classifyIncident(event("hmo-dj-worker", "bot", "ERROR: Sign in to confirm you're not a bot"))).toMatchObject({ disposition: "auth_config", autoFixEligible: false });
+    expect(classifyIncident(event("hmo-dj-worker", "bot-curly", "ERROR: Sign in to confirm you’re not a bot"))).toMatchObject({ key: "hmo-dj-worker:youtube-bot-challenge", disposition: "auth_config", autoFixEligible: false });
     expect(classifyIncident(event("hmo-dj-worker", "source", "No YouTube audio/video stream resolved"))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
   });
 

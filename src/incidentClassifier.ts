@@ -70,7 +70,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "discord-stream-hub-new" && lower.includes("body is unusable") && lower.includes("already been read")) {
     return { key: "discord-stream-hub-new:request-body-double-read", disposition: "code", autoFixEligible: true, reason: "The route consumed a request body twice while attempting its JSON fallback; parse a single captured body instead." };
   }
-  if (event.appName === "hmo-dj-worker" && lower.includes("sign in to confirm you're not a bot")) {
+  if (event.appName === "hmo-dj-worker" && /sign in to confirm you(?:'|’|‘)re not a bot/.test(lower)) {
     return classification("hmo-dj-worker:youtube-bot-challenge", "auth_config", "YouTube challenged the server-side extractor; refresh the authorized extraction path or use the browser-resolved upload/cache handoff.");
   }
   if (event.appName === "hmo-dj-worker" && lower.includes("no youtube") && lower.includes("stream")) {

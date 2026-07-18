@@ -1521,12 +1521,14 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
         };
         updateFixQualityGate(record);
         store.upsert(record);
+        await store.save();
         generated += 1;
         continue;
       }
       const related = store.list().filter((item) => item.repoId === existing?.repoId || item.appName === event.appName);
       const record = await generateFixRecord(event, env, { existing, related });
       store.upsert(record);
+      await store.save();
       if (record.status === "error") failed += 1;
       else generated += 1;
     } catch (error) {
@@ -1548,6 +1550,7 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
         details: record.lastError
       });
       store.upsert(record);
+      await store.save();
       failed += 1;
     }
   }
