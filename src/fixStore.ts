@@ -55,7 +55,7 @@ export interface FixQualityGate {
 
 export interface FixAttempt {
   attemptedAt: string;
-  action: "generate" | "apply" | "check" | "push" | "verify" | "handled";
+  action: "generate" | "reconcile" | "apply" | "check" | "push" | "verify" | "handled";
   ok: boolean;
   summary: string;
   details?: string;

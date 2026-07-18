@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { appendFixAttempt, buildFixId, FixRecord, FixStatus } from "./fixStore.js";
 import { updateFixQualityGate } from "./fixQuality.js";
 import { captureRepoSnapshot, ensureRepoReady } from "./repoOps.js";
@@ -56,6 +56,9 @@ export async function generateFixRecord(
     related: options.related,
     repoSnapshot
   });
+  const proposedChangeCount = plan.changes.length;
+  const reconciliation = await removeAlreadyAppliedChanges(repoPath, plan.changes);
+  plan.changes = reconciliation.pending;
   const confidenceEstimate = estimateFixConfidence(plan, {
     existing: options.existing,
     related: options.related,
@@ -69,7 +72,9 @@ export async function generateFixRecord(
     repoId: config.id,
     repoLabel: config.label,
     repoUrl: config.repoUrl,
-    status: isUsablePlan(plan) ? "generated" : "error",
+    status: proposedChangeCount > 0 && plan.changes.length === 0 && reconciliation.alreadyApplied.length > 0
+      ? "handled"
+      : isUsablePlan(plan) ? "generated" : "error",
     generatedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     diagnosis: plan.diagnosis,
@@ -102,8 +107,45 @@ export async function generateFixRecord(
       ? `repo=${repoSnapshot.branch ?? "unknown"}@${repoSnapshot.headCommit.slice(0, 12)} context=${context.map((item) => item.path).join(", ")}`
       : `context=${context.map((item) => item.path).join(", ")}`
   });
+  if (reconciliation.alreadyApplied.length > 0) {
+    appendFixAttempt(record, {
+      attemptedAt: record.updatedAt,
+      action: "reconcile",
+      ok: true,
+      summary: `Recognized ${reconciliation.alreadyApplied.length} proposed repair(s) already present in the repo.`,
+      details: reconciliation.alreadyApplied.join(", ")
+    });
+  }
   updateFixQualityGate(record);
   return record;
+}
+
+export async function removeAlreadyAppliedChanges(
+  repoPath: string,
+  changes: ModelFixPlan["changes"]
+): Promise<{ pending: ModelFixPlan["changes"]; alreadyApplied: string[] }> {
+  const repoRoot = resolve(repoPath);
+  const pending: ModelFixPlan["changes"] = [];
+  const alreadyApplied: string[] = [];
+  for (const change of changes) {
+    const target = resolve(repoRoot, change.path);
+    const outsideRepo = relative(repoRoot, target).startsWith("..") || resolve(target) === repoRoot;
+    if (outsideRepo) {
+      pending.push(change);
+      continue;
+    }
+    try {
+      const current = await readFile(target, "utf8");
+      if (current.replace(/\r\n/g, "\n") === change.content.replace(/\r\n/g, "\n")) {
+        alreadyApplied.push(change.path);
+        continue;
+      }
+    } catch {
+      // A missing file is still a pending proposed change.
+    }
+    pending.push(change);
+  }
+  return { pending, alreadyApplied };
 }
 
 function baseRecord(
@@ -305,7 +347,10 @@ function buildPrompt(
   const relatedFixes = (options.related ?? [])
     .filter((record) => record.id !== options.existing?.id)
     .slice(-5)
-    .map((record) => `- ${record.appName} ${record.fingerprint} status=${record.status} summary=${record.summary ?? "n/a"} lastError=${record.lastError ?? "n/a"}`);
+    .map((record) => {
+      const latestAttempt = record.attempts?.at(-1);
+      return `- ${record.appName} ${record.fingerprint} status=${record.status} summary=${record.summary ?? "n/a"} check=${record.checkResult?.ok ?? "n/a"} latestLesson=${latestAttempt?.summary ?? "n/a"} lastError=${record.lastError ?? "n/a"}`;
+    });
   return [
     `Repo: ${repoLabel}`,
     `Repo path: ${repoPath}`,
