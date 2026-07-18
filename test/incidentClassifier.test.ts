@@ -45,6 +45,13 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("discord-stream-hub-new", "shell", "powershell executable file not found"))).toMatchObject({ disposition: "code", autoFixEligible: true });
   });
 
+  it("classifies the current Gate 0 production incident families", () => {
+    expect(classifyIncident(event("chat-tag-bot-new", "kick", "[API Error] /api/kick/broadcast: 401 Unauthorized"))).toMatchObject({ disposition: "auth_config", autoFixEligible: false });
+    expect(classifyIncident(event("discord-stream-hub-new", "body", "[ForwardForum] Error: TypeError: Body is unusable: Body has already been read"))).toMatchObject({ disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("hmo-dj-worker", "bot", "ERROR: Sign in to confirm you're not a bot"))).toMatchObject({ disposition: "auth_config", autoFixEligible: false });
+    expect(classifyIncident(event("hmo-dj-worker", "source", "No YouTube audio/video stream resolved"))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
+  });
+
   it("prunes historical rules that hide actionable incidents", () => {
     const createdAt = new Date().toISOString();
     expect(isUnsafeIgnoreRule({ id: "sig", kind: "app_message_regex", pattern: "Signature verification failed", createdAt })).toBe(true);

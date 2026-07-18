@@ -1556,8 +1556,12 @@ async function removeFingerprintFromErrorState(fingerprint: string, env: NodeJS.
   await writeFile(historyFile, JSON.stringify(history, null, 2));
 
   try {
-    const values = JSON.parse(await readFile(dedupeFile, "utf8")) as string[];
-    await writeFile(dedupeFile, JSON.stringify((Array.isArray(values) ? values : []).filter((value) => value !== fingerprint), null, 2));
+    const values = JSON.parse(await readFile(dedupeFile, "utf8")) as unknown;
+    const filtered = (Array.isArray(values) ? values : []).filter((value) => {
+      if (typeof value === "string") return value !== fingerprint;
+      return !(typeof value === "object" && value !== null && "fingerprint" in value && value.fingerprint === fingerprint);
+    });
+    await writeFile(dedupeFile, JSON.stringify(filtered, null, 2));
   } catch {
     await writeFile(dedupeFile, "[]");
   }

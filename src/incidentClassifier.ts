@@ -17,6 +17,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "chat-tag-bot-new" && lower.includes("you are not in the game")) {
     return classification("chat-tag-bot-new:user-not-in-game", "expected_user", "Normal command rejection; the player must join before tagging.");
   }
+  if (event.appName === "chat-tag-bot-new" && lower.includes("/api/kick/broadcast") && /\b(?:401|unauthorized)\b/.test(lower)) {
+    return classification("chat-tag-bot-new:kick-broadcast-authorization", "auth_config", "The Chat Tag bot and app disagree on the internal service credential; verify the bot-facing secret contract and keep the StreamWeaver credential separate.");
+  }
   if (event.appName === "streamweaver-new" && (
     lower.includes("shared chat source-only send") ||
     lower.includes("walkonrecovery") && lower.includes("twitch client not available for sending messages")
@@ -33,6 +36,15 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "discord-stream-hub-new" && lower.includes("signature verification failed")) {
     return classification("discord-stream-hub-new:signature-verification", "auth_config", "A failed Discord signature check is a security signal and must remain visible; verify the public key, raw request body, and timestamp handling.");
+  }
+  if (event.appName === "discord-stream-hub-new" && lower.includes("body is unusable") && lower.includes("already been read")) {
+    return { key: "discord-stream-hub-new:request-body-double-read", disposition: "code", autoFixEligible: true, reason: "The route consumed a request body twice while attempting its JSON fallback; parse a single captured body instead." };
+  }
+  if (event.appName === "hmo-dj-worker" && lower.includes("sign in to confirm you're not a bot")) {
+    return classification("hmo-dj-worker:youtube-bot-challenge", "auth_config", "YouTube challenged the server-side extractor; refresh the authorized extraction path or use the browser-resolved upload/cache handoff.");
+  }
+  if (event.appName === "hmo-dj-worker" && lower.includes("no youtube") && lower.includes("stream")) {
+    return classification("hmo-dj-worker:youtube-source-unresolved", "transient_external", "The external source resolver returned no playable stream; retry through the browser-resolved handoff and keep the failure visible if all fallbacks fail.");
   }
   if (/\b(?:429|too many requests)\b/.test(lower) && lower.includes("twitch")) {
     return classification(`${event.appName}:twitch-rate-limit`, "transient_external", "Twitch rate limiting needs shared caching, request coalescing, and bounded backoff; it must not be hidden as noise.");

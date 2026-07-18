@@ -567,33 +567,63 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-class DedupeStore {
+interface DedupeRecord {
+  fingerprint: string;
+  reportedAt: string;
+}
+
+export const ERROR_DEDUPE_COOLDOWN_MS = 60 * 60 * 1000;
+
+export class DedupeStore {
   private constructor(
     private readonly path: string,
-    private readonly values: Set<string>
+    private readonly values: Map<string, number>
   ) {}
 
   static async load(path: string): Promise<DedupeStore> {
     try {
       const content = await readFile(path, "utf8");
-      const parsed = JSON.parse(content) as string[];
-      return new DedupeStore(path, new Set(parsed));
+      const parsed = JSON.parse(content) as unknown;
+      const values = new Map<string, number>();
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === "string") {
+            // Legacy entries had no timestamp and suppressed a fingerprint forever.
+            // Treat them as expired so a currently recurring incident can surface once.
+            values.set(item, 0);
+          } else if (isRecord(item) && typeof item.fingerprint === "string") {
+            const reportedAt = typeof item.reportedAt === "string" ? Date.parse(item.reportedAt) : Number.NaN;
+            values.set(item.fingerprint, Number.isFinite(reportedAt) ? reportedAt : 0);
+          }
+        }
+      }
+      return new DedupeStore(path, values);
     } catch {
-      return new DedupeStore(path, new Set());
+      return new DedupeStore(path, new Map());
     }
   }
 
-  has(value: string): boolean {
-    return this.values.has(value);
+  has(value: string, now = Date.now()): boolean {
+    const reportedAt = this.values.get(value);
+    if (reportedAt === undefined) return false;
+    if (now - reportedAt < ERROR_DEDUPE_COOLDOWN_MS) return true;
+    this.values.delete(value);
+    return false;
   }
 
-  add(value: string): void {
-    this.values.add(value);
+  add(value: string, reportedAt = Date.now()): void {
+    this.values.delete(value);
+    this.values.set(value, reportedAt);
   }
 
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify([...this.values].slice(-2000), null, 2));
+    const cutoff = Date.now() - ERROR_DEDUPE_COOLDOWN_MS;
+    const records: DedupeRecord[] = [...this.values]
+      .filter(([, reportedAt]) => reportedAt > cutoff)
+      .slice(-2000)
+      .map(([fingerprint, reportedAt]) => ({ fingerprint, reportedAt: new Date(reportedAt).toISOString() }));
+    await writeFile(this.path, JSON.stringify(records, null, 2));
   }
 }
 

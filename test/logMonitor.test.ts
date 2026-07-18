@@ -1,5 +1,45 @@
-import { describe, expect, it } from "vitest";
-import { isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
+import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("log monitor repeat suppression", () => {
+  it("allows a fingerprint to be reported again after the bounded cooldown", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rotator-dedupe-"));
+    tempDirs.push(directory);
+    const store = await DedupeStore.load(join(directory, "fingerprints.json"));
+    const reportedAt = Date.parse("2026-07-18T08:00:00.000Z");
+
+    store.add("repeat-error", reportedAt);
+
+    expect(store.has("repeat-error", reportedAt + ERROR_DEDUPE_COOLDOWN_MS - 1)).toBe(true);
+    expect(store.has("repeat-error", reportedAt + ERROR_DEDUPE_COOLDOWN_MS)).toBe(false);
+  });
+
+  it("migrates permanent legacy fingerprints as expired and saves timestamped records", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rotator-dedupe-"));
+    tempDirs.push(directory);
+    const path = join(directory, "fingerprints.json");
+    await writeFile(path, JSON.stringify(["legacy-error"]));
+    const store = await DedupeStore.load(path);
+
+    expect(store.has("legacy-error")).toBe(false);
+    store.add("current-error");
+    await store.save();
+
+    const saved = JSON.parse(await readFile(path, "utf8")) as Array<Record<string, string>>;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.fingerprint).toBe("current-error");
+    expect(Date.parse(saved[0]?.reportedAt ?? "")).not.toBeNaN();
+  });
+});
 
 describe("log monitor noise filtering", () => {
   it.each([
