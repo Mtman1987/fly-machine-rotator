@@ -91,6 +91,13 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (/\[(?:pp|pu)\d+\]/i.test(event.message) && messageLower.includes("connection reset")) {
     return classification(`${event.appName}:fly-proxy-connection-reset`, "transient_external", "Fly proxy transport reset a connection. Keep it observable only when bounded client retry also fails.");
   }
+  if (/\[pu02\]/i.test(event.message) && (
+    messageLower.includes("http2 error") ||
+    messageLower.includes("stream no longer needed") ||
+    messageLower.includes("could not complete http request to instance")
+  )) {
+    return classification(`${event.appName}:fly-proxy-http2-cancellation`, "transient_external", "Fly proxy cancelled an HTTP/2 request stream after the client no longer needed it. Observe recurrence, but do not infer an application fetch bug from the proxy cancellation alone.");
+  }
   if (event.appName === "discord-stream-hub-new" && (
     messageLower.includes("failed to edit message") || messageLower.includes("message update failed")
   ) && /\b(?:500|502|503|504)\b/.test(messageLower)) {
