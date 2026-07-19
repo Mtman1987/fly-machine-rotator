@@ -85,7 +85,7 @@ export async function generateFixRecord(
     confidenceSignals: confidenceEstimate.signals,
     sourceSummary: plan.sourceSummary,
     changes: plan.changes,
-    attempts: options.existing?.attempts ?? [],
+    attempts: [...(options.existing?.attempts ?? [])],
     repoSnapshot: {
       capturedAt: new Date().toISOString(),
       repoPath,
@@ -271,10 +271,24 @@ function estimateFixConfidence(
 }
 
 function assertUsableModelPlan(plan: ModelFixPlan, provider: string): ModelFixPlan {
-  if (!isUsablePlan(plan)) {
+  const guarded = discardExcerptGuessing(plan);
+  if (!isUsablePlan(guarded)) {
     throw new Error(`${provider} returned an empty fix plan.`);
   }
-  return plan;
+  return guarded;
+}
+
+export function discardExcerptGuessing(plan: ModelFixPlan): ModelFixPlan {
+  if (plan.changes.length === 0) return plan;
+  const explanation = `${plan.summary}\n${plan.diagnosis}\n${plan.sourceSummary}`;
+  const mistakesExcerptForSource = /(?:source|file|function|implementation|fetch call|code).{0,100}(?:truncated|cut off|not (?:provided|included|available)|incomplete)|(?:truncated|cut off|not (?:provided|included|available)).{0,100}(?:source|file|function|implementation|code)/i.test(explanation);
+  if (!mistakesExcerptForSource) return plan;
+  return {
+    ...plan,
+    confidence: "low",
+    sourceSummary: `${plan.sourceSummary} Automatic changes were discarded because the diagnosis treated a context excerpt as the complete source file.`,
+    changes: []
+  };
 }
 
 function isUsablePlan(plan: ModelFixPlan): boolean {
@@ -386,6 +400,8 @@ function buildPrompt(
     "- Every change.path must exactly match one of the allowed edit paths unless the file already exists in the repo.",
     "- Do not rewrite an entire file with generic scaffolding.",
     "- Preserve unrelated code and return the full updated file content only for files you actually modify.",
+    "- Candidate files may be bounded excerpts. A context-excerpt marker means the real source continues; it is not evidence of truncated or incomplete application code.",
+    "- Never propose a change whose root cause is that a shown source file, function, or call appears cut off, truncated, unavailable, or omitted from the prompt.",
     "- If the failure is external or config-only and no safe code fix exists, return an empty changes array.",
     "- Avoid repeating a prior failed approach unless the new context clearly invalidates the old failure."
   ].join("\n");
@@ -805,7 +821,7 @@ function isTextSourceFile(path: string): boolean {
 }
 
 function clipFile(content: string): string {
-  return content.length > 8_000 ? `${content.slice(0, 8_000)}\n/* truncated */` : content;
+  return content.length > 8_000 ? `${content.slice(0, 8_000)}\n/* context excerpt ends here; source file continues */` : content;
 }
 
 function clipRelevantFile(content: string, searchTerms: string[]): string {
@@ -834,7 +850,7 @@ function clipRelevantFile(content: string, searchTerms: string[]): string {
   }
 
   const combined = chunks.join("\n\n/* --- */\n\n");
-  return combined.length > 8_000 ? `${combined.slice(0, 8_000)}\n/* truncated */` : combined;
+  return combined.length > 8_000 ? `${combined.slice(0, 8_000)}\n/* context excerpt ends here; source file continues */` : combined;
 }
 
 function scoreCandidate(path: string, content: string, matchedTerms: string[]): number {

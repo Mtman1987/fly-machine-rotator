@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { derivePriorityPaths, deriveSearchTerms, extractJsonPayload } from "../src/aiFixer.js";
+import { derivePriorityPaths, deriveSearchTerms, discardExcerptGuessing, extractJsonPayload } from "../src/aiFixer.js";
 
 describe("extractJsonPayload", () => {
   it("extracts a balanced JSON object from prose-wrapped model output", () => {
@@ -82,5 +82,32 @@ describe("extractJsonPayload", () => {
     const terms = deriveSearchTerms(event);
     expect(terms).toContain("/api/admin/access");
     expect(terms).toContain("discord-stream-hub-new.fly.dev/api/admin/access");
+  });
+
+  it("discards patches that mistake a bounded source excerpt for incomplete code", () => {
+    const guarded = discardExcerptGuessing({
+      summary: "Complete the missing parser implementation.",
+      diagnosis: "The source function is truncated and the implementation is cut off.",
+      confidence: "high",
+      sourceSummary: "The file appears incomplete.",
+      changes: [{ path: "src/route.ts", reason: "Complete the function.", content: "export function parse() {}\n" }]
+    });
+
+    expect(guarded.changes).toEqual([]);
+    expect(guarded.confidence).toBe("low");
+    expect(guarded.sourceSummary).toContain("discarded");
+  });
+
+  it("keeps patches when a request payload, rather than source context, was truncated", () => {
+    const guarded = discardExcerptGuessing({
+      summary: "Reject a truncated request payload.",
+      diagnosis: "The caller supplied a truncated JSON payload.",
+      confidence: "high",
+      sourceSummary: "The complete route source validates the request body.",
+      changes: [{ path: "src/route.ts", reason: "Return a controlled 400.", content: "export function parse() {}\n" }]
+    });
+
+    expect(guarded.changes).toHaveLength(1);
+    expect(guarded.confidence).toBe("high");
   });
 });

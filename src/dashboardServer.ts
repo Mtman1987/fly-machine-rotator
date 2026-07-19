@@ -1518,10 +1518,9 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
   const store = await FixStore.load(getFixStoreFile(env));
   const ignoreStore = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
   const events = dedupeErrorEvents(pruneLast24Hours(await readErrorHistory(env))).filter((event) => !ignoreStore.matches(event));
-  let generated = 0;
-  let failed = 0;
-
-  for (const event of events) {
+  const storeRecords = store.list();
+  const concurrency = Math.max(1, Math.min(4, Number(env.ROTATOR_REVIEW_CONCURRENCY ?? 3) || 3));
+  const results = await mapWithConcurrency(events, concurrency, async (event): Promise<{ record: FixRecord; failed: boolean }> => {
     try {
       const incident = classifyIncident(event);
       const existing = store.get(buildFixId(event.appName, event.fingerprint));
@@ -1544,21 +1543,15 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
           attempts: existing?.attempts ?? []
         };
         updateFixQualityGate(record);
-        store.upsert(record);
-        await store.save();
-        generated += 1;
-        continue;
+        return { record, failed: false };
       }
       const repoConfig = getRepoConfigForApp(event.appName);
-      const related = store.list().filter((item) => {
+      const related = storeRecords.filter((item) => {
         const sameRepo = repoConfig ? item.repoId === repoConfig.id || repoConfig.appNames.includes(item.appName) : item.appName === event.appName;
         return sameRepo && isTrustedRepairContext(item);
       });
       const record = await generateFixRecord(event, env, { existing, related });
-      store.upsert(record);
-      await store.save();
-      if (record.status === "error") failed += 1;
-      else generated += 1;
+      return { record, failed: record.status === "error" };
     } catch (error) {
       const record: FixRecord = {
         id: buildFixId(event.appName, event.fingerprint),
@@ -1577,14 +1570,29 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
         summary: "Fix generation failed.",
         details: record.lastError
       });
-      store.upsert(record);
-      await store.save();
-      failed += 1;
+      return { record, failed: true };
     }
-  }
+  });
 
+  for (const result of results) {
+    store.upsert(result.record);
+  }
   await store.save();
-  return { generated, failed };
+  const failed = results.filter((result) => result.failed).length;
+  return { generated: results.length - failed, failed };
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await work(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function isTrustedRepairContext(record: FixRecord): boolean {
