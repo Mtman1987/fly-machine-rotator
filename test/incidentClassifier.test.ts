@@ -73,7 +73,9 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "json", "[Next.js ERROR] [Discord Chat] Salvaged malformed JSON payload"))).toMatchObject({ disposition: "expected_user" });
     expect(classifyIncident(event("chat-tag-bot-new", "scope", "Unauthorized: broadcaster must authorize channel:bot scope"))).toMatchObject({ disposition: "auth_config" });
     expect(classifyIncident(event("hearmeout-main", "pu02", "[PU02] could not complete HTTP request to instance: legacy hyper error: http2 error: stream error sent by user: stream no longer needed"))).toMatchObject({ key: "hearmeout-main:fly-proxy-http2-cancellation", disposition: "transient_external", autoFixEligible: false });
-    expect(classifyIncident(event("chat-tag-new", "json-child", "error: \"Expected ',' or '}' after property value in JSON at position 95\"", ["'guildId',", "'channelId',", "'messageId',"]))).toMatchObject({ key: "chat-tag-new:controlled-discord-chat-json", disposition: "expected_user", autoFixEligible: false });
+    const malformedBridgeContext = ["'guildId',", "'channelId',", "'messageId',", "'userAvatar'"];
+    expect(classifyIncident(event("chat-tag-new", "json-child", "error: \"Expected ',' or '}' after property value in JSON at position 95\"", malformedBridgeContext))).toMatchObject({ key: "chat-tag-new:controlled-discord-chat-json", disposition: "expected_user", autoFixEligible: false });
+    expect(classifyIncident(event("streamweaver-new", "json-child", "error: \"Expected ',' or '}' after property value in JSON at position 95\"", malformedBridgeContext))).toMatchObject({ key: "streamweaver-new:controlled-discord-chat-json", disposition: "expected_user", autoFixEligible: false });
   });
 
   it("requires a ready or verified quality verdict before automatic application", () => {
