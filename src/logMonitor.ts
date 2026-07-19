@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect, StringCodec } from "nats";
 import { getIgnoreRulesFile, IgnoreRuleStore } from "./ignoreRules.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
+import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 
 interface LogMonitorOptions {
   appNames: string[];
@@ -153,6 +154,7 @@ async function handleLogLine(
   subject?: LogSubject
 ): Promise<void> {
   const entry = parseFlyLogLine(appName, line);
+  entry.message = redactSensitiveText(entry.message);
   entry.machineId ??= subject?.machineId;
   entry.region ??= subject?.region;
   if (stats) stats.entries += 1;
@@ -673,7 +675,7 @@ class ErrorHistoryStore {
     try {
       const content = await readFile(path, "utf8");
       const parsed = JSON.parse(content) as StoredErrorEvent[];
-      return new ErrorHistoryStore(path, Array.isArray(parsed) ? parsed : []);
+      return new ErrorHistoryStore(path, Array.isArray(parsed) ? redactSensitiveValue(parsed) : []);
     } catch {
       return new ErrorHistoryStore(path, []);
     }
@@ -688,9 +690,9 @@ class ErrorHistoryStore {
       machineId: event.errorLine.machineId,
       region: event.errorLine.region,
       timestamp: event.errorLine.timestamp,
-      message: event.errorLine.message,
-      suggestion: event.suggestion,
-      context: event.context.map(formatEntry)
+      message: redactSensitiveText(event.errorLine.message),
+      suggestion: redactSensitiveText(event.suggestion),
+      context: event.context.map(formatEntry).map(redactSensitiveText)
     });
     this.prune();
   }
@@ -708,10 +710,10 @@ class ErrorHistoryStore {
       lines.push("=".repeat(80));
       lines.push(`${event.recordedAt} ${event.appName} ${event.fingerprint}`);
       lines.push(`machine=${event.machineId ?? "unknown"} region=${event.region ?? "unknown"} log_time=${event.timestamp ?? "unknown"}`);
-      lines.push(`error: ${event.message}`);
-      lines.push(`suggestion: ${event.suggestion}`);
+      lines.push(`error: ${redactSensitiveText(event.message)}`);
+      lines.push(`suggestion: ${redactSensitiveText(event.suggestion)}`);
       lines.push("recent logs:");
-      lines.push(...event.context.map((line) => `  ${line}`));
+      lines.push(...event.context.map((line) => `  ${redactSensitiveText(line)}`));
       lines.push("");
     }
 
@@ -734,7 +736,7 @@ class ErrorHistoryStore {
       `count=${this.values.length}${countText ? ` (${countText})` : ""}`,
       ...latest.map((event) => {
         const when = event.timestamp ?? event.recordedAt;
-        return `${when} ${event.appName} ${event.fingerprint} ${event.message}`.slice(0, 260);
+        return `${when} ${event.appName} ${event.fingerprint} ${redactSensitiveText(event.message)}`.slice(0, 260);
       })
     ];
     return lines.join("\n").slice(0, 3800);

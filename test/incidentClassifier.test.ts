@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyIncident } from "../src/incidentClassifier.js";
+import { classifyIncident, evaluateAutoFixEligibility } from "../src/incidentClassifier.js";
 import { deriveIgnoreRegex, isUnsafeIgnoreRule } from "../src/ignoreRules.js";
+import type { FixRecord } from "../src/fixStore.js";
 
 const event = (appName: string, fingerprint: string, message: string, context: string[] = []) => ({ appName, fingerprint, message, context });
 
@@ -63,6 +64,44 @@ describe("incident classifier", () => {
   it("routes current source-owned null and JSON failures to AI review", () => {
     expect(classifyIncident(event("chat-tag-bot-new", "null", "Periodic loop failed: Cannot read properties of null (reading 'players')"))).toMatchObject({ disposition: "code", autoFixEligible: true });
     expect(classifyIncident(event("hearmeout-main", "json", "SyntaxError: Expected property name or '}' in JSON at position 1"))).toMatchObject({ disposition: "code", autoFixEligible: true });
+  });
+
+  it("groups the current transport, permission, and controlled-input families without code patches", () => {
+    expect(classifyIncident(event("hearmeout-main", "peer", "message: 'peer signaling error | remote=abc | Error: Lost connection to server.'"))).toMatchObject({ key: "hearmeout-main:livekit-peer-signaling", disposition: "transient_external" });
+    expect(classifyIncident(event("hearmeout-main", "invite", "[WatchRequest] Discord activity invite failed: 404 { message: 'Unknown Channel' }"))).toMatchObject({ disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "pusher", "[Kick] Pusher connection error", ["code: 4200, message: 'Please reconnect immediately'"]))).toMatchObject({ disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "json", "[Next.js ERROR] [Discord Chat] Salvaged malformed JSON payload"))).toMatchObject({ disposition: "expected_user" });
+    expect(classifyIncident(event("chat-tag-bot-new", "scope", "Unauthorized: broadcaster must authorize channel:bot scope"))).toMatchObject({ disposition: "auth_config" });
+  });
+
+  it("requires a ready or verified quality verdict before automatic application", () => {
+    const current = {
+      recordedAt: new Date().toISOString(),
+      appName: "chat-tag-bot-new",
+      fingerprint: "null",
+      message: "Periodic loop failed: Cannot read properties of null (reading 'players')",
+      suggestion: "guard the payload",
+      context: [],
+    };
+    const record = {
+      id: "chat-tag-bot-new::null",
+      appName: "chat-tag-bot-new",
+      fingerprint: "null",
+      status: "generated",
+      updatedAt: new Date().toISOString(),
+      confidence: "high",
+      confidenceScore: 90,
+      changes: [{ path: "bot.js", reason: "validate response", content: "const safe = true;\n" }],
+      attempts: [],
+      repoSnapshot: { capturedAt: new Date().toISOString(), repoPath: "/repo", headCommit: "abc", dirty: false, contextPaths: ["bot.js"] },
+      qualityGate: {
+        updatedAt: new Date().toISOString(), overallConfidence: 80, rootCauseConfidence: 90, patchConfidence: 85,
+        testConfidence: 80, rollbackConfidence: 80, postDeployConfidence: 35, verdict: "review", signals: [],
+      },
+    } as FixRecord;
+    expect(evaluateAutoFixEligibility(current, record)).toMatchObject({ eligible: false });
+    record.qualityGate!.verdict = "ready";
+    expect(evaluateAutoFixEligibility(current, record)).toMatchObject({ eligible: true });
   });
 
   it("does not let nearby auth logs contaminate the current error classification", () => {

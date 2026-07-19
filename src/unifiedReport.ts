@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { RotatorRuntimeState, getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { AppRotationResult } from "./types.js";
+import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 
 type RotationHistoryEntry = {
   at: string;
@@ -249,10 +250,10 @@ function renderLast24HourReport(events: StoredErrorEvent[]): string {
     lines.push("=".repeat(80));
     lines.push(`${event.recordedAt} ${event.appName} ${event.fingerprint}`);
     lines.push(`machine=${event.machineId ?? "unknown"} region=${event.region ?? "unknown"} log_time=${event.timestamp ?? "unknown"}`);
-    lines.push(`error: ${event.message}`);
-    lines.push(`suggestion: ${event.suggestion}`);
+    lines.push(`error: ${redactSensitiveText(event.message)}`);
+    lines.push(`suggestion: ${redactSensitiveText(event.suggestion)}`);
     lines.push("recent logs:");
-    lines.push(...event.context.map((line) => `  ${line}`));
+    lines.push(...event.context.map((line) => `  ${redactSensitiveText(line)}`));
     lines.push("");
   }
 
@@ -338,7 +339,7 @@ function shouldRepostUnifiedReport(status: number, body: string): boolean {
 async function readRotationHistory(path: string): Promise<RotationHistoryEntry[]> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as RotationHistoryEntry[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
   } catch {
     return [];
   }
@@ -347,7 +348,7 @@ async function readRotationHistory(path: string): Promise<RotationHistoryEntry[]
 async function readErrorHistory(path: string): Promise<StoredErrorEvent[]> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as StoredErrorEvent[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
   } catch {
     return [];
   }

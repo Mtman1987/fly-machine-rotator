@@ -29,7 +29,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "streamweaver-new" && (
     messageLower.includes("could not resolve chatroom id") ||
-    /(?:event error|connection error):?\s*\{?\s*$/.test(messageLower) && lower.includes("could not resolve chatroom id")
+    /(?:event error|connection error|error):?\s*\{?\s*$/.test(messageLower) && lower.includes("could not resolve chatroom id")
   )) {
     return classification("streamweaver-new:kick-chatroom-authorization", "auth_config", "The stored tenant Kick grant cannot resolve its broadcaster/chat identity; repair the API contract or re-authorize that tenant instead of generating a code patch from each log echo.");
   }
@@ -51,6 +51,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "streamweaver-new" && messageLower.includes("edenai returned no visible text")) {
     return classification("streamweaver-new:private-chat-empty-provider-response", "code", "The private-chat provider returned no displayable content; retry/fallback and structured content extraction belong in the app adapter.");
   }
+  if (messageLower.includes("salvaged malformed json payload") || messageLower.includes("[discord chat] invalid json payload")) {
+    return classification(`${event.appName}:controlled-malformed-json`, "expected_user", "The route already salvaged or rejected malformed caller JSON; keep the controlled 400 path tested without treating the rejected input as an application crash.");
+  }
   if (event.appName === "chat-tag-bot-new" && messageLower.includes("cannot read properties of null") && messageLower.includes("players")) {
     return classification("chat-tag-bot-new:null-live-announcement-payload", "code", "The periodic live-announcement response can be null and must be validated before reading players.");
   }
@@ -59,6 +62,31 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (messageLower.includes("could not establish signal connection") && messageLower.includes("websocket")) {
     return classification(`${event.appName}:websocket-signal-connect`, "transient_external", "The realtime signalling websocket failed to establish. Retry with bounded backoff before treating it as an application defect.");
+  }
+  if (
+    messageLower.includes("peer signaling error") ||
+    messageLower.includes("incoming media call failed") && messageLower.includes("negotiation") ||
+    messageLower.includes("websocket connection to") && messageLower.includes("/rtc/")
+  ) {
+    return classification(`${event.appName}:livekit-peer-signaling`, "transient_external", "LiveKit peer signalling disconnected or failed negotiation. Redact connection credentials, retry with bounded backoff, and group remote participant echoes into one transport incident.");
+  }
+  if (event.appName === "hearmeout-main" && messageLower.includes("discord activity invite failed") && (messageLower.includes("unknown channel") || /\b404\b/.test(messageLower))) {
+    return classification("hearmeout-main:discord-activity-channel", "auth_config", "The requested Discord voice channel is stale, inaccessible, or not a voice channel. Fall back to the normal Activity URL instead of patching credentials or retrying the invalid channel.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("chat history channel is unavailable")) {
+    return classification("streamweaver-new:discord-history-channel", "auth_config", "The configured Discord history channel is missing or inaccessible; continue without history and repair the tenant channel mapping or bot permissions.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("pusher connection error") && (lower.includes("code: 4200") || lower.includes("reconnect immediately"))) {
+    return classification("streamweaver-new:kick-pusher-reconnect", "transient_external", "Kick/Pusher requested an immediate reconnect as part of its normal connection lifecycle; reconnect once without emitting an application-error cascade.");
+  }
+  if (messageLower.includes("no response from twitch")) {
+    return classification(`${event.appName}:twitch-no-response`, "transient_external", "Twitch IRC did not answer within the client timeout. Retry with bounded reconnect handling and group repeated transport echoes.");
+  }
+  if (event.appName === "chat-tag-bot-new" && messageLower.includes("channel:bot scope")) {
+    return classification("chat-tag-bot-new:twitch-channel-bot-authorization", "auth_config", "The broadcaster grant lacks channel:bot or the bot is not recognized as a moderator. Repair the Twitch grant or moderator relationship; do not generate code or hide the failure.");
+  }
+  if (messageLower.includes("error: aborted") || messageLower === "⨯ error: aborted") {
+    return classification(`${event.appName}:request-aborted`, "transient_external", "The caller closed the request before completion; keep only repeated failures that survive bounded client retry.");
   }
   if (/\[(?:pp|pu)\d+\]/i.test(event.message) && messageLower.includes("connection reset")) {
     return classification(`${event.appName}:fly-proxy-connection-reset`, "transient_external", "Fly proxy transport reset a connection. Keep it observable only when bounded client retry also fails.");
@@ -111,7 +139,9 @@ export function evaluateAutoFixEligibility(event: StoredErrorEvent, record: FixR
   if (record.changes.some((change) => !change.reason.trim())) reasons.push("Every changed file must include a reason.");
   if ((record.confidenceScore ?? 0) < 75 && record.confidence !== "high") reasons.push("Root-cause confidence is below the automatic-apply threshold.");
   if (!record.repoSnapshot?.headCommit || record.repoSnapshot.dirty) reasons.push("The proposal is not based on a clean captured commit.");
-  if (record.qualityGate?.verdict === "blocked") reasons.push("The proposal quality gate is blocked.");
+  if (!record.qualityGate || !["ready", "verified"].includes(record.qualityGate.verdict)) {
+    reasons.push("The proposal quality gate must be ready or verified before automatic application.");
+  }
   return { eligible: reasons.length === 0, reasons };
 }
 

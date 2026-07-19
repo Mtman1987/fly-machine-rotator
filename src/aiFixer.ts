@@ -5,6 +5,7 @@ import { appendFixAttempt, buildFixId, FixRecord, FixStatus } from "./fixStore.j
 import { updateFixQualityGate } from "./fixQuality.js";
 import { captureRepoSnapshot, ensureRepoReady } from "./repoOps.js";
 import { getRepoConfigForApp } from "./repoMap.js";
+import { redactSensitiveText } from "./redaction.js";
 
 export interface StoredErrorEvent {
   recordedAt: string;
@@ -188,21 +189,21 @@ async function requestFixPlan(
     try {
       return assertUsableModelPlan(await requestEdenAiFixPlan(prompt, repoPath, env), "EdenAI");
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
     }
   }
   if (env.OPENAI_API_KEY) {
     try {
       return assertUsableModelPlan(await requestOpenAiFixPlan(prompt, repoPath, env), "OpenAI");
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
     }
   }
   if (env.GEMINI_API_KEY) {
     try {
       return assertUsableModelPlan(await requestGeminiFixPlan(prompt, repoPath, env), "Gemini");
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
     }
   }
   return buildLocalFallbackPlan(event, contextFiles, failures);
@@ -433,6 +434,10 @@ async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
 
 async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const model = env.EDENAI_FIX_MODEL ?? "anthropic/claude-sonnet-4-5";
+  const fallbacks = (env.EDENAI_FIX_FALLBACKS ?? "google/gemini-2.5-flash,openai/gpt-4.1-mini")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value && value !== model);
   const response = await fetch("https://api.edenai.run/v3/chat/completions", {
     signal: AbortSignal.timeout(providerTimeoutMs(env)),
     method: "POST",
@@ -442,6 +447,7 @@ async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
     },
     body: JSON.stringify({
       model,
+      ...(fallbacks.length ? { fallbacks } : {}),
       messages: [
         {
           role: "system",
@@ -452,7 +458,9 @@ async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJ
           content: prompt
         }
       ],
-      max_tokens: 4000,
+      max_tokens: 6000,
+      max_completion_tokens: 6000,
+      reasoning_effort: "minimal",
       stream: false
     })
   });
@@ -524,7 +532,7 @@ async function requestGeminiFixPlan(prompt: string, repoPath: string, env: NodeJ
 }
 
 function providerTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const configured = Number(env.ROTATOR_AI_PROVIDER_TIMEOUT_MS ?? 45_000);
+  const configured = Number(env.ROTATOR_AI_PROVIDER_TIMEOUT_MS ?? 90_000);
   return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, configured)) : 45_000;
 }
 
@@ -601,7 +609,7 @@ async function collectRepoContext(
     seenPaths.add(candidate.path);
   }
 
-  return contexts.slice(0, 10);
+  return contexts.slice(0, 6);
 }
 
 export function deriveSearchTerms(event: StoredErrorEvent): string[] {
@@ -659,6 +667,9 @@ export function derivePriorityPaths(event: StoredErrorEvent): string[] {
     paths.add("src/app/api/discord/manual-shoutout/route.ts");
     paths.add("src/lib/twitch-api.ts");
     paths.add("src/lib/twitch.ts");
+    if (message.includes("forwardforum") || message.includes("property value in json")) {
+      paths.add("src/app/api/discord/forward-to-forum/route.ts");
+    }
     if (message.includes("discordcleanup") || message.includes("failed to fetch messages")) {
       paths.add("src/lib/discord-orphan-cleanup-service.ts");
       paths.add("src/lib/discord-sync-service.ts");
@@ -686,6 +697,14 @@ export function derivePriorityPaths(event: StoredErrorEvent): string[] {
     paths.add("src/services/image-command.ts");
     paths.add("src/services/seaart.ts");
     paths.add("src/lib/seaart.ts");
+    if (message.includes("no visible text") || message.includes("empty response")) {
+      paths.add("src/services/private-chat-ai.ts");
+      paths.add("src/app/api/private-chat/respond/route.ts");
+    }
+    if (message.includes("malformed json") || message.includes("invalid json")) {
+      paths.add("src/lib/discord-chat-payload.ts");
+      paths.add("src/app/api/discord/chat/route.ts");
+    }
     if (message.includes("login authentication failed")) {
       paths.add("src/services/twitch.ts");
       paths.add("src/lib/twitch-oauth-service.ts");
@@ -708,6 +727,9 @@ export function derivePriorityPaths(event: StoredErrorEvent): string[] {
   if (event.appName === "hearmeout-main" || event.appName === "hmo-dj-worker") {
     paths.add("worker/src/server.js");
     paths.add("src/app/api/discord/chat/route.ts");
+    if (message.includes("activity invite") || message.includes("unknown channel")) {
+      paths.add("src/lib/watch/watch-request-service.ts");
+    }
     if (message.includes("watchmode")) {
       paths.add("src/lib/watch/watchmode-provider.ts");
       paths.add("src/lib/watch/watch-request-service.ts");
@@ -783,11 +805,11 @@ function isTextSourceFile(path: string): boolean {
 }
 
 function clipFile(content: string): string {
-  return content.length > 12_000 ? `${content.slice(0, 12_000)}\n/* truncated */` : content;
+  return content.length > 8_000 ? `${content.slice(0, 8_000)}\n/* truncated */` : content;
 }
 
 function clipRelevantFile(content: string, searchTerms: string[]): string {
-  if (content.length <= 12_000 || searchTerms.length === 0) {
+  if (content.length <= 8_000 || searchTerms.length === 0) {
     return clipFile(content);
   }
 
@@ -804,7 +826,7 @@ function clipRelevantFile(content: string, searchTerms: string[]): string {
     if (!chunk || seen.has(chunk)) continue;
     seen.add(chunk);
     chunks.push(chunk);
-    if (chunks.join("\n\n/* --- */\n\n").length >= 12_000) break;
+    if (chunks.join("\n\n/* --- */\n\n").length >= 8_000) break;
   }
 
   if (chunks.length === 0) {
@@ -812,7 +834,7 @@ function clipRelevantFile(content: string, searchTerms: string[]): string {
   }
 
   const combined = chunks.join("\n\n/* --- */\n\n");
-  return combined.length > 12_000 ? `${combined.slice(0, 12_000)}\n/* truncated */` : combined;
+  return combined.length > 8_000 ? `${combined.slice(0, 8_000)}\n/* truncated */` : combined;
 }
 
 function scoreCandidate(path: string, content: string, matchedTerms: string[]): number {

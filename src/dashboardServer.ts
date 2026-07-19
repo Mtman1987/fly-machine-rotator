@@ -15,6 +15,7 @@ import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { handleMountainViewRequest } from "./mountainView.js";
 import { isNonActionableErrorMessage } from "./logMonitor.js";
 import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
+import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -57,10 +58,13 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
+    authorizeAction(request, env);
     const history = await readErrorHistory(env);
     response.writeHead(200, {
       "content-type": "text/plain; charset=utf-8",
-      "content-disposition": 'attachment; filename="fly-errors-last-24h.txt"'
+      "content-disposition": 'attachment; filename="fly-errors-last-24h.txt"',
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff"
     });
     response.end(renderLast24HourReport(history));
     return;
@@ -90,9 +94,9 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   if (method === "POST" && url.pathname === "/actions/errors/clear") {
     await readBody(request);
     authorizeAction(request, env);
-    await clearErrorState(env);
+    const cleared = await clearErrorState(env);
     await refreshUnifiedReport(env);
-    return json(response, { ok: true });
+    return json(response, { ok: true, message: `Archived the prior baseline and cleared ${cleared.events} error event(s) plus ${cleared.proposals} proposal record(s).` });
   }
 
   if (method === "POST" && url.pathname === "/actions/errors/ignore-fingerprint") {
@@ -859,7 +863,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         <a href="#noise">Noise Filters</a>
         <a href="/mountainview">MountainView</a>
         <a href="/mountainview/apk">Download APK</a>
-        <a href="/logs/errors.txt">Download Logs</a>
+        <a href="#" onclick="downloadLogs(); return false;">Download Logs</a>
       </nav>
     </header>
 
@@ -873,7 +877,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
           <a class="link-btn" href="${escapeHtml(dashboardUrl)}">Open public dashboard URL</a>
           <a class="link-btn" href="/mountainview">Go to MountainView</a>
           <a class="link-btn" href="/mountainview/apk">Download MountainView APK</a>
-          <a class="link-btn secondary" href="/logs/errors.txt">Download 24h error log</a>
+          <a class="link-btn secondary" href="#" onclick="downloadLogs(); return false;">Download 24h error log</a>
         </div>
         <div class="feature-list">
           <div class="feature-row">Run a rotation, refresh the Discord report, and inspect the latest machine handoffs from one screen.</div>
@@ -920,7 +924,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
           ${perAppRows}
         </div>
         <div class="hero-actions">
-          <a class="link-btn secondary" href="/logs/errors.txt">Download logs</a>
+          <a class="link-btn secondary" href="#" onclick="downloadLogs(); return false;">Download logs</a>
         </div>
       </section>
 
@@ -1018,6 +1022,26 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         if (token) window.sessionStorage.setItem('rotatorActionToken', token);
       }
       return { ...extra, ...(token ? { 'x-rotator-action-token': token } : {}) };
+    }
+
+    async function downloadLogs() {
+      actionStatus.textContent = 'Preparing protected error log...';
+      try {
+        const response = await fetch('/logs/errors.txt', { headers: actionHeaders() });
+        if (!response.ok) throw new Error(await response.text() || ('Request failed with ' + response.status));
+        const blob = await response.blob();
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = 'fly-errors-last-24h.txt';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(href);
+        actionStatus.textContent = 'Protected, redacted log downloaded.';
+      } catch (error) {
+        actionStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
     }
 
     async function runAction(path, label) {
@@ -1525,7 +1549,11 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
         generated += 1;
         continue;
       }
-      const related = store.list().filter((item) => item.repoId === existing?.repoId || item.appName === event.appName);
+      const repoConfig = getRepoConfigForApp(event.appName);
+      const related = store.list().filter((item) => {
+        const sameRepo = repoConfig ? item.repoId === repoConfig.id || repoConfig.appNames.includes(item.appName) : item.appName === event.appName;
+        return sameRepo && isTrustedRepairContext(item);
+      });
       const record = await generateFixRecord(event, env, { existing, related });
       store.upsert(record);
       await store.save();
@@ -1559,15 +1587,56 @@ async function generateFixesForCurrentErrors(env: NodeJS.ProcessEnv): Promise<{ 
   return { generated, failed };
 }
 
-async function clearErrorState(env: NodeJS.ProcessEnv): Promise<void> {
-  const files = [
-    env.LOG_ERROR_DEDUPE_FILE ?? "/data/error-fingerprints.json",
-    env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json"
-  ];
-  for (const file of files) {
+function isTrustedRepairContext(record: FixRecord): boolean {
+  if (record.qualityGate?.verdict === "verified") return true;
+  if (record.checkResult?.ok && (record.status === "checked" || record.status === "pushed" || record.status === "handled")) return true;
+  return record.status === "handled" && record.attempts.some((attempt) => attempt.action === "reconcile" && attempt.ok);
+}
+
+async function clearErrorState(env: NodeJS.ProcessEnv): Promise<{ events: number; proposals: number; archiveDir: string }> {
+  const historyFile = env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
+  const dedupeFile = env.LOG_ERROR_DEDUPE_FILE ?? "/data/error-fingerprints.json";
+  const fixesFile = getFixStoreFile(env);
+  const ignoreFile = getIgnoreRulesFile(env);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const archiveDir = join(env.ROTATOR_ERROR_ARCHIVE_DIR ?? "/data/error-archives", stamp);
+  await mkdir(archiveDir, { recursive: true });
+
+  const archiveFiles = [
+    [historyFile, "error-history.redacted.json"],
+    [dedupeFile, "error-fingerprints.redacted.json"],
+    [fixesFile, "fix-proposals.redacted.json"],
+    [ignoreFile, "ignore-rules.redacted.json"]
+  ] as const;
+  for (const [source, target] of archiveFiles) {
+    try {
+      const raw = await readFile(source, "utf8");
+      let redacted = redactSensitiveText(raw);
+      try {
+        redacted = JSON.stringify(redactSensitiveValue(JSON.parse(raw)), null, 2);
+      } catch {
+        // Keep a text audit if a legacy state file is not valid JSON.
+      }
+      await writeFile(join(archiveDir, target), redacted);
+    } catch {
+      await writeFile(join(archiveDir, target), "[]");
+    }
+  }
+
+  const history = await readErrorHistory(env);
+  const proposals = await FixStore.load(fixesFile);
+  for (const file of [historyFile, dedupeFile, fixesFile]) {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "[]");
   }
+  await writeFile(env.ROTATOR_ERROR_BASELINE_FILE ?? "/data/error-baseline.json", JSON.stringify({
+    startedAt: new Date().toISOString(),
+    archiveDir,
+    clearedEvents: history.length,
+    clearedProposals: proposals.list().length,
+    purpose: "Fresh 24-hour post-hardening observation baseline"
+  }, null, 2));
+  return { events: history.length, proposals: proposals.list().length, archiveDir };
 }
 
 async function removeMatchingIgnoredEvents(env: NodeJS.ProcessEnv, ignoreStore: IgnoreRuleStore): Promise<void> {
@@ -1598,7 +1667,7 @@ async function readErrorHistory(env: NodeJS.ProcessEnv): Promise<StoredErrorEven
   const historyFile = env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
   try {
     const parsed = JSON.parse(await readFile(historyFile, "utf8")) as StoredErrorEvent[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
   } catch {
     return [];
   }
@@ -1690,10 +1759,10 @@ function renderLast24HourReport(events: StoredErrorEvent[]): string {
     lines.push("=".repeat(80));
     lines.push(`${event.recordedAt} ${event.appName} ${event.fingerprint}`);
     lines.push(`machine=${event.machineId ?? "unknown"} region=${event.region ?? "unknown"} log_time=${event.timestamp ?? "unknown"}`);
-    lines.push(`error: ${event.message}`);
-    lines.push(`suggestion: ${event.suggestion}`);
+    lines.push(`error: ${redactSensitiveText(event.message)}`);
+    lines.push(`suggestion: ${redactSensitiveText(event.suggestion)}`);
     lines.push("recent logs:");
-    lines.push(...event.context.map((line) => `  ${line}`));
+    lines.push(...event.context.map((line) => `  ${redactSensitiveText(line)}`));
     lines.push("");
   }
   return lines.join("\n").slice(-900_000);
