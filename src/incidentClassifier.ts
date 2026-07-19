@@ -54,6 +54,11 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (messageLower.includes("salvaged malformed json payload") || messageLower.includes("[discord chat] invalid json payload")) {
     return classification(`${event.appName}:controlled-malformed-json`, "expected_user", "The route already salvaged or rejected malformed caller JSON; keep the controlled 400 path tested without treating the rejected input as an application crash.");
   }
+  if (event.appName === "chat-tag-new" &&
+    messageLower.includes("after property value in json") &&
+    lower.includes("guildid") && lower.includes("channelid") && lower.includes("messageid")) {
+    return classification("chat-tag-new:controlled-discord-chat-json", "expected_user", "The Discord chat route recorded the parser detail while salvaging or rejecting a malformed inbound chat payload; keep the narrow input validation path without generating a webhook serializer patch.");
+  }
   if (event.appName === "chat-tag-bot-new" && messageLower.includes("cannot read properties of null") && messageLower.includes("players")) {
     return classification("chat-tag-bot-new:null-live-announcement-payload", "code", "The periodic live-announcement response can be null and must be validated before reading players.");
   }
