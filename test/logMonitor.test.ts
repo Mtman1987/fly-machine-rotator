@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isBeforeObservationBaseline, isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
+import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isBeforeObservationBaseline, isNonActionableErrorMessage, looksLikeError, ObservationBaselineStore, suggestFix } from "../src/logMonitor.js";
 
 const tempDirs: string[] = [];
 
@@ -17,6 +17,19 @@ describe("log monitor repeat suppression", () => {
     expect(isBeforeObservationBaseline(baseline, baseline)).toBe(true);
     expect(isBeforeObservationBaseline("2026-07-19T05:09:57.305Z", baseline)).toBe(false);
     expect(isBeforeObservationBaseline(undefined, baseline)).toBe(false);
+  });
+
+  it("detects a dashboard clear so the monitor can reset its in-memory stores", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rotator-baseline-"));
+    tempDirs.push(directory);
+    const path = join(directory, "baseline.json");
+    await writeFile(path, JSON.stringify({ startedAt: "2026-07-19T05:09:57.304Z" }));
+    const store = await ObservationBaselineStore.load(path);
+
+    expect(await store.inspect("2026-07-19T05:09:57.000Z")).toEqual({ excludes: true, changed: false });
+    await writeFile(path, JSON.stringify({ startedAt: "2026-07-20T10:13:59.997Z" }));
+    expect(await store.inspect("2026-07-19T05:09:57.000Z")).toEqual({ excludes: true, changed: true });
+    expect(await store.inspect("2026-07-20T10:14:00.000Z")).toEqual({ excludes: false, changed: false });
   });
 
   it("allows a fingerprint to be reported again after the bounded cooldown", async () => {

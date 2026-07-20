@@ -80,7 +80,7 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
   const history = await ErrorHistoryStore.load(options.historyFile);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
-  const observationBaseline = new ObservationBaselineStore(options.baselineFile);
+  const observationBaseline = await ObservationBaselineStore.load(options.baselineFile);
   const contexts = new Map<string, LogEntry[]>();
   for (const appName of options.appNames) contexts.set(appName, []);
 
@@ -128,7 +128,7 @@ async function handleLogOutput(
   const history = await ErrorHistoryStore.load(options.historyFile);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
-  const observationBaseline = new ObservationBaselineStore(options.baselineFile);
+  const observationBaseline = await ObservationBaselineStore.load(options.baselineFile);
   const stats = { entries: 0, errors: 0, sent: 0 };
   const objects = splitJsonObjects(output);
   if (objects.length > 0) {
@@ -167,7 +167,12 @@ async function handleLogLine(
 
   if (!looksLikeError(entry.message)) return;
   if (stats) stats.errors += 1;
-  if (await observationBaseline.excludes(entry.timestamp)) return;
+  const baseline = await observationBaseline.inspect(entry.timestamp);
+  if (baseline.changed) {
+    history.reset();
+    dedupe.reset();
+  }
+  if (baseline.excludes) return;
 
   const fingerprint = fingerprintError(appName, entry);
   if (dedupe.has(fingerprint)) {
@@ -334,16 +339,32 @@ export function isBeforeObservationBaseline(logTimestamp: string | undefined, ba
   return Number.isFinite(logTime) && Number.isFinite(baselineTime) && logTime <= baselineTime;
 }
 
-class ObservationBaselineStore {
-  constructor(private readonly path?: string) {}
+export class ObservationBaselineStore {
+  private constructor(
+    private readonly path?: string,
+    private appliedStartedAt?: string
+  ) {}
 
-  async excludes(logTimestamp?: string): Promise<boolean> {
-    if (!this.path || !logTimestamp) return false;
+  static async load(path?: string): Promise<ObservationBaselineStore> {
+    const store = new ObservationBaselineStore(path);
+    store.appliedStartedAt = await store.readStartedAt();
+    return store;
+  }
+
+  async inspect(logTimestamp?: string): Promise<{ excludes: boolean; changed: boolean }> {
+    const startedAt = await this.readStartedAt();
+    const changed = Boolean(startedAt && startedAt !== this.appliedStartedAt);
+    if (changed) this.appliedStartedAt = startedAt;
+    return { excludes: isBeforeObservationBaseline(logTimestamp, startedAt), changed };
+  }
+
+  private async readStartedAt(): Promise<string | undefined> {
+    if (!this.path) return undefined;
     try {
       const baseline = JSON.parse(await readFile(this.path, "utf8")) as { startedAt?: string };
-      return isBeforeObservationBaseline(logTimestamp, baseline.startedAt);
+      return baseline.startedAt;
     } catch {
-      return false;
+      return undefined;
     }
   }
 }
@@ -645,6 +666,10 @@ export class DedupeStore {
     this.values.set(value, reportedAt);
   }
 
+  reset(): void {
+    this.values.clear();
+  }
+
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const cutoff = Date.now() - ERROR_DEDUPE_COOLDOWN_MS;
@@ -722,6 +747,10 @@ class ErrorHistoryStore {
       context: event.context.map(formatEntry).map(redactSensitiveText)
     });
     this.prune();
+  }
+
+  reset(): void {
+    this.values.splice(0, this.values.length);
   }
 
   renderLast24Hours(): string {
