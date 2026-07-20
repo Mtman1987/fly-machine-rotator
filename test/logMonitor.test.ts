@@ -60,6 +60,19 @@ describe("log monitor repeat suppression", () => {
     expect(saved[0]?.fingerprint).toBe("current-error");
     expect(Date.parse(saved[0]?.reportedAt ?? "")).not.toBeNaN();
   });
+
+  it("honors dashboard removal from the volume-backed dedupe file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rotator-dedupe-"));
+    tempDirs.push(directory);
+    const path = join(directory, "fingerprints.json");
+    const store = await DedupeStore.load(path);
+    store.add("handled-error");
+    await store.save();
+    await writeFile(path, "[]");
+
+    await store.syncFromDisk();
+    expect(store.has("handled-error")).toBe(false);
+  });
 });
 
 describe("log monitor noise filtering", () => {

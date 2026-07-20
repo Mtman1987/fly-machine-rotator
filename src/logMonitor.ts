@@ -173,6 +173,7 @@ async function handleLogLine(
     dedupe.reset();
   }
   if (baseline.excludes) return;
+  await Promise.all([history.syncFromDisk(), dedupe.syncFromDisk()]);
 
   const fingerprint = fingerprintError(appName, entry);
   if (dedupe.has(fingerprint)) {
@@ -670,6 +671,18 @@ export class DedupeStore {
     this.values.clear();
   }
 
+  async syncFromDisk(): Promise<void> {
+    try {
+      const disk = await DedupeStore.load(this.path);
+      this.values.clear();
+      for (const [fingerprint, reportedAt] of disk.values) {
+        this.values.set(fingerprint, reportedAt);
+      }
+    } catch {
+      // Preserve the current in-memory state if the file is briefly unreadable.
+    }
+  }
+
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const cutoff = Date.now() - ERROR_DEDUPE_COOLDOWN_MS;
@@ -751,6 +764,18 @@ class ErrorHistoryStore {
 
   reset(): void {
     this.values.splice(0, this.values.length);
+  }
+
+  async syncFromDisk(): Promise<void> {
+    try {
+      const content = await readFile(this.path, "utf8");
+      const parsed = JSON.parse(content) as StoredErrorEvent[];
+      if (!Array.isArray(parsed)) return;
+      this.values.splice(0, this.values.length, ...redactSensitiveValue(parsed));
+      this.prune();
+    } catch {
+      // Preserve the current in-memory state if the file is briefly unreadable.
+    }
   }
 
   renderLast24Hours(): string {
