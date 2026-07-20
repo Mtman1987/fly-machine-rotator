@@ -14,6 +14,7 @@ interface LogMonitorOptions {
   dedupeFile: string;
   historyFile: string;
   reportMessageFile: string;
+  baselineFile?: string;
   contextLines: number;
   pollIntervalMs: number;
   sampleDurationMs: number;
@@ -79,6 +80,7 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
   const history = await ErrorHistoryStore.load(options.historyFile);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
+  const observationBaseline = new ObservationBaselineStore(options.baselineFile);
   const contexts = new Map<string, LogEntry[]>();
   for (const appName of options.appNames) contexts.set(appName, []);
 
@@ -109,6 +111,7 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
       history,
       reportState,
       ignoreRules,
+      observationBaseline,
       undefined,
       subject
     );
@@ -125,18 +128,19 @@ async function handleLogOutput(
   const history = await ErrorHistoryStore.load(options.historyFile);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
+  const observationBaseline = new ObservationBaselineStore(options.baselineFile);
   const stats = { entries: 0, errors: 0, sent: 0 };
   const objects = splitJsonObjects(output);
   if (objects.length > 0) {
     for (const objectText of objects) {
-      await handleLogLine(appName, objectText, context, options, dedupe, history, reportState, ignoreRules, stats);
+      await handleLogLine(appName, objectText, context, options, dedupe, history, reportState, ignoreRules, observationBaseline, stats);
     }
     return stats;
   }
 
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (trimmed) await handleLogLine(appName, trimmed, context, options, dedupe, history, reportState, ignoreRules, stats);
+    if (trimmed) await handleLogLine(appName, trimmed, context, options, dedupe, history, reportState, ignoreRules, observationBaseline, stats);
   }
   return stats;
 }
@@ -150,6 +154,7 @@ async function handleLogLine(
   history: ErrorHistoryStore,
   reportState: DiscordReportStateStore,
   ignoreRules: IgnoreRuleStore,
+  observationBaseline: ObservationBaselineStore,
   stats?: { entries: number; errors: number; sent: number },
   subject?: LogSubject
 ): Promise<void> {
@@ -162,6 +167,7 @@ async function handleLogLine(
 
   if (!looksLikeError(entry.message)) return;
   if (stats) stats.errors += 1;
+  if (await observationBaseline.excludes(entry.timestamp)) return;
 
   const fingerprint = fingerprintError(appName, entry);
   if (dedupe.has(fingerprint)) {
@@ -319,6 +325,27 @@ function isExpectedApplicationResponse(message: string): boolean {
     /ERROR:third_party\/crashpad\/crashpad\/util\/file\/file_io_posix\.cc:\d+.*\/sys\/devices\/system\/cpu\/cpu\d+\/cpufreq\/scaling_(?:cur|max)_freq/i,
     /TROUBLESHOOTING:\s*https:\/\/pptr\.dev\/troubleshooting/i
   ].some((pattern) => pattern.test(message));
+}
+
+export function isBeforeObservationBaseline(logTimestamp: string | undefined, baselineStartedAt: string | undefined): boolean {
+  if (!logTimestamp || !baselineStartedAt) return false;
+  const logTime = Date.parse(logTimestamp);
+  const baselineTime = Date.parse(baselineStartedAt);
+  return Number.isFinite(logTime) && Number.isFinite(baselineTime) && logTime <= baselineTime;
+}
+
+class ObservationBaselineStore {
+  constructor(private readonly path?: string) {}
+
+  async excludes(logTimestamp?: string): Promise<boolean> {
+    if (!this.path || !logTimestamp) return false;
+    try {
+      const baseline = JSON.parse(await readFile(this.path, "utf8")) as { startedAt?: string };
+      return isBeforeObservationBaseline(logTimestamp, baseline.startedAt);
+    } catch {
+      return false;
+    }
+  }
 }
 
 function isNonActionableErrorEcho(message: string): boolean {

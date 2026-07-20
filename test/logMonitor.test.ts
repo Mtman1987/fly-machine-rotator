@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
+import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isBeforeObservationBaseline, isNonActionableErrorMessage, looksLikeError, suggestFix } from "../src/logMonitor.js";
 
 const tempDirs: string[] = [];
 
@@ -11,6 +11,14 @@ afterEach(async () => {
 });
 
 describe("log monitor repeat suppression", () => {
+  it("does not re-ingest retained Fly logs from before a cleared observation baseline", () => {
+    const baseline = "2026-07-19T05:09:57.304Z";
+    expect(isBeforeObservationBaseline("2026-07-18T17:03:33.248Z", baseline)).toBe(true);
+    expect(isBeforeObservationBaseline(baseline, baseline)).toBe(true);
+    expect(isBeforeObservationBaseline("2026-07-19T05:09:57.305Z", baseline)).toBe(false);
+    expect(isBeforeObservationBaseline(undefined, baseline)).toBe(false);
+  });
+
   it("allows a fingerprint to be reported again after the bounded cooldown", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rotator-dedupe-"));
     tempDirs.push(directory);

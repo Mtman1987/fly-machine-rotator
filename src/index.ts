@@ -24,6 +24,7 @@ async function main(): Promise<void> {
       dedupeFile: process.env.LOG_ERROR_DEDUPE_FILE ?? "/data/error-fingerprints.json",
       historyFile: process.env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json",
       reportMessageFile: process.env.DISCORD_ERROR_REPORT_MESSAGE_FILE ?? "/data/discord-error-report-message.json",
+      baselineFile: process.env.ROTATOR_ERROR_BASELINE_FILE ?? "/data/error-baseline.json",
       contextLines: Number(process.env.LOG_CONTEXT_LINES ?? 8),
       pollIntervalMs: Number(process.env.LOG_POLL_INTERVAL_MS ?? 60_000),
       sampleDurationMs: Number(process.env.LOG_SAMPLE_DURATION_MS ?? 15_000)
