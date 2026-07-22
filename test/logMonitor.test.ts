@@ -140,6 +140,18 @@ describe("log monitor noise filtering", () => {
     expect(looksLikeError("[Twitch:community-bot] Failed to join #infuse_carnage: msg_banned")).toBe(false);
   });
 
+  it.each([
+    '[API Error] /api/tag: 400 {"error":"Channel is blacklisted/opted out and cannot rejoin."}',
+    '[Bot] Join result: {"error":"Channel is blacklisted/opted out and cannot rejoin.","__ok":false,"__status":400}',
+    "[HTTP /api/twitch/send-message] Sending as 'broadcaster': Pokémon Center, Computer Error | Balance: 993135 pts",
+    "[Next.js ERROR] [Discord Cleanup] Message delete failed: {\"status\":404,\"error\":\"Discord API 404: Unknown Message\"}",
+    "Read more: https://nextjs.org/docs/messages/failed-to-find-server-action",
+    "    'Read more: https://nextjs.org/docs/messages/failed-to-find-server-action',",
+    "    error: {"
+  ])("ignores exact successful, expected-state, and context-only error echoes: %s", (message) => {
+    expect(looksLikeError(message)).toBe(false);
+  });
+
   it("keeps real app failures actionable", () => {
     expect(looksLikeError("[Next.js ERROR] [AI Image] Error: Custom SeaArt models require modelNo:modelVerNo.")).toBe(true);
   });

@@ -78,6 +78,21 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "json-child", "error: \"Expected ',' or '}' after property value in JSON at position 95\"", malformedBridgeContext))).toMatchObject({ key: "streamweaver-new:controlled-discord-chat-json", disposition: "expected_user", autoFixEligible: false });
   });
 
+  it("classifies post-hardening transport, lifecycle, and credential families without model guessing", () => {
+    expect(classifyIncident(event("hearmeout-main", "ping", "[09:15] error: Ping timeout."))).toMatchObject({ key: "hearmeout-main:twitch-chat-transport", disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "login", "[Twitch:community-bot] Disconnected: Login authentication failed"))).toMatchObject({ key: "streamweaver-new:twitch-chat-authentication", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "eventsub", "[EventSub:47145728] Socket closed: 4002 failed ping pong"))).toMatchObject({ key: "streamweaver-new:eventsub-ping-timeout", disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "banned", "[SharedChat] Join before send failed for #infuse_carnage: msg_banned"))).toMatchObject({ key: "streamweaver-new:shared-chat-channel-banned", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "gone", "[Next.js ERROR] [Discord Cleanup] Message delete failed: {\"status\":404,\"error\":\"Unknown Message\"}"))).toMatchObject({ key: "streamweaver-new:discord-cleanup-already-deleted", disposition: "expected_user" });
+    expect(classifyIncident(event("streamweaver-new", "pipe", "[PP03] could not proxy TCP data: Broken pipe (os error 32)"))).toMatchObject({ key: "streamweaver-new:fly-proxy-connection-reset", disposition: "transient_external" });
+    expect(classifyIncident(event("hearmeout-main", "action", "Error: Failed to find Server Action \"abc\". This request might be from an older or newer deployment."))).toMatchObject({ key: "hearmeout-main:stale-server-action-client", disposition: "transient_external" });
+    expect(classifyIncident(event("hearmeout-main", "gemini", "Error fetching from https://generativelanguage.googleapis.com: API key not valid."))).toMatchObject({ key: "hearmeout-main:gemini-api-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("hearmeout-main", "eof", "ERROR unexpected error replying to request error=EOF ok=true"))).toMatchObject({ key: "hearmeout-main:fly-client-disconnect", disposition: "transient_external" });
+    expect(classifyIncident(event("hearmeout-main", "media", "message: 'outgoing media call failed | remote=voice | Error: Negotiation of connection failed.'"))).toMatchObject({ key: "hearmeout-main:livekit-peer-signaling", disposition: "transient_external" });
+    expect(classifyIncident(event("hmo-dj-worker", "rate", "[VoiceBridge] start failed for mtman: ws failure: HTTP error: 429 Too Many Requests"))).toMatchObject({ key: "hmo-dj-worker:livekit-voice-bridge-rate-limit", disposition: "transient_external" });
+    expect(classifyIncident(event("hmo-dj-worker", "channel", "[VoiceBridge] start failed for discord-activity: Unknown Channel"))).toMatchObject({ key: "hmo-dj-worker:discord-voice-channel", disposition: "auth_config" });
+  });
+
   it("requires a ready or verified quality verdict before automatic application", () => {
     const current = {
       recordedAt: new Date().toISOString(),

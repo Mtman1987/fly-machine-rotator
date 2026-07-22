@@ -320,10 +320,15 @@ function isExpectedApplicationResponse(message: string): boolean {
     /\[TTS\] OpenAI failed .* falling back to EdenAI/i,
     /\[Kick\]\s*.+Pusher connection error .*code:\s*1006/i,
     /Discord API 404: .*"Unknown Message".*"code":\s*10008/i,
+    /\[Next\.js ERROR\] \[Discord Cleanup\] Message delete failed: .*"status":404.*Unknown Message/i,
+    /\[WalkOn\] Twitch profile lookup failed for .+; using fallback persona Error: Failed to fetch Twitch user: Too Many Requests/i,
+    /\[WalkOnRecovery\] Retry failed for .+; sending simple fallback Error: Retry was skipped by cooldown\/exclusion rules/i,
     /\[API Error\]\s*\/api\/tag:\s*400\b.*"error":"You don't have a pass!/i,
     /\[API Error\]\s*\/api\/tag:\s*404\b.*"error":"You are not in the game!/i,
     /\[Bot\] Tag API response:.*"error":"You are not in the game!.*"__status":404/i,
     /\[Bot\] Tag error: You are not in the game!/i,
+    /\[API Error\]\s*\/api\/tag:\s*400\b.*"error":"Channel is blacklisted\/opted out and cannot rejoin\."/i,
+    /\[Bot\] Join result:.*"error":"Channel is blacklisted\/opted out and cannot rejoin\.".*"__status":400/i,
     /Discord fetch failed .*\/members\/codex-test-user:\s*400\b.*NUMBER_TYPE_COERCE/i,
     /\[HTTP [^\]]+\] Sending as 'bot': .* Double or nothing failed\./i,
     /Fontconfig error: Cannot load default config file/i,
@@ -380,7 +385,10 @@ function isNonActionableErrorEcho(message: string): boolean {
     /\[Twitch:[^\]]+\] Failed to join #[^:]+: msg_banned/i,
     /\[TTS API\] Request:\s*\{/i,
     /^\s*(?:textLength|textPreview|voice|tenantId):\s*/i,
-    /\[HTTP [^\]]+\] Sending as .*failed to create clip!\s*\(500\)/i
+    /\[HTTP [^\]]+\] Sending as .*failed to create clip!\s*\(500\)/i,
+    /^\[HTTP \/api\/twitch\/send-message\] Sending as '(?:bot|broadcaster)':/i,
+    /^\s*['"]?Read more:\s*https:\/\/nextjs\.org\/docs\/messages\/failed-to-find-server-action['"]?,?\s*$/i,
+    /^\s*error:\s*\{\s*$/i
   ].some((pattern) => pattern.test(message));
 }
 

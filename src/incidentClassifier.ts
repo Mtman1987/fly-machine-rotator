@@ -36,6 +36,12 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (messageLower.includes("health check") && messageLower.includes("has failed") && messageLower.includes("app is not responding properly")) {
     return classification(`${event.appName}:fly-health-transition`, "transient_external", "Fly observed a health-check transition, commonly during a scheduled restart. Confirm recovery before escalating; a single transition is not a code-fix request.");
   }
+  if (/^\[\d{2}:\d{2}\] error: (?:ping timeout\.|could not connect to server\. reconnecting in \d+ seconds?\.\.)$/i.test(event.message.trim())) {
+    return classification(`${event.appName}:twitch-chat-transport`, "transient_external", "The Twitch IRC client lost its ping or connection and entered its built-in reconnect path. Confirm recovery and group the transport sequence instead of asking the coding model to guess which unrelated service timed out.");
+  }
+  if (messageLower.includes("login authentication failed")) {
+    return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
+  }
   if (event.appName === "streamweaver-new" && messageLower.includes("missing broadcaster token or refresh token")) {
     return classification("streamweaver-new:missing-broadcaster-authorization", "auth_config", "A tenant has no usable broadcaster grant. Re-authorize that tenant; do not ask the coding model to manufacture OAuth tokens.");
   }
@@ -69,7 +75,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (
     messageLower.includes("peer signaling error") ||
-    messageLower.includes("incoming media call failed") && messageLower.includes("negotiation") ||
+    /(?:incoming|outgoing) media call failed/.test(messageLower) && messageLower.includes("negotiation") ||
     messageLower.includes("websocket connection to") && messageLower.includes("/rtc/")
   ) {
     return classification(`${event.appName}:livekit-peer-signaling`, "transient_external", "LiveKit peer signalling disconnected or failed negotiation. Redact connection credentials, retry with bounded backoff, and group remote participant echoes into one transport incident.");
@@ -77,11 +83,26 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "hearmeout-main" && messageLower.includes("discord activity invite failed") && (messageLower.includes("unknown channel") || /\b404\b/.test(messageLower))) {
     return classification("hearmeout-main:discord-activity-channel", "auth_config", "The requested Discord voice channel is stale, inaccessible, or not a voice channel. Fall back to the normal Activity URL instead of patching credentials or retrying the invalid channel.");
   }
+  if (event.appName === "hearmeout-main" && messageLower.includes("failed to find server action") && messageLower.includes("older or newer deployment")) {
+    return classification("hearmeout-main:stale-server-action-client", "transient_external", "A browser used a Server Action identifier from a different deployment. Refresh the stale client and observe recurrence; no source patch can make two build-specific action identifiers identical.");
+  }
+  if (event.appName === "hearmeout-main" && messageLower.includes("api key not valid") && messageLower.includes("generativelanguage.googleapis.com")) {
+    return classification("hearmeout-main:gemini-api-authorization", "auth_config", "Google rejected the configured Gemini API key. Replace or correct the server-side credential; never ask the repair model to invent a key.");
+  }
   if (event.appName === "streamweaver-new" && messageLower.includes("chat history channel is unavailable")) {
     return classification("streamweaver-new:discord-history-channel", "auth_config", "The configured Discord history channel is missing or inaccessible; continue without history and repair the tenant channel mapping or bot permissions.");
   }
   if (event.appName === "streamweaver-new" && messageLower.includes("pusher connection error") && (lower.includes("code: 4200") || lower.includes("reconnect immediately"))) {
     return classification("streamweaver-new:kick-pusher-reconnect", "transient_external", "Kick/Pusher requested an immediate reconnect as part of its normal connection lifecycle; reconnect once without emitting an application-error cascade.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[eventsub:") && messageLower.includes("socket closed: 4002") && messageLower.includes("failed ping pong")) {
+    return classification("streamweaver-new:eventsub-ping-timeout", "transient_external", "Twitch EventSub closed a websocket after a missed ping/pong. Reconnect with bounded backoff and group the lifecycle event instead of proposing an unrelated application patch.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[sharedchat] join before send failed") && messageLower.includes("msg_banned")) {
+    return classification("streamweaver-new:shared-chat-channel-banned", "auth_config", "Twitch rejected the shared-chat bot because it is banned in the target channel. The channel owner must unban or remove that mapping; code cannot override the channel permission.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[discord cleanup] message delete failed") && /\b404\b/.test(messageLower) && messageLower.includes("unknown message")) {
+    return classification("streamweaver-new:discord-cleanup-already-deleted", "expected_user", "Discord reports that the cleanup target was already deleted. Treat the idempotent cleanup result as complete and do not generate a repair patch.");
   }
   if (messageLower.includes("no response from twitch")) {
     return classification(`${event.appName}:twitch-no-response`, "transient_external", "Twitch IRC did not answer within the client timeout. Retry with bounded reconnect handling and group repeated transport echoes.");
@@ -92,8 +113,11 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (messageLower.includes("error: aborted") || messageLower === "⨯ error: aborted") {
     return classification(`${event.appName}:request-aborted`, "transient_external", "The caller closed the request before completion; keep only repeated failures that survive bounded client retry.");
   }
-  if (/\[(?:pp|pu)\d+\]/i.test(event.message) && messageLower.includes("connection reset")) {
+  if (/\[(?:pp|pu)\d+\]/i.test(event.message) && (messageLower.includes("connection reset") || messageLower.includes("broken pipe"))) {
     return classification(`${event.appName}:fly-proxy-connection-reset`, "transient_external", "Fly proxy transport reset a connection. Keep it observable only when bounded client retry also fails.");
+  }
+  if (messageLower.includes("unexpected error replying to request") && messageLower.includes("error=eof") && messageLower.includes("ok=true")) {
+    return classification(`${event.appName}:fly-client-disconnect`, "transient_external", "The client disconnected after Fly had completed the request. Keep recurrence observable, but do not infer an application defect from the EOF with ok=true.");
   }
   if (/\[pu02\]/i.test(event.message) && (
     messageLower.includes("http2 error") ||
@@ -118,6 +142,12 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "hmo-dj-worker" && messageLower.includes("no youtube") && messageLower.includes("stream")) {
     return classification("hmo-dj-worker:youtube-source-unresolved", "transient_external", "The external source resolver returned no playable stream; retry through the browser-resolved handoff and keep the failure visible if all fallbacks fail.");
+  }
+  if (event.appName === "hmo-dj-worker" && messageLower.includes("[voicebridge] start failed") && /\b429\b/.test(messageLower)) {
+    return classification("hmo-dj-worker:livekit-voice-bridge-rate-limit", "transient_external", "LiveKit rate-limited VoiceBridge signalling. Retry with bounded backoff and leave the bridge off until the provider accepts a new connection.");
+  }
+  if (event.appName === "hmo-dj-worker" && messageLower.includes("[voicebridge] start failed") && messageLower.includes("unknown channel")) {
+    return classification("hmo-dj-worker:discord-voice-channel", "auth_config", "The configured Discord voice channel is missing or inaccessible. Select a valid voice channel or repair the stored mapping; code cannot join an unknown channel.");
   }
   if (/\b(?:429|too many requests)\b/.test(messageLower) && messageLower.includes("twitch")) {
     return classification(`${event.appName}:twitch-rate-limit`, "transient_external", "Twitch rate limiting needs shared caching, request coalescing, and bounded backoff; it must not be hidden as noise.");
