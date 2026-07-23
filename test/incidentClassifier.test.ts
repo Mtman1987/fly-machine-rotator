@@ -61,6 +61,14 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "seaart", "SeaArt task timed out"))).toMatchObject({ key: "streamweaver-new:seaart-generation-timeout", disposition: "transient_external" });
   });
 
+  it("classifies the July 23 TTS, Twitch identifier, and leaderboard families", () => {
+    expect(classifyIncident(event("streamweaver-new", "leaked", "[TTS] gemini failed: API key was reported as leaked: 403"))).toMatchObject({ key: "streamweaver-new:tts-provider-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "quota", "[TTS] Gemini TTS failed: 429 RESOURCE_EXHAUSTED quota"))).toMatchObject({ key: "streamweaver-new:tts-provider-quota", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "fallback", "TTS error: Error: Fallback TTS failed: 401"))).toMatchObject({ key: "streamweaver-new:legacy-tts-fallback-authorization", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "login", "Failed to fetch Twitch user: 400 Bad Identifiers"))).toMatchObject({ key: "streamweaver-new:twitch-login-normalization", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("discord-stream-hub-new", "render", "[generateLeaderboardImage] Failed: Error [TimeoutError]: Waiting failed: 20000ms exceeded"))).toMatchObject({ key: "discord-stream-hub-new:leaderboard-render-timeout", disposition: "transient_external" });
+  });
+
   it("routes current source-owned null and JSON failures to AI review", () => {
     expect(classifyIncident(event("chat-tag-bot-new", "null", "Periodic loop failed: Cannot read properties of null (reading 'players')"))).toMatchObject({ disposition: "code", autoFixEligible: true });
     expect(classifyIncident(event("hearmeout-main", "json", "SyntaxError: Expected property name or '}' in JSON at position 1"))).toMatchObject({ disposition: "code", autoFixEligible: true });

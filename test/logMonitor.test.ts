@@ -148,6 +148,10 @@ describe("log monitor noise filtering", () => {
     "Read more: https://nextjs.org/docs/messages/failed-to-find-server-action",
     "    'Read more: https://nextjs.org/docs/messages/failed-to-find-server-action',",
     "    error: {"
+    ,"    \"error\": {"
+    ,"    \"message\": \"You exceeded your current quota. Please check your plan.\","
+    ,"    reason: 'api-error',"
+    ,"[WalkOnRecovery] Simple fallback failed for nephalem2: Shared chat source-only send failed"
   ])("ignores exact successful, expected-state, and context-only error echoes: %s", (message) => {
     expect(looksLikeError(message)).toBe(false);
   });

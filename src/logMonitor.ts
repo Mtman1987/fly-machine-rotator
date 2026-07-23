@@ -388,7 +388,14 @@ function isNonActionableErrorEcho(message: string): boolean {
     /\[HTTP [^\]]+\] Sending as .*failed to create clip!\s*\(500\)/i,
     /^\[HTTP \/api\/twitch\/send-message\] Sending as '(?:bot|broadcaster)':/i,
     /^\s*['"]?Read more:\s*https:\/\/nextjs\.org\/docs\/messages\/failed-to-find-server-action['"]?,?\s*$/i,
-    /^\s*error:\s*\{\s*$/i
+    /^\s*['"]?error['"]?\s*:\s*\{\s*$/i,
+    /^\s*['"]?message['"]?\s*:\s*['"](?:You exceeded your current quota|Quota exceeded)[^'"]*['"],?\s*$/i,
+    /^\s*reason:\s*['"]api-error['"],?\s*$/i,
+    /\[WalkOn\] Broadcaster welcome send failed .*Shared chat source-only send/i,
+    /\[WalkOnRecovery\] Restart requested but not enabled: walk-on shoutout failed/i,
+    /\[WalkOnRecovery\] Retry failed .*Shared chat source-only send/i,
+    /\[WalkOnRecovery\] Simple fallback failed .*Shared chat source-only send/i,
+    /\[Dispatcher\] Walk-on shoutout failed .*Shared chat source-only send/i
   ].some((pattern) => pattern.test(message));
 }
 

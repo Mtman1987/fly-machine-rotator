@@ -76,6 +76,14 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
 
   const apiPath = url.pathname.replace(/^\/mountainview\/api/, "/api");
   const context = await MountainViewContext.create(env);
+  let contextClosed = false;
+  const closeContext = () => {
+    if (contextClosed) return;
+    contextClosed = true;
+    context.close();
+  };
+  response.once("finish", closeContext);
+  response.once("close", closeContext);
 
   if (method === "GET" && (url.pathname === "/mountainview/apk" || url.pathname === "/mountainview/download-apk")) {
     await streamLatestMountainViewApk(response, env);
@@ -395,6 +403,10 @@ class MountainViewContext {
     const configFile = env.MOUNTAINVIEW_CONFIG_FILE ?? "/data/mountainview-config.json";
     const config = await loadRuntimeConfig(configFile);
     return new MountainViewContext(env, config);
+  }
+
+  close(): void {
+    if (this.db.open) this.db.close();
   }
 
   serviceBaseUrl(serviceId: string): string {
