@@ -23,6 +23,8 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "streamweaver-new" && (
     lower.includes("shared chat source-only send") ||
+    messageLower.includes("[sharedchat] source-only send failed") ||
+    messageLower.includes("[sharedchat] broadcaster lookup failed") && /\b401\b/.test(messageLower) ||
     lower.includes("walkonrecovery") && lower.includes("twitch client not available for sending messages")
   )) {
     return classification("streamweaver-new:outbound-shared-chat-delivery", "auth_config", "Shared-chat delivery depends on stored Twitch authorization and must not be patched automatically.");
@@ -64,7 +66,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   )) {
     return classification("streamweaver-new:tts-provider-quota", "auth_config", "The configured TTS provider exhausted its account quota. Keep the bounded fallback active and repair billing or quota outside the coding model.");
   }
-  if (event.appName === "streamweaver-new" && messageLower.includes("failed to fetch twitch user") && messageLower.includes("bad identifiers")) {
+  if (event.appName === "streamweaver-new" && lower.includes("failed to fetch twitch user") && lower.includes("bad identifiers")) {
     return classification("streamweaver-new:twitch-login-normalization", "code", "A chat-derived Twitch login contains punctuation. Normalize and encode the identifier before the Helix lookup.");
   }
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("generateleaderboardimage") && messageLower.includes("timeouterror")) {

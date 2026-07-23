@@ -147,11 +147,13 @@ describe("log monitor noise filtering", () => {
     "[Next.js ERROR] [Discord Cleanup] Message delete failed: {\"status\":404,\"error\":\"Discord API 404: Unknown Message\"}",
     "Read more: https://nextjs.org/docs/messages/failed-to-find-server-action",
     "    'Read more: https://nextjs.org/docs/messages/failed-to-find-server-action',",
-    "    error: {"
-    ,"    \"error\": {"
-    ,"    \"message\": \"You exceeded your current quota. Please check your plan.\","
-    ,"    reason: 'api-error',"
-    ,"[WalkOnRecovery] Simple fallback failed for nephalem2: Shared chat source-only send failed"
+    "    error: {",
+    "    \"error\": {",
+    "    \"message\": \"You exceeded your current quota. Please check your plan.\",",
+    "    reason: 'api-error',",
+    "[WalkOnRecovery] Simple fallback failed for nephalem2: Shared chat source-only send failed",
+    "Failed to fetch Twitch channel info for user: kyouya66",
+    "[Twitch] Channel metadata unavailable for kyouya66 (503); using no-game fallback."
   ])("ignores exact successful, expected-state, and context-only error echoes: %s", (message) => {
     expect(looksLikeError(message)).toBe(false);
   });

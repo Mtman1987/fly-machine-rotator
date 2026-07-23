@@ -66,6 +66,8 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "quota", "[TTS] Gemini TTS failed: 429 RESOURCE_EXHAUSTED quota"))).toMatchObject({ key: "streamweaver-new:tts-provider-quota", disposition: "auth_config" });
     expect(classifyIncident(event("streamweaver-new", "fallback", "TTS error: Error: Fallback TTS failed: 401"))).toMatchObject({ key: "streamweaver-new:legacy-tts-fallback-authorization", disposition: "code", autoFixEligible: true });
     expect(classifyIncident(event("streamweaver-new", "login", "Failed to fetch Twitch user: 400 Bad Identifiers"))).toMatchObject({ key: "streamweaver-new:twitch-login-normalization", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "login-cascade", "[WalkOn] Twitch profile lookup failed for madired29:; using fallback persona Error: Failed to fetch Twitch user: Bad Request", ["Failed to fetch Twitch user: 400 Bad Identifiers"]))).toMatchObject({ key: "streamweaver-new:twitch-login-normalization", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "shared-auth", "[SharedChat] Broadcaster lookup failed for nephalem2 (401)"))).toMatchObject({ key: "streamweaver-new:outbound-shared-chat-delivery", disposition: "auth_config" });
     expect(classifyIncident(event("discord-stream-hub-new", "render", "[generateLeaderboardImage] Failed: Error [TimeoutError]: Waiting failed: 20000ms exceeded"))).toMatchObject({ key: "discord-stream-hub-new:leaderboard-render-timeout", disposition: "transient_external" });
   });
 

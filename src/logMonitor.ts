@@ -395,7 +395,9 @@ function isNonActionableErrorEcho(message: string): boolean {
     /\[WalkOnRecovery\] Restart requested but not enabled: walk-on shoutout failed/i,
     /\[WalkOnRecovery\] Retry failed .*Shared chat source-only send/i,
     /\[WalkOnRecovery\] Simple fallback failed .*Shared chat source-only send/i,
-    /\[Dispatcher\] Walk-on shoutout failed .*Shared chat source-only send/i
+    /\[Dispatcher\] Walk-on shoutout failed .*Shared chat source-only send/i,
+    /^Failed to fetch Twitch channel info for user:\s*[a-z0-9_]+\s*$/i,
+    /^\[Twitch\] Channel metadata unavailable for [a-z0-9_]+ \(\d{3}\); using no-game fallback\.$/i
   ].some((pattern) => pattern.test(message));
 }
 
