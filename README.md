@@ -176,6 +176,32 @@ fly secrets set \
   MOUNTAINVIEW_TOKEN_ENCRYPTION_KEY='use-a-long-random-encryption-key'
 ```
 
+### Testing the API without the glasses
+
+Every MountainView API endpoint (voice router, commands, vision, memory, etc.)
+requires an authenticated session. Normally that session comes from the SPMT
+OAuth browser/app flow, so calling the endpoints directly with a script or from
+the phone before signing in returns `401 Unauthorized`.
+
+To test the functions directly (without the glasses and without the OAuth flow),
+set a long random `MOUNTAINVIEW_API_TOKEN` secret and send it as a bearer token.
+It authenticates as the owner (admin) account, works in production, and is
+compared in constant time:
+
+```bash
+fly secrets set MOUNTAINVIEW_API_TOKEN="$(openssl rand -base64 32)"
+```
+
+```bash
+curl -H "Authorization: Bearer $MOUNTAINVIEW_API_TOKEN" \
+  https://mtman-machine-rotator.fly.dev/mountainview/api/bootstrap
+```
+
+The included `scripts/test-mountainview-voice-router.ps1` accepts this token via
+its `-AccessToken` parameter, so the voice-router smoke test runs end to end
+without a signed-in session. Leave `MOUNTAINVIEW_API_TOKEN` unset to disable the
+direct-token path and require SPMT sign-in.
+
 Native iOS/Android app source lives in `mobile/`. It is an Expo app that points at the deployed rotator MountainView API by default.
 
 ### Android AiMB/RDGlass Native Bridge
