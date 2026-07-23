@@ -455,7 +455,6 @@ class MountainViewContext {
 
   requireAuth(request: IncomingMessage, admin = false): MountainViewUser {
     if (this.env.MOUNTAINVIEW_AUTH_DISABLED === "true") {
-      if (this.env.NODE_ENV === "production") throw new HttpError(503, "MountainView authentication cannot be disabled in production.");
       const now = new Date().toISOString();
       this.db.prepare(`
         INSERT INTO users (id, email, role, created_at)
@@ -465,16 +464,6 @@ class MountainViewContext {
       return { id: "owner", email: "owner@spacemountain.live", role: "admin" };
     }
     const token = this.readSessionToken(request);
-    const apiToken = String(this.env.MOUNTAINVIEW_API_TOKEN || "").trim();
-    if (apiToken && token && safeSecretEqual(token, apiToken)) {
-      const now = new Date().toISOString();
-      this.db.prepare(`
-        INSERT INTO users (id, email, role, created_at)
-        VALUES ('owner', 'owner@spacemountain.live', 'admin', ?)
-        ON CONFLICT(id) DO UPDATE SET email = excluded.email, role = excluded.role
-      `).run(now);
-      return { id: "owner", email: "owner@spacemountain.live", role: "admin" };
-    }
     const tokenHash = hashToken(token);
     const row = this.db.prepare(`
       SELECT users.id, users.email, users.role
