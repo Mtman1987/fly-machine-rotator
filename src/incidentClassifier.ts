@@ -69,6 +69,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "streamweaver-new" && lower.includes("failed to fetch twitch user") && lower.includes("bad identifiers")) {
     return classification("streamweaver-new:twitch-login-normalization", "code", "A chat-derived Twitch login contains punctuation. Normalize and encode the identifier before the Helix lookup.");
   }
+  if (event.appName === "streamweaver-new" && /^\[walkon\] twitch profile lookup failed for [a-z0-9_]+:;.*failed to fetch twitch user: bad request/i.test(event.message)) {
+    return classification("streamweaver-new:twitch-login-normalization", "code", "A chat-derived Twitch login retained trailing punctuation. Normalize and encode the identifier before the Helix lookup.");
+  }
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("generateleaderboardimage") && messageLower.includes("timeouterror")) {
     return classification("discord-stream-hub-new:leaderboard-render-timeout", "transient_external", "The headless leaderboard renderer missed its bounded selector wait. Confirm the next scheduled render succeeds before changing the renderer.");
   }
