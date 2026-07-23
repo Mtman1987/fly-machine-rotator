@@ -26,6 +26,7 @@ primary_region = "ord"
   LOG_POLL_INTERVAL_MS = "60000"
   RESTART_UNSAFE_APPS = "true"
   ROTATOR_RUNTIME_STATE_FILE = "/data/runtime-state.json"
+  MOUNTAINVIEW_AUTH_DISABLED = "true"
 
 [http_service]
   internal_port = 8080

@@ -183,24 +183,19 @@ requires an authenticated session. Normally that session comes from the SPMT
 OAuth browser/app flow, so calling the endpoints directly with a script or from
 the phone before signing in returns `401 Unauthorized`.
 
-To test the functions directly (without the glasses and without the OAuth flow),
-set a long random `MOUNTAINVIEW_API_TOKEN` secret and send it as a bearer token.
-It authenticates as the owner (admin) account, works in production, and is
-compared in constant time:
+For a single-owner deployment where you just want everything open for testing,
+set `MOUNTAINVIEW_AUTH_DISABLED=true`. Every request is then treated as the owner
+(admin) account and no sign-in is needed. This is already enabled in `fly.toml`
+for `mtman-machine-rotator`, so the deployed app is open by default:
 
 ```bash
-fly secrets set MOUNTAINVIEW_API_TOKEN="$(openssl rand -base64 32)"
+curl https://mtman-machine-rotator.fly.dev/mountainview/api/bootstrap
 ```
 
-```bash
-curl -H "Authorization: Bearer $MOUNTAINVIEW_API_TOKEN" \
-  https://mtman-machine-rotator.fly.dev/mountainview/api/bootstrap
-```
-
-The included `scripts/test-mountainview-voice-router.ps1` accepts this token via
-its `-AccessToken` parameter, so the voice-router smoke test runs end to end
-without a signed-in session. Leave `MOUNTAINVIEW_API_TOKEN` unset to disable the
-direct-token path and require SPMT sign-in.
+The included `scripts/test-mountainview-voice-router.ps1` still accepts an
+`-AccessToken`, but with auth disabled any value (or none) works. Remove
+`MOUNTAINVIEW_AUTH_DISABLED` from `fly.toml` (or set it to anything other than
+`true`) to re-require SPMT sign-in.
 
 Native iOS/Android app source lives in `mobile/`. It is an Expo app that points at the deployed rotator MountainView API by default.
 
