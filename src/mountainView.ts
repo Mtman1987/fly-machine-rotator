@@ -3432,6 +3432,44 @@ function enrichCommandResponse(commandId: string, response: unknown): unknown {
       liveNames: names
     };
   }
+  if (
+    commandId === "cmd_hearmeout_song_request" ||
+    commandId === "cmd_hearmeout_audiobook_request" ||
+    commandId === "cmd_hearmeout_watch_request"
+  ) {
+    const record = asRecord(response);
+    const session = asRecord(record.session);
+    const request = asRecord(record.request);
+    const result = asRecord(record.result);
+    const current = asRecord(session.current);
+    const currentItem = asRecord(current.item);
+    const requestItem = asRecord(request.item);
+    const openUrl = readText(session, "roomUrl");
+    const title =
+      readText(currentItem, "title") ||
+      readText(requestItem, "title");
+    const artist =
+      readText(currentItem, "artist") ||
+      readText(asRecord(currentItem.metadata), "artist") ||
+      readText(requestItem, "artist");
+    const label = title ? (artist ? `${title} by ${artist}` : title) : "";
+    const currentRequestId = readText(current, "requestId");
+    const isPlayingNow =
+      currentRequestId !== "" && currentRequestId === readText(request, "requestId");
+    const verb = isPlayingNow ? "Now playing" : "Queued";
+    const reply = label
+      ? `${verb} ${label} in HearMeOut.${openUrl ? " Opening the room on your display so you can hear it." : ""}`
+      : readText(result, "message") || "HearMeOut received your request.";
+    return {
+      ...record,
+      reply,
+      nowPlaying: title ? { title, artist, playing: isPlayingNow } : null,
+      openUrl,
+      // Hint for the companion/glasses client to open the HearMeOut room so audio
+      // actually plays — HearMeOut renders playback in a room/browser client.
+      action: openUrl ? { type: "open-url", url: openUrl, reason: "hearmeout-play" } : null
+    };
+  }
   return response;
 }
 
