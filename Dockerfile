@@ -12,6 +12,12 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
+ARG GITHUB_SHA=unknown
+ARG GH_SHA=unknown
+ARG BUILD_SHA=unknown
+LABEL GITHUB_SHA=$GITHUB_SHA
+LABEL GH_SHA=$GH_SHA
+LABEL BUILD_SHA=$BUILD_SHA
 WORKDIR /app
 ENV NODE_ENV=production
 ENV FLYCTL_INSTALL=/root/.fly
