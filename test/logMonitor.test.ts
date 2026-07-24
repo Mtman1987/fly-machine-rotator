@@ -121,6 +121,7 @@ describe("log monitor noise filtering", () => {
       "  [cause]: TypeError: terminated",
       "    [cause]: Error [SocketError]: other side closed",
       "[PU05] could not finish reading HTTP body from instance: error reading a body from connection",
+      "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly. Services exposed on ports [80, 443] will have intermittent failures until the health check passes.",
       "[Kick] ❌ Pusher connection error for fatkid4ev4: { type: 'PusherError', data: { code: 1006, message: undefined } }"
     ];
 
@@ -149,8 +150,11 @@ describe("log monitor noise filtering", () => {
     "    'Read more: https://nextjs.org/docs/messages/failed-to-find-server-action',",
     "    error: {",
     "    \"error\": {",
+    "    error: \"Expected ',' or '}' after property value in JSON at position 1622\"",
     "    \"message\": \"You exceeded your current quota. Please check your plan.\",",
+    "    message: \"Discord API 404: Unknown Channel\"",
     "    reason: 'api-error',",
+    '[DiscordTrace] {"traceId":"1529967135605129369","service":"streamweaver-fanout","stage":"complete","streamweaverFanout":{"ok":true,"replyCount":0,"deliveredCount":0,"context":null,"botResponded":false,"error":null}}',
     "[WalkOnRecovery] Simple fallback failed for nephalem2: Shared chat source-only send failed",
     "Failed to fetch Twitch channel info for user: kyouya66",
     "[Twitch] Channel metadata unavailable for kyouya66 (503); using no-game fallback."
