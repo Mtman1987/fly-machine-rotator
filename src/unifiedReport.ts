@@ -112,6 +112,7 @@ export function buildUnifiedPayload(
   const latestRunLines = latestRotationResults
     ? latestRotationResults.map((result) => renderModeLine(result.appName, inferMode(result.previousActiveId, result.newActiveId))).join("\n")
     : renderLatestRunLines(rotationHistory, runtimeState.lastRunLines);
+  const [rotationColumnOne, rotationColumnTwo] = splitLinesIntoColumns(latestRunLines, 2);
   const startedAt = runtimeState.lastStartedAt ?? latestHistoryEntry?.startedAt ?? latestHistoryEntry?.at;
   const finishedAt = runtimeState.lastFinishedAt ?? latestHistoryEntry?.finishedAt ?? latestHistoryEntry?.at;
   const totalRuns = runtimeState.totalRuns > 0 ? runtimeState.totalRuns : rotationHistory.length;
@@ -156,16 +157,16 @@ export function buildUnifiedPayload(
           {
             name: "Status",
             value: codeBlock(summaryText),
+            inline: false
+          },
+          {
+            name: "Rotation 1",
+            value: codeBlock(rotationColumnOne),
             inline: true
           },
           {
-            name: "Rotation",
-            value: codeBlock(latestRunLines),
-            inline: true
-          },
-          {
-            name: "\u200b",
-            value: "\u200b",
+            name: "Rotation 2",
+            value: codeBlock(rotationColumnTwo),
             inline: true
           },
           {
@@ -184,6 +185,17 @@ export function buildUnifiedPayload(
       }
     ]
   };
+}
+
+function splitLinesIntoColumns(text: string, columns: number): string[] {
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return Array.from({ length: columns }, () => "\u200b");
+  const rowsPerColumn = Math.ceil(lines.length / columns);
+  return Array.from({ length: columns }, (_, index) => {
+    const start = index * rowsPerColumn;
+    const value = lines.slice(start, start + rowsPerColumn).join("\n").trim();
+    return value || "\u200b";
+  });
 }
 
 function summarizeRotationResults(results: AppRotationResult[]): { failed: number; handoffs: number; restarts: number; text: string } {

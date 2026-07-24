@@ -57,7 +57,7 @@ describe("buildUnifiedPayload", () => {
         title: string;
         url?: string;
         description: string;
-        fields: Array<{ name: string; value: string }>;
+        fields: Array<{ name: string; value: string; inline?: boolean }>;
         footer?: { text?: string };
       }>;
     };
@@ -71,11 +71,13 @@ describe("buildUnifiedPayload", () => {
     expect(embed.fields[0]?.name).toBe("Status");
     expect(embed.fields[0]?.value).toContain("Latest run: success");
     expect(embed.fields[0]?.value).toContain("Total runs: 14");
-    expect(embed.fields[1]?.name).toBe("Rotation");
+    expect(embed.fields[0]?.inline).toBe(false);
+    expect(embed.fields[1]?.name).toBe("Rotation 1");
     expect(embed.fields[1]?.value).toContain("chat-tag-bot-new");
     expect(embed.fields[1]?.value).toContain("handoff");
-    expect(embed.fields[2]?.name).toBe("\u200b");
-    expect((embed.fields[2] as { inline?: boolean }).inline).toBe(true);
+    expect(embed.fields[2]?.name).toBe("Rotation 2");
+    expect(embed.fields[2]?.value).toContain("streamweaver-new");
+    expect(embed.fields[2]?.inline).toBe(true);
     expect(embed.fields[3]?.name).toBe("24h Failure Totals");
     expect(embed.fields[3]?.value).toContain("chat-tag-bot-new: 1");
     expect(embed.fields[3]?.value).toContain("streamweaver-new: 1");
@@ -137,6 +139,9 @@ function runtimeState(): RotatorRuntimeState {
     lastFinishedAt: "2026-06-12T08:00:30.000Z",
     lastDurationMs: 30000,
     nextRunAt: "2026-06-12T20:00:00.000Z",
-    lastRunLines: ["OK chat-tag-bot-new handoff: old-machine -> new-machine warn=1"]
+    lastRunLines: [
+      "OK chat-tag-bot-new handoff: old-machine -> new-machine warn=1",
+      "OK streamweaver-new restart: same-machine -> same-machine warn=1"
+    ]
   };
 }
