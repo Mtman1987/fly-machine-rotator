@@ -68,6 +68,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("could not forward shoutout to spacemountain") && messageLower.includes("aborterror")) {
     return classification("discord-stream-hub-new:spacemountain-forward-timeout", "transient_external", "The bounded SpaceMountain shoutout forward was aborted during the network interruption. Confirm later delivery and retry only at the event boundary.");
   }
+  if (event.appName === "discord-stream-hub-new" && messageLower.includes("[discordchat] forum forward request failed: this operation was aborted")) {
+    return classification("discord-stream-hub-new:forum-forward-timeout", "transient_external", "The bounded internal forum-forward request exceeded its caller deadline. Preserve the completed Discord forum side effect, bound optional mirror calls, and observe recurrence before changing delivery semantics.");
+  }
   if (messageLower.includes("login authentication failed")) {
     return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
   }
