@@ -2111,26 +2111,14 @@ class MountainViewContext {
       });
     }
 
-    if (!this.hasSpmtBridgeAuth()) {
-      return voiceDecision({
-        mode: "conversation",
-        commandId: "cmd_streamweaver_voice_commander",
-        appId: "streamweaver",
-        transcript,
-        confidence: 0.62,
-        reason: "No high-confidence app action matched and SPMT/Athena OS auth is not configured, so MountainView used StreamWeaver as the active Athena voice runtime.",
-        payload: { destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username, visualContext }
-      });
-    }
-
     return voiceDecision({
       mode: "conversation",
-      commandId: "cmd_spmt_athena_command",
-      appId: "spmt",
+      commandId: "cmd_streamweaver_voice_commander",
+      appId: "streamweaver",
       transcript,
-      confidence: 0.55,
-      reason: "No high-confidence app action matched, so MountainView sent the conversation to Athena OS as the ecosystem-level assistant.",
-      payload: { message: transcript, transcript, intent: "conversation", route: "athena-os", visualContext, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
+      confidence: 0.62,
+      reason: "No high-confidence app action matched, so MountainView kept the utterance in Athena's conversational runtime.",
+      payload: { message: transcript, transcript, intent: "conversation", route: "athena-chat", visualContext, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", tenantId, username }
     });
   }
 
