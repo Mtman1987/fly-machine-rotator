@@ -76,7 +76,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
     messageLower.includes("[discordstreamhub] admin access check failed") &&
     messageLower.includes("aborted due to timeout")
   ) {
-    return classification("streamweaver-new:dsh-admin-access-timeout", "transient_external", "The bounded DSH admin-role lookup timed out and returned its safe null result. Confirm current DSH health and keep recurrence visible before changing authorization semantics.");
+    return classification("streamweaver-new:dsh-admin-access-timeout", "code", "The DSH admin-role route waited on unbounded live Discord lookups even though durable synced member and role data exists. Resolve from the persisted role cache first and bound the external fallback.");
   }
   if (messageLower.includes("login authentication failed")) {
     return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
