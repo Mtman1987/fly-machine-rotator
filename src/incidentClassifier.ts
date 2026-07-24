@@ -71,6 +71,13 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("[discordchat] forum forward request failed: this operation was aborted")) {
     return classification("discord-stream-hub-new:forum-forward-timeout", "transient_external", "The bounded internal forum-forward request exceeded its caller deadline. Preserve the completed Discord forum side effect, bound optional mirror calls, and observe recurrence before changing delivery semantics.");
   }
+  if (
+    event.appName === "streamweaver-new" &&
+    messageLower.includes("[discordstreamhub] admin access check failed") &&
+    messageLower.includes("aborted due to timeout")
+  ) {
+    return classification("streamweaver-new:dsh-admin-access-timeout", "transient_external", "The bounded DSH admin-role lookup timed out and returned its safe null result. Confirm current DSH health and keep recurrence visible before changing authorization semantics.");
+  }
   if (messageLower.includes("login authentication failed")) {
     return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
   }
