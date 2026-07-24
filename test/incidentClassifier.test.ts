@@ -112,6 +112,7 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("dsh-clip-worker", "fetch", "[ClipWorker] Cycle error: fetch failed"))).toMatchObject({ key: "dsh-clip-worker:outbound-connect-timeout", disposition: "transient_external" });
     expect(classifyIncident(event("discord-stream-hub-new", "forward", "[TwitchPolling] Could not forward shoutout to SpaceMountain for cdawg: Error [AbortError]: This operation was aborted"))).toMatchObject({ key: "discord-stream-hub-new:spacemountain-forward-timeout", disposition: "transient_external" });
     expect(classifyIncident(event("discord-stream-hub-new", "xp", "[SPMT] XP award failed { status: 403, body: '{\"error\":\"Missing required scope: xp:write\"}' }"))).toMatchObject({ key: "discord-stream-hub-new:spmt-xp-scope", disposition: "auth_config" });
+    expect(classifyIncident(event("discord-stream-hub-new", "xp-type", "  body: '{\"error\":\"eventType must be a lowercase slug using letters, numbers, or hyphens\"}'"))).toMatchObject({ key: "discord-stream-hub-new:spmt-xp-event-type", disposition: "code", autoFixEligible: true });
   });
 
   it("requires a ready or verified quality verdict before automatic application", () => {

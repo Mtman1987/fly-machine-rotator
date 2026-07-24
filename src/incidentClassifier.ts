@@ -51,6 +51,12 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
     return classification("discord-stream-hub-new:spmt-xp-scope", "auth_config", "The app-bound SPMT credential lacks xp:write. Add only that scope to the existing DiscordStreamHub key and verify the key in place.");
   }
   if (
+    event.appName === "discord-stream-hub-new" &&
+    lower.includes("eventtype must be a lowercase slug using letters, numbers, or hyphens")
+  ) {
+    return classification("discord-stream-hub-new:spmt-xp-event-type", "code", "DiscordStreamHub sent a dotted XP event type that violates SPMT's lowercase-hyphen slug contract. Map each XP event to a stable lowercase slug before publishing.");
+  }
+  if (
     messageLower.includes("connecttimeouterror") ||
     lower.includes("und_err_connect_timeout") ||
     messageLower.includes("typeerror: fetch failed") ||

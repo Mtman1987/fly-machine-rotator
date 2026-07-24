@@ -163,7 +163,8 @@ describe("log monitor noise filtering", () => {
     "[Bot] Failed joining kyouya66: Not connected to server.",
     "[Bot] Join failed kyouya66: not connected to server.",
     "    [Symbol(undici.error.UND_ERR_CONNECT_TIMEOUT)]: true",
-    "      Error.captureStackTrace(err);"
+    "      Error.captureStackTrace(err);",
+    "[SPMT] XP award failed {"
   ])("ignores exact successful, expected-state, and context-only error echoes: %s", (message) => {
     expect(looksLikeError(message)).toBe(false);
   });
