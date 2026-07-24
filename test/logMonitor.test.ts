@@ -157,7 +157,13 @@ describe("log monitor noise filtering", () => {
     '[DiscordTrace] {"traceId":"1529967135605129369","service":"streamweaver-fanout","stage":"complete","streamweaverFanout":{"ok":true,"replyCount":0,"deliveredCount":0,"context":null,"botResponded":false,"error":null}}',
     "[WalkOnRecovery] Simple fallback failed for nephalem2: Shared chat source-only send failed",
     "Failed to fetch Twitch channel info for user: kyouya66",
-    "[Twitch] Channel metadata unavailable for kyouya66 (503); using no-game fallback."
+    "[Twitch] Channel metadata unavailable for kyouya66 (503); using no-game fallback.",
+    "[11:57] error: Reconnecting in 11 seconds..",
+    "[11:57] error: Unable to connect.",
+    "[Bot] Failed joining kyouya66: Not connected to server.",
+    "[Bot] Join failed kyouya66: not connected to server.",
+    "    [Symbol(undici.error.UND_ERR_CONNECT_TIMEOUT)]: true",
+    "      Error.captureStackTrace(err);"
   ])("ignores exact successful, expected-state, and context-only error echoes: %s", (message) => {
     expect(looksLikeError(message)).toBe(false);
   });

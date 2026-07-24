@@ -41,6 +41,27 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (/^\[\d{2}:\d{2}\] error: (?:ping timeout\.|could not connect to server\. reconnecting in \d+ seconds?\.\.)$/i.test(event.message.trim())) {
     return classification(`${event.appName}:twitch-chat-transport`, "transient_external", "The Twitch IRC client lost its ping or connection and entered its built-in reconnect path. Confirm recovery and group the transport sequence instead of asking the coding model to guess which unrelated service timed out.");
   }
+  if (
+    /^\[\d{2}:\d{2}\] error: (?:reconnecting in \d+ seconds?\.\.|unable to connect\.)$/i.test(event.message.trim()) ||
+    /(?:setup failed|connection error|join failed|failed (?:joining|leaving)).*(?:unable to connect|not connected to (?:the )?server)/i.test(messageLower)
+  ) {
+    return classification(`${event.appName}:twitch-chat-transport`, "transient_external", "The Twitch IRC client is reporting a reconnect lifecycle echo. Preserve the initiating transport failure, group these retries with it, and confirm the client later reconnects.");
+  }
+  if (event.appName === "discord-stream-hub-new" && messageLower.includes("xp award failed") && messageLower.includes("missing required scope: xp:write")) {
+    return classification("discord-stream-hub-new:spmt-xp-scope", "auth_config", "The app-bound SPMT credential lacks xp:write. Add only that scope to the existing DiscordStreamHub key and verify the key in place.");
+  }
+  if (
+    messageLower.includes("connecttimeouterror") ||
+    lower.includes("und_err_connect_timeout") ||
+    messageLower.includes("typeerror: fetch failed") ||
+    messageLower.includes("cycle error: fetch failed") ||
+    messageLower.includes("proactive token refresh failed: fetch failed")
+  ) {
+    return classification(`${event.appName}:outbound-connect-timeout`, "transient_external", "The app could not establish an outbound HTTPS connection during the observed provider/network interruption. Confirm later health and successful traffic before escalating to source changes.");
+  }
+  if (event.appName === "discord-stream-hub-new" && messageLower.includes("could not forward shoutout to spacemountain") && messageLower.includes("aborterror")) {
+    return classification("discord-stream-hub-new:spacemountain-forward-timeout", "transient_external", "The bounded SpaceMountain shoutout forward was aborted during the network interruption. Confirm later delivery and retry only at the event boundary.");
+  }
   if (messageLower.includes("login authentication failed")) {
     return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
   }

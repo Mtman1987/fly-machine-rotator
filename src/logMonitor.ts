@@ -400,7 +400,12 @@ function isNonActionableErrorEcho(message: string): boolean {
     /\[WalkOnRecovery\] Simple fallback failed .*Shared chat source-only send/i,
     /\[Dispatcher\] Walk-on shoutout failed .*Shared chat source-only send/i,
     /^Failed to fetch Twitch channel info for user:\s*[a-z0-9_]+\s*$/i,
-    /^\[Twitch\] Channel metadata unavailable for [a-z0-9_]+ \(\d{3}\); using no-game fallback\.$/i
+    /^\[Twitch\] Channel metadata unavailable for [a-z0-9_]+ \(\d{3}\); using no-game fallback\.$/i,
+    /^\[\d{2}:\d{2}\] error: Reconnecting in \d+ seconds?\.\.$/i,
+    /^\[\d{2}:\d{2}\] error: Unable to connect\.$/i,
+    /^\[Bot\] (?:Failed (?:joining|leaving)|Join failed) [a-z0-9_]+: [Nn]ot connected to server\.$/i,
+    /^\s*\[Symbol\(undici\.error\.UND_ERR(?:_CONNECT_TIMEOUT)?\)\]: true,?\s*$/i,
+    /^\s*Error\.captureStackTrace\(err\);\s*$/i
   ].some((pattern) => pattern.test(message));
 }
 

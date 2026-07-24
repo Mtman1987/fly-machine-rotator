@@ -104,6 +104,16 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("hmo-dj-worker", "channel", "[VoiceBridge] start failed for discord-activity: Unknown Channel"))).toMatchObject({ key: "hmo-dj-worker:discord-voice-channel", disposition: "auth_config" });
   });
 
+  it("groups the July 24 outbound outage and preserves the DSH XP scope defect", () => {
+    expect(classifyIncident(event("streamweaver-new", "retry", "[11:57] error: Reconnecting in 2 seconds.."))).toMatchObject({ key: "streamweaver-new:twitch-chat-transport", disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "setup", "[Twitch:community-bot] Setup failed: Unable to connect."))).toMatchObject({ key: "streamweaver-new:twitch-chat-transport", disposition: "transient_external" });
+    expect(classifyIncident(event("chat-tag-bot-new", "join", "[Bot] Failed joining kyouya66: Not connected to server."))).toMatchObject({ key: "chat-tag-bot-new:twitch-chat-transport", disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "timeout", "[Twitch:926747888] Setup failed: TypeError: fetch failed", ["[cause]: ConnectTimeoutError: Connect Timeout Error"]))).toMatchObject({ key: "streamweaver-new:outbound-connect-timeout", disposition: "transient_external" });
+    expect(classifyIncident(event("dsh-clip-worker", "fetch", "[ClipWorker] Cycle error: fetch failed"))).toMatchObject({ key: "dsh-clip-worker:outbound-connect-timeout", disposition: "transient_external" });
+    expect(classifyIncident(event("discord-stream-hub-new", "forward", "[TwitchPolling] Could not forward shoutout to SpaceMountain for cdawg: Error [AbortError]: This operation was aborted"))).toMatchObject({ key: "discord-stream-hub-new:spacemountain-forward-timeout", disposition: "transient_external" });
+    expect(classifyIncident(event("discord-stream-hub-new", "xp", "[SPMT] XP award failed { status: 403, body: '{\"error\":\"Missing required scope: xp:write\"}' }"))).toMatchObject({ key: "discord-stream-hub-new:spmt-xp-scope", disposition: "auth_config" });
+  });
+
   it("requires a ready or verified quality verdict before automatic application", () => {
     const current = {
       recordedAt: new Date().toISOString(),
