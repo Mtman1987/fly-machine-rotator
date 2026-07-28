@@ -192,6 +192,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "chat-tag-new" && messageLower.includes("invalid jpeg") && lower.includes("pack-preview")) {
     return classification("chat-tag-new:invalid-pack-preview-art", "code", "A malformed or mislabeled card-art file reached the pack ImageResponse. Validate and normalize art before embedding it, falling back to the card placeholder on decode failure.");
   }
+  if (event.appName === "chat-tag-new" && messageLower.includes("expected <div> to have explicit") && lower.includes("pack-preview")) {
+    return classification("chat-tag-new:invalid-pack-preview-layout", "code", "The pack ImageResponse contains a multi-child div without an explicit supported display mode. Keep an executable renderer regression test so production Satori layout constraints fail before deployment.");
+  }
   if (messageLower.includes("salvaged malformed json payload") || messageLower.includes("[discord chat] invalid json payload")) {
     return classification(`${event.appName}:controlled-malformed-json`, "expected_user", "The route already salvaged or rejected malformed caller JSON; keep the controlled 400 path tested without treating the rejected input as an application crash.");
   }
