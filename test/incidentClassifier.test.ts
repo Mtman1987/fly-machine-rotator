@@ -117,6 +117,19 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("discord-stream-hub-new", "xp-type", "  body: '{\"error\":\"eventType must be a lowercase slug using letters, numbers, or hyphens\"}'"))).toMatchObject({ key: "discord-stream-hub-new:spmt-xp-event-type", disposition: "code", autoFixEligible: true });
   });
 
+  it("classifies the July 27 production families without credential or provider guessing", () => {
+    expect(classifyIncident(event("chat-tag-new", "xp", "[SPMT] XP award failed { status: 403, body: '{\"error\":\"Missing required scope: xp:write\"}' }"))).toMatchObject({ key: "chat-tag-new:spmt-xp-scope", disposition: "auth_config", autoFixEligible: false });
+    expect(classifyIncident(event("streamweaver-new", "clip", "[Twitch] Failed to create clip: {", ["message: 'Missing scope: clips:edit'"]))).toMatchObject({ key: "streamweaver-new:twitch-clip-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "mirror", "Failed to mirror outbound Twitch message to Discord: Discord API 404: Unknown Channel"))).toMatchObject({ key: "streamweaver-new:discord-mirror-channel", disposition: "auth_config" });
+    expect(classifyIncident(event("discord-stream-hub-new", "banned", "[TwitchPolling] Chat update error: msg_banned"))).toMatchObject({ key: "discord-stream-hub-new:twitch-channel-banned", disposition: "auth_config" });
+    expect(classifyIncident(event("discord-stream-hub-new", "forum", "[ForwardForum] spmt.live forward failed: Error [TimeoutError]: The operation was aborted due to timeout"))).toMatchObject({ key: "discord-stream-hub-new:forum-forward-timeout", disposition: "transient_external" });
+    expect(classifyIncident(event("streamweaver-new", "source", "[SPMT] event publish failed {", ["body: '{\"error\":\"This key may only publish events for streamweaver\"}'"]))).toMatchObject({ key: "streamweaver-new:spmt-source-app-binding", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "crew", "[Crew Checkin] Source fetch failed: Error: Legacy crew source returned 404"))).toMatchObject({ key: "streamweaver-new:crew-source-fallback", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("chat-tag-new", "jpeg", "  [cause]: TypeError: Invalid JPEG", ["at async pack-preview/route.js"]))).toMatchObject({ key: "chat-tag-new:invalid-pack-preview-art", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "seaart-auth", "[Private Chat API] SeaArt character error: 200 tourist chat num limit"))).toMatchObject({ key: "streamweaver-new:seaart-character-authorization", disposition: "auth_config" });
+    expect(classifyIncident(event("streamweaver-new", "fallback", "[SeaArt] CLI rejected stale model=wai-ani-ponyxl; retrying with seaart-infinity."))).toMatchObject({ key: "streamweaver-new:seaart-model-fallback", disposition: "expected_user" });
+  });
+
   it("requires a ready or verified quality verdict before automatic application", () => {
     const current = {
       recordedAt: new Date().toISOString(),

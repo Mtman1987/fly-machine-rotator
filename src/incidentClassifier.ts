@@ -24,6 +24,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "streamweaver-new" && (
     lower.includes("shared chat source-only send") ||
     messageLower.includes("[sharedchat] source-only send failed") ||
+    messageLower.includes("[sharedchat] helix source-only send failed") ||
     messageLower.includes("[sharedchat] broadcaster lookup failed") && /\b401\b/.test(messageLower) ||
     lower.includes("walkonrecovery") && lower.includes("twitch client not available for sending messages")
   )) {
@@ -49,6 +50,9 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("xp award failed") && messageLower.includes("missing required scope: xp:write")) {
     return classification("discord-stream-hub-new:spmt-xp-scope", "auth_config", "The app-bound SPMT credential lacks xp:write. Add only that scope to the existing DiscordStreamHub key and verify the key in place.");
+  }
+  if (event.appName === "chat-tag-new" && messageLower.includes("xp award failed") && messageLower.includes("missing required scope: xp:write")) {
+    return classification("chat-tag-new:spmt-xp-scope", "auth_config", "The app-bound Chat Tag credential lacks xp:write. Add only that scope to the existing key and verify its app binding in place.");
   }
   if (
     event.appName === "discord-stream-hub-new" &&
@@ -120,6 +124,73 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "streamweaver-new" && messageLower.includes("edenai returned no visible text")) {
     return classification("streamweaver-new:private-chat-empty-provider-response", "code", "The private-chat provider returned no displayable content; retry/fallback and structured content extraction belong in the app adapter.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("seaart character returned no visible text")) {
+    return classification("streamweaver-new:private-chat-empty-provider-response", "code", "The private-chat provider returned no displayable content; retry/fallback and structured content extraction belong in the app adapter.");
+  }
+  if (event.appName === "streamweaver-new" && (
+    messageLower.includes("seaart character error: 200 auth token invalid") ||
+    messageLower.includes("seaart account token rejected") ||
+    messageLower.includes("tourist chat num limit")
+  )) {
+    return classification("streamweaver-new:seaart-character-authorization", "auth_config", "SeaArt rejected the configured account token or exhausted the anonymous fallback. Refresh the paid account credential; the coding model must not manufacture provider authorization.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[spmt oauth] callback state rejected")) {
+    return classification("streamweaver-new:spmt-oauth-state", "auth_config", "The callback carried an expired, replayed, or mismatched OAuth state. Keep the security rejection visible and have the user restart sign-in.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("failed to mirror outbound twitch message to discord") && messageLower.includes("unknown channel")) {
+    return classification("streamweaver-new:discord-mirror-channel", "auth_config", "The tenant's Discord mirror channel no longer exists or is inaccessible. Repair that persisted channel mapping instead of generating a source patch.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[crew checkin] source fetch failed") && messageLower.includes("legacy crew source returned 404")) {
+    return classification("streamweaver-new:crew-source-fallback", "code", "Crew Check-In retained an obsolete legacy URL instead of falling back to the shared Discord guild source.");
+  }
+  if (event.appName === "discord-stream-hub-new" && messageLower.includes("[forwardforum] spmt.live forward failed") && messageLower.includes("timeout")) {
+    return classification("discord-stream-hub-new:forum-forward-timeout", "transient_external", "The bounded SPMT forum mirror exceeded its caller deadline. Preserve the primary forum side effect and observe retries without generating a code patch from one timeout.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("[tts] lifelike eden voice") && messageLower.includes("operation was aborted")) {
+    return classification("streamweaver-new:tts-provider-timeout", "transient_external", "The selected TTS provider exceeded its bounded request window. Keep provider failover active and escalate only after repeated terminal failures.");
+  }
+  if (event.appName === "streamweaver-new" && (
+    (messageLower.includes("failed to create clip") || messageLower.includes("clip creation failed")) &&
+    (
+      lower.includes("missing scope: clips:edit") ||
+      messageLower === "[next.js error] [twitch] failed to create clip: {"
+    )
+  )) {
+    return classification("streamweaver-new:twitch-clip-authorization", "auth_config", "The broadcaster grant lacks clips:edit. Re-authorize the affected tenant with that Twitch scope; code cannot add OAuth authorization.");
+  }
+  if (event.appName === "discord-stream-hub-new" && messageLower.includes("[twitchpolling] chat update error: msg_banned")) {
+    return classification("discord-stream-hub-new:twitch-channel-banned", "auth_config", "Twitch rejected the bot because it is banned in the polled channel. The channel owner must unban it or remove the mapping.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("unexpected variable cfg") && lower.includes("image generation")) {
+    return classification("streamweaver-new:image-provider-payload", "code", "The image adapter sent a provider-specific field unsupported by the selected EdenAI route. Normalize the provider payload and retain tested fallback.");
+  }
+  if (event.appName === "streamweaver-new" && lower.includes("model or endpoint") && lower.includes("does not exist or you do not have access") && lower.includes("image")) {
+    return classification("streamweaver-new:image-provider-fallback", "code", "The selected image model is unavailable to the configured provider account. The adapter must retry a supported configured model before returning failure.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("skipping duplicate message")) {
+    return classification("streamweaver-new:duplicate-message-suppressed", "expected_user", "The dispatcher intentionally suppressed a duplicate delivery. This is evidence that idempotency worked, not an application defect.");
+  }
+  if (event.appName === "chat-tag-new" && messageLower.includes("unexpected error executing command") && messageLower.includes("file name too long") && messageLower.includes("echo${ifs}")) {
+    return classification("chat-tag-new:operator-shell-probe", "expected_user", "A one-off operator SSH probe was passed without a remote shell and became an invalid executable name. It is not an application runtime defect.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("seaart cli failed") && messageLower.includes("model version mismatch")) {
+    return classification("streamweaver-new:seaart-model-version", "code", "A persisted SeaArt model version became stale. Retry the stable fallback model and stop reusing the rejected version.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower.includes("cli rejected stale model") && messageLower.includes("retrying with seaart-infinity")) {
+    return classification("streamweaver-new:seaart-model-fallback", "expected_user", "The image adapter recognized a stale model and invoked its controlled stable fallback.");
+  }
+  if (event.appName === "streamweaver-new" && messageLower === "operation failed. please try again later." && lower.includes("seaart")) {
+    return classification("streamweaver-new:image-provider-fallback", "code", "The image request exhausted its provider fallback after a rejected model. Keep the specific upstream cause grouped with the adapter failure.");
+  }
+  if (event.appName === "streamweaver-new" && (
+    lower.includes("this key may only publish events for streamweaver") ||
+    messageLower === "[next.js error] [spmt] event publish failed {"
+  )) {
+    return classification("streamweaver-new:spmt-source-app-binding", "code", "A StreamWeaver-owned event was labeled as another source app, violating the app-bound SPMT key contract. Keep the source app as streamweaver and describe the feature surface in payload metadata.");
+  }
+  if (event.appName === "chat-tag-new" && messageLower.includes("invalid jpeg") && lower.includes("pack-preview")) {
+    return classification("chat-tag-new:invalid-pack-preview-art", "code", "A malformed or mislabeled card-art file reached the pack ImageResponse. Validate and normalize art before embedding it, falling back to the card placeholder on decode failure.");
   }
   if (messageLower.includes("salvaged malformed json payload") || messageLower.includes("[discord chat] invalid json payload")) {
     return classification(`${event.appName}:controlled-malformed-json`, "expected_user", "The route already salvaged or rejected malformed caller JSON; keep the controlled 400 path tested without treating the rejected input as an application crash.");
