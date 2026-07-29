@@ -39,6 +39,14 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (messageLower.includes("health check") && messageLower.includes("has failed") && messageLower.includes("app is not responding properly")) {
     return classification(`${event.appName}:fly-health-transition`, "transient_external", "Fly observed a health-check transition, commonly during a scheduled restart. Confirm recovery before escalating; a single transition is not a code-fix request.");
   }
+  if (
+    event.appName === "dsh-clip-worker" &&
+    messageLower.includes("protocol error (page.capturescreenshot)") &&
+    (messageLower.includes("target closed") || messageLower.includes("session closed")) &&
+    lower.includes("sending signal sigterm to main child process")
+  ) {
+    return classification("dsh-clip-worker:rotation-browser-shutdown", "transient_external", "The active worker machine was terminated during a screenshot capture. Confirm the successor completes later clip cycles; keep screenshot failures without the SIGTERM evidence actionable.");
+  }
   if (/^\[\d{2}:\d{2}\] error: (?:ping timeout\.|could not connect to server\. reconnecting in \d+ seconds?\.\.)$/i.test(event.message.trim())) {
     return classification(`${event.appName}:twitch-chat-transport`, "transient_external", "The Twitch IRC client lost its ping or connection and entered its built-in reconnect path. Confirm recovery and group the transport sequence instead of asking the coding model to guess which unrelated service timed out.");
   }
