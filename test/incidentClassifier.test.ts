@@ -56,6 +56,10 @@ describe("incident classifier", () => {
 
   it("keeps restart, auth, and external provider incidents away from the coding model", () => {
     expect(classifyIncident(event("streamweaver-new", "health", "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly."))).toMatchObject({ disposition: "transient_external", autoFixEligible: false });
+    const rotationContext = ["INFO Sending signal SIGTERM to main child process w/ PID 651"];
+    expect(classifyIncident(event("dsh-clip-worker", "rotation-1", "[ClipWorker] Recording 1 failed: Protocol error (Page.captureScreenshot): Target closed", rotationContext))).toMatchObject({ key: "dsh-clip-worker:rotation-browser-shutdown", disposition: "transient_external", autoFixEligible: false });
+    expect(classifyIncident(event("dsh-clip-worker", "rotation-2", "[ClipWorker] Recording 2 failed: Protocol error (Page.captureScreenshot): Session closed. Most likely the page has been closed.", rotationContext))).toMatchObject({ key: "dsh-clip-worker:rotation-browser-shutdown", disposition: "transient_external", autoFixEligible: false });
+    expect(classifyIncident(event("dsh-clip-worker", "unexpected", "[ClipWorker] Recording 1 failed: Protocol error (Page.captureScreenshot): Target closed"))).toMatchObject({ disposition: "unknown", autoFixEligible: false });
     expect(classifyIncident(event("streamweaver-new", "oauth", "Missing broadcaster token or refresh token"))).toMatchObject({ key: "streamweaver-new:missing-broadcaster-authorization", disposition: "auth_config" });
     expect(classifyIncident(event("streamweaver-new", "tts", "TTS generation failed: HTTP 401"))).toMatchObject({ key: "streamweaver-new:tts-provider-authorization", disposition: "auth_config" });
     expect(classifyIncident(event("streamweaver-new", "seaart", "SeaArt task timed out"))).toMatchObject({ key: "streamweaver-new:seaart-generation-timeout", disposition: "transient_external" });
