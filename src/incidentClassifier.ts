@@ -88,7 +88,7 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
     messageLower.includes("[discordstreamhub] admin access check failed") &&
     messageLower.includes("aborted due to timeout")
   ) {
-    return classification("streamweaver-new:dsh-admin-access-timeout", "code", "The DSH admin-role route waited on unbounded live Discord lookups even though durable synced member and role data exists. Resolve from the persisted role cache first and bound the external fallback.");
+    return classification("streamweaver-new:dsh-admin-access-timeout", "transient_external", "The DSH admin-role route already reads durable synced state first and bounds its Discord fallback. Observe recurrence, but do not propose another source patch from an isolated caller timeout.");
   }
   if (messageLower.includes("login authentication failed")) {
     return classification(`${event.appName}:twitch-chat-authentication`, "auth_config", "Twitch IRC rejected the stored login credential. Repair or refresh the affected account grant; do not generate a source patch or conceal the authentication failure.");
@@ -169,6 +169,26 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (event.appName === "discord-stream-hub-new" && messageLower.includes("[twitchpolling] chat update error: msg_banned")) {
     return classification("discord-stream-hub-new:twitch-channel-banned", "auth_config", "Twitch rejected the bot because it is banned in the polled channel. The channel owner must unban it or remove the mapping.");
+  }
+  if (event.appName === "discord-stream-hub-new" && /^\[\d{2}:\d{2}\] error: msg_banned$/i.test(event.message.trim())) {
+    return classification("discord-stream-hub-new:twitch-channel-banned", "auth_config", "The Twitch chat client repeated the channel-ban rejection without its polling prefix. The channel owner must unban the bot or remove the mapping.");
+  }
+  if (
+    event.appName === "streamweaver-new" &&
+    messageLower.includes("[ai chat memory] edenai error: 400") &&
+    lower.includes("content rejected due to the violation") &&
+    lower.includes("\"code\":\"invalid_parameter\"")
+  ) {
+    return classification("streamweaver-new:ai-content-policy-rejection", "expected_user", "EdenAI rejected the submitted chat content under its safety policy and StreamWeaver returned its rephrase response. This is a handled user-input outcome, not a code repair.");
+  }
+  if (
+    event.appName === "streamweaver-new" &&
+    (
+      messageLower.includes("request body exceeded 10mb for /api/discord-media") ||
+      messageLower.includes("[discord media api] error: typeerror: failed to parse body as formdata") && lower.includes("/api/discord-media")
+    )
+  ) {
+    return classification("streamweaver-new:discord-media-upload-limit", "code", "Next truncated a valid Discord GIF upload before multipart parsing. Raise the bounded request envelope, enforce a smaller explicit file limit, and return controlled 400/413 responses.");
   }
   if (event.appName === "streamweaver-new" && lower.includes("unexpected variable cfg") && lower.includes("image generation")) {
     return classification("streamweaver-new:image-provider-payload", "code", "The image adapter sent a provider-specific field unsupported by the selected EdenAI route. Normalize the provider payload and retain tested fallback.");
