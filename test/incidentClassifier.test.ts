@@ -135,8 +135,8 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "seaart-auth", "[Private Chat API] SeaArt character error: 200 tourist chat num limit"))).toMatchObject({ key: "streamweaver-new:seaart-character-authorization", disposition: "auth_config" });
     expect(classifyIncident(event("streamweaver-new", "fallback", "[SeaArt] CLI rejected stale model=wai-ani-ponyxl; retrying with seaart-infinity."))).toMatchObject({ key: "streamweaver-new:seaart-model-fallback", disposition: "expected_user" });
     expect(classifyIncident(event("streamweaver-new", "policy", "[Next.js ERROR] [AI Chat Memory] EdenAI error: 400 {\"error\":{\"message\":\"Content rejected due to the violation of the following policies: violence.\",\"code\":\"invalid_parameter\"}}"))).toMatchObject({ key: "streamweaver-new:ai-content-policy-rejection", disposition: "expected_user", autoFixEligible: false });
-    expect(classifyIncident(event("streamweaver-new", "media-size", "[Next.js ERROR] Request body exceeded 10MB for /api/discord-media. Only the first 10MB will be available unless configured."))).toMatchObject({ key: "streamweaver-new:discord-media-upload-limit", disposition: "code", autoFixEligible: true });
-    expect(classifyIncident(event("streamweaver-new", "media-form", "[Next.js ERROR] [Discord Media API] Error: TypeError: Failed to parse body as FormData.", ["Request body exceeded 10MB for /api/discord-media."]))).toMatchObject({ key: "streamweaver-new:discord-media-upload-limit", disposition: "code", autoFixEligible: true });
+    expect(classifyIncident(event("streamweaver-new", "media-size", "[Next.js ERROR] Request body exceeded 10MB for /api/discord-media. Only the first 10MB will be available unless configured."))).toMatchObject({ key: "streamweaver-new:discord-media-upload-limit", disposition: "code", autoFixEligible: false });
+    expect(classifyIncident(event("streamweaver-new", "media-form", "[Next.js ERROR] [Discord Media API] Error: TypeError: Failed to parse body as FormData.", ["Request body exceeded 10MB for /api/discord-media."]))).toMatchObject({ key: "streamweaver-new:discord-media-upload-limit", disposition: "code", autoFixEligible: false });
   });
 
   it("classifies the July 30 repeated families without unsafe autofix proposals", () => {
@@ -151,6 +151,11 @@ describe("incident classifier", () => {
       autoFixEligible: false,
     });
     expect(classifyIncident(event("chat-tag-bot-new", "module", "Error: Cannot find module './src/lib/chat-tag-crowns'", ["code: 'MODULE_NOT_FOUND'"]))).toMatchObject({
+      key: "chat-tag-bot-new:crown-module-packaging",
+      disposition: "code",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("chat-tag-bot-new", "module-child", "  code: 'MODULE_NOT_FOUND',", ["at Object.<anonymous> (/app/bot.js:7:44)"]))).toMatchObject({
       key: "chat-tag-bot-new:crown-module-packaging",
       disposition: "code",
       autoFixEligible: false,

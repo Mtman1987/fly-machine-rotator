@@ -39,8 +39,10 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   }
   if (
     event.appName === "chat-tag-bot-new" &&
-    lower.includes("cannot find module './src/lib/chat-tag-crowns'") &&
-    lower.includes("module_not_found")
+    (
+      messageLower.includes("cannot find module './src/lib/chat-tag-crowns'") ||
+      messageLower.includes("module_not_found") && lower.includes("object.<anonymous> (/app/bot.js:7:44)")
+    )
   ) {
     return {
       key: "chat-tag-bot-new:crown-module-packaging",
@@ -229,7 +231,12 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
       messageLower.includes("[discord media api] error: typeerror: failed to parse body as formdata") && lower.includes("/api/discord-media")
     )
   ) {
-    return classification("streamweaver-new:discord-media-upload-limit", "code", "Next truncated a valid Discord GIF upload before multipart parsing. Raise the bounded request envelope, enforce a smaller explicit file limit, and return controlled 400/413 responses.");
+    return {
+      key: "streamweaver-new:discord-media-upload-limit",
+      disposition: "code",
+      autoFixEligible: false,
+      reason: "Next truncated a valid Discord GIF upload before multipart parsing. The current StreamWeaver release has a bounded 64 MB request envelope and a smaller explicit route file limit, so historical occurrences must not generate another patch.",
+    };
   }
   if (event.appName === "streamweaver-new" && lower.includes("unexpected variable cfg") && lower.includes("image generation")) {
     return classification("streamweaver-new:image-provider-payload", "code", "The image adapter sent a provider-specific field unsupported by the selected EdenAI route. Normalize the provider payload and retain tested fallback.");
