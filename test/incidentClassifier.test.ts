@@ -139,6 +139,39 @@ describe("incident classifier", () => {
     expect(classifyIncident(event("streamweaver-new", "media-form", "[Next.js ERROR] [Discord Media API] Error: TypeError: Failed to parse body as FormData.", ["Request body exceeded 10MB for /api/discord-media."]))).toMatchObject({ key: "streamweaver-new:discord-media-upload-limit", disposition: "code", autoFixEligible: true });
   });
 
+  it("classifies the July 30 repeated families without unsafe autofix proposals", () => {
+    expect(classifyIncident(event("streamweaver-new", "oauth", "[Twitch:432778419] Proactive token refresh failed: Failed to refresh token: 400 Bad Request - {\"message\":\"Invalid refresh token\"}"))).toMatchObject({
+      key: "streamweaver-new:twitch-refresh-token-invalid",
+      disposition: "auth_config",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("streamweaver-new", "oauth-pause", "[Twitch:432778419] Authentication failed; reconnect retries paused until the Twitch account is re-authorized."))).toMatchObject({
+      key: "streamweaver-new:twitch-refresh-token-invalid",
+      disposition: "auth_config",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("chat-tag-bot-new", "module", "Error: Cannot find module './src/lib/chat-tag-crowns'", ["code: 'MODULE_NOT_FOUND'"]))).toMatchObject({
+      key: "chat-tag-bot-new:crown-module-packaging",
+      disposition: "code",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("chat-tag-new", "tenant", "[Quackverse] StreamWeaver overlay notify failed: 400 {\"error\":\"tenantId is required\"}"))).toMatchObject({
+      key: "chat-tag-new:quackverse-overlay-tenant",
+      disposition: "code",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("streamweaver-new", "pusher", "[MultiPlatform] Event error: {", ["PusherError: code: 1006"]))).toMatchObject({
+      key: "streamweaver-new:kick-pusher-abnormal-close",
+      disposition: "transient_external",
+      autoFixEligible: false,
+    });
+    expect(classifyIncident(event("chat-tag-bot-new", "pm07", "[PM07] machine still active, refusing to start"))).toMatchObject({
+      key: "chat-tag-bot-new:fly-machine-already-active",
+      disposition: "transient_external",
+      autoFixEligible: false,
+    });
+  });
+
   it("requires a ready or verified quality verdict before automatic application", () => {
     const current = {
       recordedAt: new Date().toISOString(),
