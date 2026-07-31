@@ -31,6 +31,47 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
     return classification("streamweaver-new:outbound-shared-chat-delivery", "auth_config", "Shared-chat delivery depends on stored Twitch authorization and must not be patched automatically.");
   }
   if (event.appName === "streamweaver-new" && (
+    lower.includes("invalid refresh token") ||
+    messageLower.includes("authentication failed; reconnect retries paused until the twitch account is re-authorized") ||
+    messageLower.includes("proactive token refresh paused until re-authorized")
+  )) {
+    return classification("streamweaver-new:twitch-refresh-token-invalid", "auth_config", "The stored tenant Twitch refresh grant is invalid. Pause repeated refresh attempts and require that tenant to re-authorize; a repair model cannot create a valid OAuth grant.");
+  }
+  if (
+    event.appName === "chat-tag-bot-new" &&
+    lower.includes("cannot find module './src/lib/chat-tag-crowns'") &&
+    lower.includes("module_not_found")
+  ) {
+    return {
+      key: "chat-tag-bot-new:crown-module-packaging",
+      disposition: "code",
+      autoFixEligible: false,
+      reason: "The deployed bot image omitted its crown helper. The current Docker build copies and imports that helper before deployment, so historical occurrences should remain classified without generating a second patch.",
+    };
+  }
+  if (
+    event.appName === "chat-tag-new" &&
+    messageLower.includes("[quackverse] streamweaver overlay notify failed") &&
+    lower.includes("tenantid is required")
+  ) {
+    return {
+      key: "chat-tag-new:quackverse-overlay-tenant",
+      disposition: "code",
+      autoFixEligible: false,
+      reason: "A tenantless pack-open surface called a tenant-scoped StreamWeaver overlay. Skip only the overlay notification when no authoritative tenant exists; do not fail or reroute the pack open.",
+    };
+  }
+  if (
+    event.appName === "streamweaver-new" &&
+    (messageLower.includes("pushererror") && lower.includes("code: 1006") ||
+      messageLower.includes("[multiplatform] event error:") && lower.includes("pushererror") && lower.includes("1006"))
+  ) {
+    return classification("streamweaver-new:kick-pusher-abnormal-close", "transient_external", "Kick/Pusher closed the websocket without a close frame. Reconnect with bounded backoff and group the wrapper and child error as one transport incident.");
+  }
+  if (messageLower.includes("[pm07]") && messageLower.includes("machine still active, refusing to start")) {
+    return classification(`${event.appName}:fly-machine-already-active`, "transient_external", "Fly rejected a duplicate start while the selected machine was already active. Confirm the running machine remains healthy instead of generating an application patch.");
+  }
+  if (event.appName === "streamweaver-new" && (
     messageLower.includes("could not resolve chatroom id") ||
     /(?:event error|connection error|error):?\s*\{?\s*$/.test(messageLower) && lower.includes("could not resolve chatroom id")
   )) {
