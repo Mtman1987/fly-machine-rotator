@@ -1911,6 +1911,48 @@ class MountainViewContext {
       });
     }
 
+    const bodylessMessage = extractBodylessMessageIntent(transcript);
+    if (bodylessMessage) {
+      const commandId = bodylessMessage.destination === "discord"
+        ? "cmd_discord_message"
+        : bodylessMessage.destination === "hearmeout"
+          ? "cmd_hearmeout_discord_message"
+          : "cmd_streamweaver_twitch_chat_send";
+      return voiceDecision({
+        mode: "action",
+        commandId,
+        appId: commandId === "cmd_discord_message" ? "discordstreamhub" : commandId === "cmd_hearmeout_discord_message" ? "hearmeout" : "streamweaver",
+        transcript,
+        confidence: 0.9,
+        reason: "User asked to send a message but did not dictate the body yet, so MountainView opened a clarification turn instead of posting the command itself.",
+        payload: {
+          destination: bodylessMessage.destination,
+          tenantId,
+          username,
+          needsClarification: true,
+          missing: "message",
+          clarificationPrompt: bodylessMessage.destination === "discord"
+            ? "What should I send to Discord, Commander?"
+            : bodylessMessage.destination === "hearmeout"
+              ? "What should I send to HearMeOut, Commander?"
+              : "What should I send to Twitch chat, Commander?"
+        }
+      });
+    }
+
+    const discordCommand = extractDiscordCommandIntent(transcript);
+    if (discordCommand) {
+      return voiceDecision({
+        mode: "action",
+        commandId: discordCommand.commandId,
+        appId: "discordstreamhub",
+        transcript,
+        confidence: 0.93,
+        reason: discordCommand.reason,
+        payload: { destination: "discord", dispatch: true, tenantId, username, twitchUsername: username, channel: readText(context, "channel") || username, channelId: readText(context, "channelId"), serverId: readText(context, "serverId") }
+      });
+    }
+
     const directMessage = extractDirectMessageIntent(transcript);
     if (directMessage) {
       const target = resolveMessageTarget({
@@ -2099,15 +2141,17 @@ class MountainViewContext {
 
     const catalog = this.bestCatalogMatch(userId, transcript, context);
     if (catalog && Number(catalog.confidence) >= 0.62) {
-      const profile = getCommandRoutingProfile(String(catalog.commandId), String(catalog.appId));
+      const commandId = String(catalog.commandId);
+      const appId = String(catalog.appId);
+      const profile = getCommandRoutingProfile(commandId, appId);
       return voiceDecision({
         mode: "action",
-        commandId: String(catalog.commandId),
-        appId: String(catalog.appId),
+        commandId,
+        appId,
         transcript,
         confidence: Number(catalog.confidence),
         reason: `Matched command catalog phrase/name: ${catalog.reason}`,
-        payload: { tenantId, username, destination: requestedDestination || "ai", voiceMode: requestedMode || "reply", routingProfile: profile }
+        payload: { tenantId, username, destination: defaultCommandDestination(commandId, appId) || requestedDestination || "ai", voiceMode: requestedMode || "reply", routingProfile: profile }
       });
     }
 
@@ -2559,6 +2603,7 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
   if (commandId === "cmd_discord_event") {
     return {
       ...base,
+      destination: "discord",
       serverId: readText(base, "serverId") || DEFAULT_DISCORD_GUILD_ID,
       eventType: readText(base, "eventType") || "chat_activity"
     };
@@ -2567,6 +2612,7 @@ function withCommandDefaults(commandId: string, payload: JsonRecord): JsonRecord
   if (commandId === "cmd_discord_message" || commandId === "cmd_hearmeout_discord_message") {
     return {
       ...base,
+      destination: "discord",
       channelId: readText(base, "channelId") || DEFAULT_DISCORD_CHANNEL_ID,
       content: readText(base, "content") || message,
       username: readText(base, "username") || "Athena via MountainView",
@@ -2935,6 +2981,13 @@ function summarizeCommandResult(result: JsonRecord): JsonRecord {
   };
 }
 
+function defaultCommandDestination(commandId: string, appId: string): string {
+  if (commandId === "cmd_discord_message" || commandId === "cmd_discord_event" || commandId === "cmd_hearmeout_discord_message") return "discord";
+  if (commandId.startsWith("cmd_dsh_calendar_") || appId === "discordstreamhub") return "discord";
+  if (commandId === "cmd_streamweaver_twitch_chat_send" || commandId === "cmd_streamweaver_twitch_chat_session") return "twitch";
+  return "";
+}
+
 function normalizeVoiceDestination(value: string): string {
   return ["ai", "private", "twitch", "discord"].includes(value) ? value : "";
 }
@@ -2957,42 +3010,85 @@ function tokenizeCommandText(value: string): string[] {
     .filter((term) => term.length >= 3 && !stop.has(term));
 }
 
-function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
-  const destination = /\bhear\s?me\s?out|hearmeout\b/i.test(text) ? "hearmeout"
-    : /\bdiscord|server\b/i.test(text) ? "discord"
-      : "twitch";
-  const typeInChat = text.match(/\b(?:send|post|type|say)\s+(?:in|into|to)\s+(.+?)\s+(?:twitch\s+)?chat\s+["“](.+?)["”]\s*$/i);
-  if (typeInChat?.[2]?.trim()) {
-    const targetName = cleanSpokenTarget(typeInChat[1] ?? "");
-    return {
-      message: typeInChat[2].trim(),
-      targetName,
-      channel: resolveSpokenTwitchAlias(targetName, process.env),
-      destination
-    };
-  }
+const MESSAGE_PLATFORM_PATTERN = "(?:discord(?:\\s+stream\\s+hub)?|discordstreamhub|dsh|twitch|kick|hearmeout|hear\\s?me\\s?out)";
 
-  const quoted = text.match(/\b(?:send|post|type|say)\s+(?:a\s+)?message(?:\s+to\s+(.+?))?\s+(?:that\s+says|saying|with|:)\s+["“]?(.+?)["”]?\s*$/i);
-  if (quoted?.[2]?.trim()) {
-    const targetName = cleanSpokenTarget(quoted[1] ?? "");
+function extractMessageDestination(text: string): string {
+  if (/\b(?:hear\s?me\s?out|hearmeout)\b/i.test(text)) return "hearmeout";
+  if (/\b(?:discord(?:\s+stream\s+hub)?|discordstreamhub|dsh|server|guild)\b/i.test(text)) return "discord";
+  return "twitch";
+}
+
+function extractDiscordCommandIntent(text: string): { commandId: string; reason: string } | undefined {
+  const lower = text.toLowerCase();
+  if (!/\b(?:discord(?:\s+stream\s+hub)?|discordstreamhub|dsh|server)\b/.test(lower)) return undefined;
+  if (/\bcalendar\b/.test(lower)) {
+    if (/\b(?:generate|render|build|create|make)\b/.test(lower) && /\b(?:embed|image|card)\b/.test(lower)) {
+      return { commandId: "cmd_dsh_calendar_generate", reason: "Calendar embed language maps to the DiscordStreamHub calendar embed generator." };
+    }
+    if (/\b(?:post|share|show|publish|put|drop)\b/.test(lower)) {
+      return { commandId: "cmd_dsh_calendar_post", reason: "Posting the calendar maps to the DiscordStreamHub calendar post command, not a plain channel message." };
+    }
+  }
+  if (/\b(?:push|send|forward|mirror|relay)\b/.test(lower) && /\b(?:event|events|alert|raid|follow|sub|subscription|cheer)\b/.test(lower)) {
+    return { commandId: "cmd_discord_event", reason: "Twitch event language targeted at Discord maps to the DiscordStreamHub event bridge." };
+  }
+  return undefined;
+}
+
+function extractBodylessMessageIntent(text: string): { destination: string } | undefined {
+  const bare = new RegExp(
+    `^\\s*(?:athena[,\\s]+)?(?:please\\s+)?(?:send|post|type|write|drop|shoot)\\s+(?:a|an|the|another|new)?\\s*(?:${MESSAGE_PLATFORM_PATTERN}\\s+)?(?:chat\\s+|stream\\s+|server\\s+|channel\\s+)?message\\s*[.!?]?\\s*$`,
+    "i"
+  );
+  if (!bare.test(text)) return undefined;
+  return { destination: extractMessageDestination(text) };
+}
+
+function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
+  const destination = extractMessageDestination(text);
+  const build = (message: string, spokenTarget: string) => {
+    const targetName = cleanSpokenTarget(spokenTarget);
     return {
-      message: quoted[2].trim(),
+      message: message.trim().replace(/^(?:chat|server|channel|guild)\s*[:,-]\s*/i, "").trim(),
       targetName,
       channel: resolveSpokenTwitchAlias(targetName, process.env),
       destination
     };
-  }
+  };
+
+  const typeInChat = text.match(/\b(?:send|post|type|say)\s+(?:in|into|to)\s+(.+?)\s+(?:twitch\s+)?chat\s+["“](.+?)["”]\s*$/i);
+  if (typeInChat?.[2]?.trim()) return build(typeInChat[2], typeInChat[1] ?? "");
+
+  const platformMessage = new RegExp(
+    `\\b(?:send|post|type|say|write|drop|shoot)\\s+(?:a|an|the|another|new)?\\s*(?:${MESSAGE_PLATFORM_PATTERN}\\s+)?(?:chat\\s+|stream\\s+|server\\s+|channel\\s+)?message(?:\\s+(?:to|in|into|on)\\s+(.+?))?\\s+(?:that\\s+says|saying|which\\s+says|says|with|:)\\s+["“]?(.+?)["”]?\\s*$`,
+    "i"
+  );
+  const quoted = text.match(platformMessage);
+  if (quoted?.[2]?.trim()) return build(quoted[2], quoted[1] ?? "");
+
+  const announce = new RegExp(
+    `\\b(?:post|announce|say|shout|write|drop)\\s+(?:in|to|on)\\s+(?:my\\s+|the\\s+)?(${MESSAGE_PLATFORM_PATTERN})(?:\\s+(?:chat|server|channel))?\\s+(?:that\\s+|saying\\s+)?["“]?(.+?)["”]?\\s*$`,
+    "i"
+  );
+  const announced = text.match(announce);
+  if (announced?.[2]?.trim()) return build(announced[2], announced[1] ?? "");
+
+  const notify = new RegExp(
+    `\\b(?:tell|notify|alert|let)\\s+(?:my\\s+|the\\s+)?(${MESSAGE_PLATFORM_PATTERN})(?:\\s+(?:chat|server|channel|know))?\\s+(?:that\\s+)?["“]?(.+?)["”]?\\s*$`,
+    "i"
+  );
+  const notified = text.match(notify);
+  if (notified?.[2]?.trim()) return build(notified[2], notified[1] ?? "");
+
+  const plainMessage = new RegExp(
+    `\\b(?:send|post|type|say|write|drop)\\s+(?:a|an|the)?\\s*(?:${MESSAGE_PLATFORM_PATTERN}\\s+)?(?:chat\\s+|stream\\s+|server\\s+|channel\\s+)?message(?:\\s+(?:to|in|into|on)\\s+(\\S+))?\\s+["“]?(.+?)["”]?\\s*$`,
+    "i"
+  );
+  const plain = text.match(plainMessage);
+  if (plain?.[2]?.trim()) return build(plain[2], plain[1] ?? "");
 
   const simple = text.match(/\b(?:send|post|type)\s+["“]?(.+?)["”]?\s+(?:to|in|into)\s+(.+?)(?:\s+(?:chat|twitch|discord))?\s*$/i);
-  if (simple?.[1]?.trim()) {
-    const targetName = cleanSpokenTarget(simple[2] ?? "");
-    return {
-      message: simple[1].trim(),
-      targetName,
-      channel: resolveSpokenTwitchAlias(targetName, process.env),
-      destination
-    };
-  }
+  if (simple?.[1]?.trim()) return build(simple[1], simple[2] ?? "");
 
   return undefined;
 }
