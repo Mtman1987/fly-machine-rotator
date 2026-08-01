@@ -1911,6 +1911,35 @@ class MountainViewContext {
       });
     }
 
+    const bodylessMessage = extractBodylessMessageIntent(transcript);
+    if (bodylessMessage) {
+      const commandId = bodylessMessage.destination === "discord"
+        ? "cmd_discord_message"
+        : bodylessMessage.destination === "hearmeout"
+          ? "cmd_hearmeout_discord_message"
+          : "cmd_streamweaver_twitch_chat_send";
+      return voiceDecision({
+        mode: "action",
+        commandId,
+        appId: commandId === "cmd_discord_message" ? "discordstreamhub" : commandId === "cmd_hearmeout_discord_message" ? "hearmeout" : "streamweaver",
+        transcript,
+        confidence: 0.9,
+        reason: "User asked to send a message but did not dictate the body yet, so MountainView opened a clarification turn instead of posting the command itself.",
+        payload: {
+          destination: bodylessMessage.destination,
+          tenantId,
+          username,
+          needsClarification: true,
+          missing: "message",
+          clarificationPrompt: bodylessMessage.destination === "discord"
+            ? "What should I send to Discord, Commander?"
+            : bodylessMessage.destination === "hearmeout"
+              ? "What should I send to HearMeOut, Commander?"
+              : "What should I send to Twitch chat, Commander?"
+        }
+      });
+    }
+
     const discordCommand = extractDiscordCommandIntent(transcript);
     if (discordCommand) {
       return voiceDecision({
@@ -3006,12 +3035,21 @@ function extractDiscordCommandIntent(text: string): { commandId: string; reason:
   return undefined;
 }
 
+function extractBodylessMessageIntent(text: string): { destination: string } | undefined {
+  const bare = new RegExp(
+    `^\\s*(?:athena[,\\s]+)?(?:please\\s+)?(?:send|post|type|write|drop|shoot)\\s+(?:a|an|the|another|new)?\\s*(?:${MESSAGE_PLATFORM_PATTERN}\\s+)?(?:chat\\s+|stream\\s+|server\\s+|channel\\s+)?message\\s*[.!?]?\\s*$`,
+    "i"
+  );
+  if (!bare.test(text)) return undefined;
+  return { destination: extractMessageDestination(text) };
+}
+
 function extractDirectMessageIntent(text: string): { message: string; targetName: string; channel: string; destination: string } | undefined {
   const destination = extractMessageDestination(text);
   const build = (message: string, spokenTarget: string) => {
     const targetName = cleanSpokenTarget(spokenTarget);
     return {
-      message: message.trim(),
+      message: message.trim().replace(/^(?:chat|server|channel|guild)\s*[:,-]\s*/i, "").trim(),
       targetName,
       channel: resolveSpokenTwitchAlias(targetName, process.env),
       destination

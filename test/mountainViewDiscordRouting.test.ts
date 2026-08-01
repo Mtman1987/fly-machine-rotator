@@ -99,6 +99,31 @@ describe("MountainView Discord command routing", () => {
     }
   });
 
+  it("asks for the body instead of posting the command itself", async () => {
+    const { server, baseUrl } = await startServer();
+    try {
+      const { decision } = await route(baseUrl, "send a discord message");
+      expect(decision.commandId).toBe("cmd_discord_message");
+      expect(decision.payload.needsClarification).toBe(true);
+      expect(decision.payload.missing).toBe("message");
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("keeps channel nouns out of the dictated message body", async () => {
+    const { server, baseUrl } = await startServer();
+    try {
+      const { decision } = await route(baseUrl, "post to the discord server: doors open at 8");
+      expect(decision.commandId).toBe("cmd_discord_message");
+      expect(decision.transcript).toBe("doors open at 8");
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
   it("still routes Twitch chat speech to StreamWeaver with the Discord mirror enabled", async () => {
     const { server, baseUrl } = await startServer();
     try {
