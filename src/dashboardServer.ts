@@ -12,10 +12,11 @@ import { getRepoConfigForApp } from "./repoMap.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
-import { handleMountainViewRequest } from "./mountainView.js";
+import { handleMountainViewRequest, hasMountainViewAdminSession } from "./mountainView.js";
 import { isNonActionableErrorMessage } from "./logMonitor.js";
 import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
+import { handlePublicCodexRequest, listCodexJobs, syncAllCodeReferences } from "./publicCodexFixer.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -32,6 +33,9 @@ export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   });
   server.listen(port, "0.0.0.0", () => {
     console.log(`dashboard listening on ${port}`);
+    if (env.NODE_ENV === "production" && String(env.CODEX_WORKER_SECRET || "").trim()) {
+      void syncAllCodeReferences(env).catch((error) => console.error("Codex reference sync failed", error));
+    }
   });
   return server;
 }
@@ -41,6 +45,10 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (await handleMountainViewRequest(request, response, env)) {
+    return;
+  }
+
+  if (await handlePublicCodexRequest(request, response, env)) {
     return;
   }
 
@@ -159,6 +167,11 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/") {
+    if (!(await hasMountainViewAdminSession(request, env))) {
+      response.writeHead(302, { location: "/mountainview/auth/login?next=%2F", "cache-control": "no-store" });
+      response.end();
+      return;
+    }
     const html = await renderDashboardHtml(env);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(html);
@@ -370,6 +383,7 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
 }
 
 async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
+  const codexJobs = await listCodexJobs(env, 12);
   const runtime = (await RotatorRuntimeStateStore.load(getRuntimeStateFile(env))).snapshot();
   const rotationHistory = await readRotationHistory(env);
   const latestHistoryEntry = rotationHistory.at(-1);
@@ -433,6 +447,20 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
           <p class="muted small">${escapeHtml(item.detail)}</p>
         </article>
       `).join("");
+  const codexJobCards = codexJobs.length > 0 ? codexJobs.map((job) => `
+    <article class="fix-card">
+      <div class="section-head">
+        <div><div class="eyebrow">${escapeHtml(job.repoId)}</div><h3>${escapeHtml(job.reporter)} · ${escapeHtml(job.status)}</h3></div>
+        <span class="status-pill ${job.status === "completed" ? "status-good" : job.status === "failed" ? "status-bad" : "status-warn"}">${escapeHtml(job.status)}</span>
+      </div>
+      <p>${escapeHtml(job.description)}</p>
+      <p class="muted small">${escapeHtml(job.summary || "Athena's Codex specialist is still charting this repair.")}</p>
+      <div class="hero-actions">
+        <a class="link-btn secondary" href="/api/codex/jobs/${escapeHtml(job.id)}/diff">Show diff</a>
+        <a class="link-btn secondary" href="/api/codex/jobs/${escapeHtml(job.id)}/checks">Checks</a>
+        <a class="link-btn secondary" href="/api/codex/jobs/${escapeHtml(job.id)}/response">Codex response</a>
+      </div>
+    </article>`).join("") : '<p class="muted">No public !mtfixit jobs have reached the repair station yet.</p>';
   const providerChips = [
     `${activeCoder}`,
     `Eden ${env.EDENAI_API_KEY ? "ready" : "missing"}`,
@@ -859,6 +887,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       </div>
       <nav class="nav">
         <a href="#ops">Ops Deck</a>
+        <a href="#codex-jobs">Athena Coder</a>
         <a href="#fixes">Fix Queue</a>
         <a href="#noise">Noise Filters</a>
         <a href="/mountainview">MountainView</a>
@@ -894,6 +923,15 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
           ${metricCards}
         </div>
       </aside>
+    </section>
+
+    <section class="panel" id="codex-jobs">
+      <div class="section-head">
+        <div><div class="eyebrow">Athena Codex Repair Station</div><h2>Public fixer sandboxes</h2></div>
+        <strong>${codexJobs.length}</strong>
+      </div>
+      <p class="muted section-copy">Each report runs in an isolated volume-backed checkout. Codex may edit and validate here, but it cannot push, merge, deploy, access network services, or read the host environment.</p>
+      <div class="fix-grid">${codexJobCards}</div>
     </section>
 
     <section class="overview-grid" id="ops">
