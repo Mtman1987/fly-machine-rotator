@@ -9,6 +9,7 @@
     "monitor": "node dist/index.js monitor",
     "dev": "tsx src/index.ts run",
     "dry-run": "tsx src/index.ts run --dry-run",
+    "athena": "node scripts/athena-code.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
