@@ -126,8 +126,10 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
   if (method === "GET" && url.pathname === "/mountainview/auth/login") {
     const state = randomBytes(24).toString("base64url");
     const target = url.searchParams.get("client") === "mobile" ? "mobile" : "web";
-    setCookie(response, "mountainview_oauth_state", state, { maxAge: 600, path: "/mountainview", secure: isProduction(env) });
-    setCookie(response, "mountainview_oauth_target", target, { maxAge: 600, path: "/mountainview", secure: isProduction(env) });
+    const next = url.searchParams.get("next") === "/" ? "/" : "/mountainview";
+    setCookie(response, "mountainview_oauth_state", state, { maxAge: 600, path: "/", secure: isProduction(env) });
+    setCookie(response, "mountainview_oauth_target", target, { maxAge: 600, path: "/", secure: isProduction(env) });
+    setCookie(response, "mountainview_oauth_next", next, { maxAge: 600, path: "/", secure: isProduction(env) });
     const authorizeUrl = new URL("/api/oauth/authorize", context.serviceBaseUrl("spmt"));
     authorizeUrl.searchParams.set("client_id", "mountainview");
     authorizeUrl.searchParams.set("redirect_uri", context.oauthRedirectUri());
@@ -143,15 +145,16 @@ export async function handleMountainViewRequest(request: IncomingMessage, respon
       throw new HttpError(400, "Invalid or expired MountainView sign-in state.");
     }
     const session = await context.exchangeSpmtCode(code);
-    clearCookie(response, "mountainview_oauth_state", "/mountainview", isProduction(env));
-    clearCookie(response, "mountainview_oauth_target", "/mountainview", isProduction(env));
+    clearCookie(response, "mountainview_oauth_state", "/", isProduction(env));
+    clearCookie(response, "mountainview_oauth_target", "/", isProduction(env));
+    clearCookie(response, "mountainview_oauth_next", "/", isProduction(env));
     if (cookies.mountainview_oauth_target === "mobile") {
       response.setHeader("cache-control", "no-store");
       html(response, renderMobileAuthHandoff(session.token));
       return true;
     }
-    setCookie(response, "mountainview_session", session.token, { maxAge: 30 * 24 * 60 * 60, path: "/mountainview", secure: isProduction(env) });
-    return redirect(response, "/mountainview");
+    setCookie(response, "mountainview_session", session.token, { maxAge: 30 * 24 * 60 * 60, path: "/", secure: isProduction(env) });
+    return redirect(response, cookies.mountainview_oauth_next === "/" ? "/" : "/mountainview");
   }
 
   if (method === "POST" && apiPath === "/api/logout") {
@@ -3941,4 +3944,16 @@ export function renderMountainViewHtml(): string {
   </script>
 </body>
 </html>`;
+}
+
+export async function hasMountainViewAdminSession(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const context = await MountainViewContext.create(env);
+  try {
+    context.requireAuth(request, true);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    context.close();
+  }
 }

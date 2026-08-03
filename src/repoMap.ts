@@ -11,6 +11,26 @@ export interface RepoConfig {
 
 const REPOS: RepoConfig[] = [
   {
+    id: "spmt-live",
+    label: "SPMT Live / Athena OS",
+    repoUrl: "https://github.com/Mtman1987/spmt-live.git",
+    cloneDirName: "spmt-live",
+    appNames: ["spmt-live", "spacemountain-live"],
+    checkCommands: ["npm run typecheck", "npm run build"],
+    installCommand: "npm install --no-audit --no-fund",
+    branchPrefix: "rotator-fix/spmt"
+  },
+  {
+    id: "fly-machine-rotator",
+    label: "Fly Machine Rotator / MountainView",
+    repoUrl: "https://github.com/Mtman1987/fly-machine-rotator.git",
+    cloneDirName: "fly-machine-rotator",
+    appNames: ["mtman-machine-rotator", "mountainview"],
+    checkCommands: ["npm run typecheck", "npm test", "npm run build"],
+    installCommand: "npm install --no-audit --no-fund",
+    branchPrefix: "rotator-fix/rotator"
+  },
+  {
     id: "chat-tag",
     label: "Chat Tag",
     repoUrl: "https://github.com/Mtman1987/chat-tag.git",

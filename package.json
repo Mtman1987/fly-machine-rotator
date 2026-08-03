@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@openai/codex-sdk": "^0.146.0",
     "better-sqlite3": "^12.11.1",
     "nats": "^2.29.3",
     "qrcode": "^1.5.4"
