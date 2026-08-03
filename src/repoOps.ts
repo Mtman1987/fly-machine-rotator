@@ -129,14 +129,17 @@ export async function pushRepoBranch(repoPath: string, branchName: string, messa
   }
   const originUrl = (await runShell("git remote get-url origin", repoPath)).output.trim();
   const authedOrigin = authenticatedRepoUrl(originUrl, env.GITHUB_TOKEN);
-  await runShell(`git remote set-url origin ${shellQuote(authedOrigin)}`, repoPath);
-  await runShell(`git checkout -B ${shellQuote(branchName)}`, repoPath);
-  await runShell("git add -A", repoPath);
-  await runShell(`git commit -m ${shellQuote(message)}`, repoPath, 60_000, false);
-  const commit = (await runShell("git rev-parse HEAD", repoPath)).output.trim();
-  const pushResult = await runShell(`git push -u origin ${shellQuote(branchName)}`, repoPath, 5 * 60 * 1000);
-  await runShell(`git remote set-url origin ${shellQuote(originUrl)}`, repoPath, 60_000, false).catch(() => undefined);
-  return { branch: branchName, commit, output: pushResult.output };
+  try {
+    await runShell(`git remote set-url origin ${shellQuote(authedOrigin)}`, repoPath);
+    await runShell(`git checkout -B ${shellQuote(branchName)}`, repoPath);
+    await runShell("git add -A", repoPath);
+    await runShell(`git commit -m ${shellQuote(message)}`, repoPath, 60_000, false);
+    const commit = (await runShell("git rev-parse HEAD", repoPath)).output.trim();
+    const pushResult = await runShell(`git push -u origin ${shellQuote(branchName)}`, repoPath, 5 * 60 * 1000);
+    return { branch: branchName, commit, output: pushResult.output };
+  } finally {
+    await runShell(`git remote set-url origin ${shellQuote(originUrl)}`, repoPath, 60_000, false).catch(() => undefined);
+  }
 }
 
 export async function checkoutFixBranch(repoPath: string, branchName: string): Promise<void> {
