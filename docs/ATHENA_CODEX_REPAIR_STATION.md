@@ -44,3 +44,16 @@ Private rotator worker:
 - `GET /api/codex/references`
 
 The operator UI is `https://mtman-machine-rotator.fly.dev/`. It redirects through SPMT OAuth and requires an SPMT administrator session.
+
+## Athena GPT and operator CLI
+
+The Custom GPT Action schema is maintained in `spmt-live` at `docs/developers/ATHENA_GPT_ACTION_OPENAPI.yaml`. Configure the Action with the existing `SPMT_CODEX_SERVICE_SECRET` using the `x-spmt-codex-secret` header. Athena can submit jobs, read diffs/checks/responses, and—after explicit owner approval—publish a completed job as a draft pull request. It cannot merge or deploy through this Action; merging to `main` remains the release boundary and the existing GitHub Action performs the Fly deployment.
+
+The same gateway can be used from a terminal without exposing Fly, GitHub, or OpenAI credentials locally:
+
+```bash
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- repos
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- submit streamweaver-new "Describe the requested fix"
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- status <job-id>
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- publish <job-id>
+```
