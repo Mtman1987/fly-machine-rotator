@@ -4,8 +4,8 @@ The public `!mtfixit <problem>` command is accepted by StreamWeaver, passed thro
 
 ## Trust boundaries
 
-- StreamWeaver knows only `SPMT_CODEX_SERVICE_SECRET`.
-- SPMT knows only `CODEX_WORKER_SECRET` and proxies owner/admin reads.
+- StreamWeaver reuses its existing scoped `SPMT_API_KEY`; no Codex-specific service secret is required.
+- SPMT issues a path-bound, one-use worker token that expires after 60 seconds; no static worker secret is required.
 - The rotator owns `OPENAI_API_KEY`; the key is never sent to chat, StreamWeaver, SPMT clients, or the sandbox.
 - Codex runs with `workspace-write`, approval policy `never`, disabled network/web search, and a minimal environment.
 - Codex cannot push, merge, deploy, change permissions, or access directories outside its assigned sandbox.
@@ -13,15 +13,9 @@ The public `!mtfixit <problem>` command is accepted by StreamWeaver, passed thro
 
 ## Required Fly secrets
 
-Generate two different high-entropy values and configure the same value on both sides of each boundary:
+The only new secret required by this feature is the OpenAI API key on the worker:
 
 ```text
-streamweaver-new: SPMT_CODEX_SERVICE_SECRET
-spmt-live:        SPMT_CODEX_SERVICE_SECRET
-
-spmt-live:        CODEX_WORKER_SECRET
-mtman-machine-rotator: CODEX_WORKER_SECRET
-
 mtman-machine-rotator: OPENAI_API_KEY
 ```
 

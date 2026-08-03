@@ -33,7 +33,7 @@ export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   });
   server.listen(port, "0.0.0.0", () => {
     console.log(`dashboard listening on ${port}`);
-    if (env.NODE_ENV === "production" && String(env.CODEX_WORKER_SECRET || "").trim()) {
+    if (env.NODE_ENV === "production" && String(env.OPENAI_API_KEY || "").trim()) {
       void syncAllCodeReferences(env).catch((error) => console.error("Codex reference sync failed", error));
     }
   });

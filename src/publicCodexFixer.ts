@@ -1,5 +1,5 @@
 import { Codex } from "@openai/codex-sdk";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -214,13 +214,20 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
   await saveJob(env, job);
 }
 
-function authorized(request: IncomingMessage, env: NodeJS.ProcessEnv) {
-  const expected = String(env.CODEX_WORKER_SECRET || "").trim();
-  const supplied = String(request.headers["x-codex-worker-secret"] || "").trim();
-  if (!expected || !supplied) return false;
-  const a = createHash("sha256").update(expected).digest();
-  const b = createHash("sha256").update(supplied).digest();
-  return timingSafeEqual(a, b);
+async function authorizedBySpmt(request: IncomingMessage, workerPath: string, env: NodeJS.ProcessEnv) {
+  const token = String(request.headers["x-spmt-job-token"] || "").trim();
+  if (!token) return false;
+  try {
+    const response = await fetch(new URL("/api/athena/code-worker/consume", String(env.SPMT_BASE_URL || "https://spmt.live")), {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-spmt-job-token": token },
+      body: JSON.stringify({ path: workerPath }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function readJson(request: IncomingMessage): Promise<CreateJobInput> {
@@ -241,7 +248,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   const method = request.method || "GET";
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (!url.pathname.startsWith("/api/codex/")) return false;
-  if (!authorized(request, env) && !(method === "GET" && await hasMountainViewAdminSession(request, env))) {
+  if (!(await authorizedBySpmt(request, url.pathname, env)) && !(method === "GET" && await hasMountainViewAdminSession(request, env))) {
     return sendJson(response, 401, { error: "Unauthorized" }), true;
   }
 
