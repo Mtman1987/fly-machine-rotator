@@ -1,4 +1,4 @@
-import { startAthenaCoderGateway } from "./athenaCoderUi.js";
+import { startAthenaControlGateway } from "./athenaControlGateway.js";
 import { startAutoRotationLoop } from "./autoRotate.js";
 import { startDashboardServer } from "./dashboardServer.js";
 import { runLogMonitor } from "./logMonitor.js";
@@ -13,7 +13,7 @@ function startWebStack(env: NodeJS.ProcessEnv = process.env) {
     ROTATOR_DASHBOARD_PORT: String(internalPort),
   };
   startDashboardServer(internalEnv);
-  startAthenaCoderGateway(env, internalPort, publicPort);
+  startAthenaControlGateway(env, internalPort, publicPort);
 }
 
 async function main(): Promise<void> {
