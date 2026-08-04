@@ -1,20 +1,33 @@
+import { startAthenaCoderGateway } from "./athenaCoderUi.js";
 import { startAutoRotationLoop } from "./autoRotate.js";
 import { startDashboardServer } from "./dashboardServer.js";
 import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 
+function startWebStack(env: NodeJS.ProcessEnv = process.env) {
+  const publicPort = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
+  const internalPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT ?? publicPort + 1);
+  const internalEnv = {
+    ...env,
+    PORT: String(internalPort),
+    ROTATOR_DASHBOARD_PORT: String(internalPort),
+  };
+  startDashboardServer(internalEnv);
+  startAthenaCoderGateway(env, internalPort, publicPort);
+}
+
 async function main(): Promise<void> {
   const command = process.argv[2] ?? "run";
   if (command === "serve") {
-    startDashboardServer(process.env);
-    console.log("Fly Machine Rotator dashboard server is running.");
+    startWebStack(process.env);
+    console.log("Fly Machine Rotator dashboard and Athena Coder are running.");
     await new Promise(() => undefined);
     return;
   }
   if (command === "monitor") {
     const { loadConfig } = await import("./config.js");
     const config = loadConfig(process.argv.slice(3));
-    startDashboardServer(process.env);
+    startWebStack(process.env);
     void startAutoRotationLoop(process.argv.slice(3));
     await runLogMonitor({
       appNames: config.appNames,
