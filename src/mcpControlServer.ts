@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
+import { getSpmtLlmWorkerStatus, provisionSpmtLlmWorker } from "./flyLlmProvisioner.js";
 
 const MCP_PATH = "/mcp";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -113,7 +114,7 @@ export function listMcpTools() {
     {
       name: "create_coding_job",
       title: "Create isolated Athena coding job",
-      description: "Create an isolated coding job. This may edit only the job sandbox and run repository checks. It does not publish, merge, deploy, or access secrets.",
+      description: "Create an isolated coding job. This edits only the sandbox and runs repository checks; it does not publish, merge, or deploy.",
       inputSchema: {
         type: "object",
         properties: {
@@ -129,7 +130,7 @@ export function listMcpTools() {
     {
       name: "get_coding_job",
       title: "Read Athena coding job",
-      description: "Read the current status, summary, changed files, and validation checks for one Athena coding job.",
+      description: "Read one Athena coding job's status, summary, changed files, and validation checks.",
       inputSchema: {
         type: "object",
         properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } },
@@ -138,13 +139,36 @@ export function listMcpTools() {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
+    {
+      name: "get_spmt_llm_worker_status",
+      title: "Read SPMT LLM worker status",
+      description: "Read sanitized Fly status for the dedicated SPMT LLM worker. No secret values are returned.",
+      inputSchema: {
+        type: "object",
+        properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "provision_spmt_llm_worker",
+      title: "Provision dedicated SPMT LLM worker",
+      description: "Idempotently create the allowlisted SPMT LLM Fly app and model volume, generate and store its private API key, deploy Qwen3 through llama.cpp, and return sanitized status. Requires MCP_ALLOW_FLY_PROVISIONING=true on Rotator.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" },
+          region: { type: "string", pattern: "^[a-z]{3}$" },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
   ];
 }
 
 async function executeTool(name: string, args: Record<string, unknown>, env: NodeJS.ProcessEnv, dashboardPort: number) {
-  if (name === "list_code_references") {
-    return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/references");
-  }
+  if (name === "list_code_references") return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/references");
   if (name === "create_coding_job") {
     const appName = String(args.appName || "").trim();
     const description = String(args.description || "").trim();
@@ -161,6 +185,12 @@ async function executeTool(name: string, args: Record<string, unknown>, env: Nod
     const jobId = String(args.jobId || "").trim();
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(jobId)) return { status: 400, payload: { error: "Invalid jobId" } };
     return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}`);
+  }
+  if (name === "get_spmt_llm_worker_status") {
+    return { status: 200, payload: await getSpmtLlmWorkerStatus(args, env) };
+  }
+  if (name === "provision_spmt_llm_worker") {
+    return { status: 200, payload: await provisionSpmtLlmWorker(args, env) };
   }
   return { status: 404, payload: { error: `Unknown tool ${name}` } };
 }
@@ -184,12 +214,8 @@ export async function handleMcpControlRequest(
     sendJson(response, 401, rpcError(null, -32001, "Unauthorized"));
     return true;
   }
-  if (request.method === "GET") {
-    sendJson(response, 405, rpcError(null, -32600, "Use POST for MCP requests"));
-    return true;
-  }
   if (request.method !== "POST") {
-    sendJson(response, 405, rpcError(null, -32600, "Method not allowed"));
+    sendJson(response, 405, rpcError(null, -32600, "Use POST for MCP requests"));
     return true;
   }
 
@@ -204,7 +230,7 @@ export async function handleMcpControlRequest(
     sendJson(response, 200, rpcResult(rpc.id, {
       protocolVersion: "2025-11-25",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "spmt-rotator-control", version: "0.1.0", description: "Owner-controlled Athena Coder bridge" },
+      serverInfo: { name: "spmt-rotator-control", version: "0.2.0", description: "Owner-controlled Athena Coder and guarded Fly provisioning bridge" },
     }));
     return true;
   }
@@ -223,7 +249,7 @@ export async function handleMcpControlRequest(
     const args = params.arguments && typeof params.arguments === "object" ? params.arguments as Record<string, unknown> : {};
     try {
       const result = await executeTool(name, args, env, dashboardPort);
-      const isError = result.status < 200 || result.status >= 300;
+      const isError = result.status < 200 || result.status >= 300 || Boolean((result.payload as { ok?: boolean } | undefined)?.ok === false);
       sendJson(response, 200, rpcResult(rpc.id, {
         content: [{ type: "text", text: JSON.stringify(result.payload, null, 2) }],
         structuredContent: result.payload,
