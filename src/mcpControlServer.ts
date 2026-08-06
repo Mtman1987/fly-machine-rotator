@@ -83,7 +83,7 @@ async function callInternalCodex(
     const headers: IncomingHttpHeaders = {
       "x-codex-worker-secret": workerSecret,
       accept: "application/json",
-      ...(serialized ? { "content-type": "application/json", "content-length": Buffer.byteLength(serialized) } : {}),
+      ...(serialized ? { "content-type": "application/json", "content-length": String(Buffer.byteLength(serialized)) } : {}),
     };
     const request = httpRequest({ hostname: "127.0.0.1", port: dashboardPort, method, path, headers }, (response) => {
       let raw = "";
