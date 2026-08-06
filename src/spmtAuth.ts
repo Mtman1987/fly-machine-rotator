@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 
-type SpmtIdentity = Record<string, unknown> & {
+export type SpmtIdentity = Record<string, unknown> & {
   id?: string;
   username?: string;
   isAdmin?: boolean;
@@ -32,15 +32,21 @@ export function isSpmtAdmin(identity: SpmtIdentity | null | undefined): boolean 
   return roles.includes("admin") || roles.includes("owner");
 }
 
-export async function requireSpmtAdmin(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<SpmtIdentity | null> {
+export async function requireSpmtIdentity(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<SpmtIdentity | null> {
   const token = readSpmtAccessToken(request);
   if (!token) return null;
   const baseUrl = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
   const response = await fetch(`${baseUrl}/api/oauth/userinfo`, {
     headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) return null;
-  const identity = await response.json().catch(() => null) as SpmtIdentity | null;
-  return identity?.id && isSpmtAdmin(identity) ? identity : null;
+  }).catch(() => null);
+  if (!response?.ok) return null;
+  const payload = await response.json().catch(() => null) as any;
+  const identity = (payload?.user || payload?.profile || payload) as SpmtIdentity | null;
+  return identity?.id ? identity : null;
+}
+
+export async function requireSpmtAdmin(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<SpmtIdentity | null> {
+  const identity = await requireSpmtIdentity(request, env);
+  return identity && isSpmtAdmin(identity) ? identity : null;
 }
