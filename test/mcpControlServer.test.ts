@@ -1,23 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedMcpOrigin, isMcpAuthorized, listMcpTools } from "../src/mcpControlServer.js";
+import { listMcpTools } from "../src/mcpControlServer.js";
+import { isSpmtAdmin, readSpmtAccessToken } from "../src/spmtAuth.js";
 
 describe("MCP control server", () => {
-  it("requires the dedicated MCP bearer token", () => {
-    const env = { MCP_CONTROL_TOKEN: "owner-secret" };
-    expect(isMcpAuthorized({ headers: { authorization: "Bearer owner-secret" } } as any, env)).toBe(true);
-    expect(isMcpAuthorized({ headers: { "x-mcp-control-token": "owner-secret" } } as any, env)).toBe(true);
-    expect(isMcpAuthorized({ headers: { authorization: "Bearer wrong" } } as any, env)).toBe(false);
-    expect(isMcpAuthorized({ headers: {} } as any, env)).toBe(false);
-    expect(isMcpAuthorized({ headers: { authorization: "Bearer owner-secret" } } as any, {})).toBe(false);
+  it("accepts only the canonical SPMT bearer or SPMT session cookies", () => {
+    expect(readSpmtAccessToken({ headers: { authorization: "Bearer spmt-token" } } as any)).toBe("spmt-token");
+    expect(readSpmtAccessToken({ headers: { cookie: "spmt_access_token=cookie-token" } } as any)).toBe("cookie-token");
+    expect(readSpmtAccessToken({ headers: { cookie: "streamweaver-spmt-token=shared-token" } } as any)).toBe("shared-token");
+    expect(readSpmtAccessToken({ headers: { "x-mcp-control-token": "legacy-secret" } } as any)).toBe("");
   });
 
-  it("rejects browser origins unless explicitly allowlisted", () => {
-    const env = { MCP_ALLOWED_ORIGINS: "https://chatgpt.com,https://example.test" };
-    expect(isAllowedMcpOrigin("", env)).toBe(true);
-    expect(isAllowedMcpOrigin("https://chatgpt.com", env)).toBe(true);
-    expect(isAllowedMcpOrigin("https://example.test", env)).toBe(true);
-    expect(isAllowedMcpOrigin("https://evil.test", env)).toBe(false);
-    expect(isAllowedMcpOrigin("https://chatgpt.com", {})).toBe(false);
+  it("uses the SPMT admin or owner flag for privileged tools", () => {
+    expect(isSpmtAdmin({ id: "1", is_admin: 1 })).toBe(true);
+    expect(isSpmtAdmin({ id: "1", isAdmin: true })).toBe(true);
+    expect(isSpmtAdmin({ id: "1", role: "owner" })).toBe(true);
+    expect(isSpmtAdmin({ id: "1", roles: ["member", "admin"] })).toBe(true);
+    expect(isSpmtAdmin({ id: "1", role: "member" })).toBe(false);
   });
 
   it("exposes narrow coding and allowlisted LLM provisioning tools", () => {
