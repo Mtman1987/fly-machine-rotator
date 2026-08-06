@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleAthenaChatRequest } from "./athenaChat.js";
+import { handleAthenaSettingsRequest } from "./athenaSettings.js";
 import { handleMcpControlRequest } from "./mcpControlServer.js";
 import { handleLlmControlUiRequest } from "./llmControlUi.js";
 
@@ -69,6 +70,7 @@ export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, r
 export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPort: number, athenaPort: number, publicPort: number) {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleAthenaSettingsRequest(request, response, env)) return;
       if (await handleAthenaChatRequest(request, response, env)) return;
       if (await handleLlmControlUiRequest(request, response, env)) return;
       if (await handleMcpControlRequest(request, response, env, dashboardPort)) return;
@@ -79,6 +81,6 @@ export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPor
       if (!response.headersSent) sendJson(response, 502, { error: error instanceof Error ? error.message : "Rotator gateway unavailable" }); else response.end();
     }
   });
-  server.listen(publicPort, "0.0.0.0", () => console.log(`DSH mtfixit, MCP, LLM control, and Athena chat gateway listening on ${publicPort}; Athena gateway is internal on ${athenaPort}`));
+  server.listen(publicPort, "0.0.0.0", () => console.log(`Fly Rotator Athena operations gateway listening on ${publicPort}; Athena gateway is internal on ${athenaPort}`));
   return server;
 }
