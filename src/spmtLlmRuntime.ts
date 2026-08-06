@@ -17,7 +17,10 @@ export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): voi
   if (!env.OPENAI_FIX_MODEL) env.OPENAI_FIX_MODEL = "spmt-qwen3-4b";
 
   const originalFetch = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
     const url = typeof input === "string"
       ? input
       : input instanceof URL
