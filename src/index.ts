@@ -1,3 +1,4 @@
+import "./spmtLlmRuntime.js";
 import { startAthenaSpmtGateway } from "./athenaSpmtGateway.js";
 import { startAutoRotationLoop } from "./autoRotate.js";
 import { startDashboardServer } from "./dashboardServer.js";

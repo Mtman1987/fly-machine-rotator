@@ -55,22 +55,12 @@ jobs:
               --yes
           fi
 
-      - name: Generate shared private worker key
-        id: worker_key
-        shell: bash
+      - name: Configure Rotator private worker address
         run: |
-          key="$(openssl rand -hex 32)"
-          echo "::add-mask::$key"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-
-      - name: Store worker key in Fly only
-        env:
-          WORKER_KEY: ${{ steps.worker_key.outputs.key }}
-        run: |
-          flyctl secrets set --app "$LLM_APP" "LLAMA_API_KEY=$WORKER_KEY"
+          flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
+          flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
           flyctl secrets set --app "$ROTATOR_APP" \
-            "SPMT_LLM_API_KEY=$WORKER_KEY" \
-            "SPMT_LLM_BASE_URL=https://$LLM_APP.fly.dev/v1"
+            "SPMT_LLM_BASE_URL=http://$LLM_APP.internal:8080/v1"
 
       - name: Deploy dedicated llama.cpp worker
         run: |
@@ -80,6 +70,11 @@ jobs:
             --dockerfile llm-worker/Dockerfile \
             --remote-only \
             --yes
+
+      - name: Verify worker health over Fly private network
+        run: |
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            "node -e \"fetch('http://$LLM_APP.internal:8080/health').then(async r=>{if(!r.ok)throw new Error('health '+r.status);console.log(await r.text())}).catch(e=>{console.error(e);process.exit(1)})\""
 
       - name: Show sanitized worker status
         run: flyctl status --app "$LLM_APP"

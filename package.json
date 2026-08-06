@@ -4,13 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "patch:spmt-llm": "node scripts/patch-spmt-local-llm.mjs",
+    "prebuild": "npm run patch:spmt-llm",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js run",
     "monitor": "node dist/index.js monitor",
+    "predev": "npm run patch:spmt-llm",
     "dev": "tsx src/index.ts run",
     "dry-run": "tsx src/index.ts run --dry-run",
     "athena": "node scripts/athena-code.mjs",
+    "pretest": "npm run patch:spmt-llm",
     "test": "vitest run",
+    "pretypecheck": "npm run patch:spmt-llm",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
