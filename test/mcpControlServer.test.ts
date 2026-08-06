@@ -20,18 +20,21 @@ describe("MCP control server", () => {
     expect(isAllowedMcpOrigin("https://chatgpt.com", {})).toBe(false);
   });
 
-  it("exposes only the narrow Athena Coder tools", () => {
+  it("exposes narrow coding and allowlisted LLM provisioning tools", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
       "create_coding_job",
       "get_coding_job",
+      "get_spmt_llm_worker_status",
+      "provision_spmt_llm_worker",
     ]);
-    expect(tools.some((tool) => /deploy|merge|shell|secret/i.test(tool.name))).toBe(false);
-    expect(tools.find((tool) => tool.name === "create_coding_job")?.annotations.readOnlyHint).toBe(false);
+    expect(tools.some((tool) => /merge|shell|secret-value|delete/i.test(tool.name))).toBe(false);
+    expect(tools.find((tool) => tool.name === "provision_spmt_llm_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.filter((tool) => tool.annotations.readOnlyHint).map((tool) => tool.name)).toEqual([
       "list_code_references",
       "get_coding_job",
+      "get_spmt_llm_worker_status",
     ]);
   });
 });
