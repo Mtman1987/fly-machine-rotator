@@ -1,19 +1,22 @@
 import { startAthenaSpmtGateway } from "./athenaSpmtGateway.js";
 import { startAutoRotationLoop } from "./autoRotate.js";
 import { startDashboardServer } from "./dashboardServer.js";
+import { startDshMtFixItOuterGateway } from "./dshMtFixitGateway.js";
 import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 
 function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const publicPort = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
-  const internalPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT ?? publicPort + 1);
+  const athenaPort = Number(env.ROTATOR_ATHENA_GATEWAY_PORT ?? publicPort + 1);
+  const dashboardPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT ?? publicPort + 2);
   const internalEnv = {
     ...env,
-    PORT: String(internalPort),
-    ROTATOR_DASHBOARD_PORT: String(internalPort),
+    PORT: String(dashboardPort),
+    ROTATOR_DASHBOARD_PORT: String(dashboardPort),
   };
   startDashboardServer(internalEnv);
-  startAthenaSpmtGateway(env, internalPort, publicPort);
+  startAthenaSpmtGateway(env, dashboardPort, athenaPort);
+  startDshMtFixItOuterGateway(env, dashboardPort, athenaPort, publicPort);
 }
 
 async function main(): Promise<void> {
