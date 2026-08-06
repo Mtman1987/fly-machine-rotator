@@ -5,6 +5,7 @@ import { handleAthenaRepairUiRequest } from "./athenaRepairUi.js";
 import { handleAthenaSettingsRequest } from "./athenaSettings.js";
 import { handleMcpControlRequest } from "./mcpControlServer.js";
 import { handleLlmControlUiRequest } from "./llmControlUi.js";
+import { handleRotatorHomeUiRequest } from "./rotatorHomeUi.js";
 import { handleStreamWeaverAdminUiRequest } from "./streamweaverAdminUi.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
@@ -72,6 +73,7 @@ export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, r
 export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPort: number, athenaPort: number, publicPort: number) {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleRotatorHomeUiRequest(request, response, env)) return;
       if (await handleAthenaSettingsRequest(request, response, env)) return;
       if (await handleAthenaChatRequest(request, response, env)) return;
       if (await handleAthenaRepairUiRequest(request, response, env, dashboardPort)) return;
