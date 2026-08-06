@@ -1,6 +1,9 @@
 const PRIVATE_LLM_MARKER = "spmt-private-network-no-auth";
 const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 
+type FetchInit = NonNullable<Parameters<typeof fetch>[1]>;
+type FetchBody = FetchInit["body"];
+
 const ATHENA_OS_SYSTEM_CONTEXT = `You are Athena, the operational AI inside Athena OS for the SpaceMountain/SPMT application ecosystem.
 
 SPMT is a custom software platform and identity authority. It is not supply-chain management, ERP, logistics, or an unknown acronym. Never reinterpret SPMT outside this software ecosystem.
@@ -25,7 +28,7 @@ Operating behavior:
 
 let installed = false;
 
-function addAthenaContext(body: BodyInit | null | undefined): BodyInit | null | undefined {
+function addAthenaContext(body: FetchBody): FetchBody {
   if (typeof body !== "string") return body;
   try {
     const payload = JSON.parse(body) as { messages?: Array<Record<string, unknown>> };
