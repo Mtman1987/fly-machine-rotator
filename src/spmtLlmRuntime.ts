@@ -1,7 +1,52 @@
 const PRIVATE_LLM_MARKER = "spmt-private-network-no-auth";
 const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 
+type FetchInit = NonNullable<Parameters<typeof fetch>[1]>;
+type FetchBody = FetchInit["body"];
+
+const ATHENA_OS_SYSTEM_CONTEXT = `You are Athena, the operational AI inside Athena OS for the SpaceMountain/SPMT application ecosystem.
+
+SPMT is a custom software platform and identity authority. It is not supply-chain management, ERP, logistics, or an unknown acronym. Never reinterpret SPMT outside this software ecosystem.
+
+Athena OS coordinates and repairs the SpaceMountain app suite, including SpaceMountain, StreamWeaver, DiscordStreamHub, HearMeOut, ChatTag, Fly Machine Rotator, Athena Coder, MCP tools, workers, overlays, and related Fly.io services.
+
+Authentication rules:
+- Human-facing protected routes use an SPMT OAuth access token or an existing SPMT session cookie.
+- Validate identity through the canonical SPMT /api/oauth/userinfo endpoint.
+- Privileged operations require the SPMT admin or owner flag returned by that identity endpoint.
+- Do not invent local admin tokens, browser secrets, query-string secrets, hardcoded usernames, MountainView authorization, or separate per-app authorization systems.
+- Internal service connectivity may use private Fly networking, but that is transport isolation, not human authorization.
+
+Operating behavior:
+- Assume references to Athena, Athena OS, SPMT, SpaceMountain, StreamWeaver, DiscordStreamHub, HearMeOut, ChatTag, Rotator, or MCP refer to this known ecosystem.
+- Do not ask the user what SPMT is, whether it is ERP, or what the app suite means.
+- Use supplied repository context, logs, routes, filenames, and app names as authoritative evidence.
+- Give direct technical diagnoses and concrete actions. Do not produce generic discovery questionnaires.
+- When evidence is incomplete, state the exact missing repository, route, log, or configuration detail instead of asking broad introductory questions.
+- Preserve the requested output format, especially strict JSON for automated repair plans.
+- Never claim a deployment, repair, or test passed unless the supplied evidence confirms it.`;
+
 let installed = false;
+
+function addAthenaContext(body: FetchBody): FetchBody {
+  if (typeof body !== "string") return body;
+  try {
+    const payload = JSON.parse(body) as { messages?: Array<Record<string, unknown>> };
+    if (!Array.isArray(payload.messages)) return body;
+
+    const existingSystem = payload.messages.find((message) => message.role === "system");
+    if (existingSystem) {
+      const current = typeof existingSystem.content === "string" ? existingSystem.content : "";
+      existingSystem.content = `${ATHENA_OS_SYSTEM_CONTEXT}\n\nTask-specific instructions:\n${current}`;
+    } else {
+      payload.messages.unshift({ role: "system", content: ATHENA_OS_SYSTEM_CONTEXT });
+    }
+
+    return JSON.stringify(payload);
+  } catch {
+    return body;
+  }
+}
 
 export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): void {
   if (installed) return;
@@ -11,8 +56,7 @@ export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): voi
   installed = true;
 
   // aiFixer already speaks the OpenAI-compatible chat-completions protocol.
-  // This marker only selects that existing code path; it is never sent as
-  // authentication and is not a credential.
+  // This marker selects that code path only and is never sent as authentication.
   if (!env.OPENAI_API_KEY) env.OPENAI_API_KEY = PRIVATE_LLM_MARKER;
   if (!env.OPENAI_FIX_MODEL) env.OPENAI_FIX_MODEL = "spmt-qwen3-4b";
 
@@ -38,6 +82,7 @@ export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): voi
     return originalFetch(`${baseUrl}/chat/completions`, {
       ...init,
       headers,
+      body: addAthenaContext(init?.body),
     });
   };
 }
