@@ -1,0 +1,85 @@
+name: Deploy SPMT LLM Worker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "llm-worker/**"
+      - ".github/workflows/deploy-llm-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-spmt-llm-worker
+  cancel-in-progress: false
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  LLM_APP: spmt-llm-worker
+  ROTATOR_APP: mtman-machine-rotator
+  FLY_ORG: mtman-new
+  FLY_REGION: ord
+  MODEL_VOLUME: spmt_llm_models
+
+jobs:
+  deploy:
+    name: Provision and deploy spmt-llm-worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Check Fly token
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN is not set"
+            exit 1
+          fi
+
+      - name: Ensure Fly app exists
+        run: |
+          if ! flyctl status --app "$LLM_APP" >/dev/null 2>&1; then
+            flyctl apps create "$LLM_APP" --org "$FLY_ORG"
+          fi
+
+      - name: Ensure persistent model volume exists
+        run: |
+          if ! flyctl volumes list --app "$LLM_APP" --json | jq -e --arg name "$MODEL_VOLUME" 'any(.[]; .name == $name)' >/dev/null; then
+            flyctl volumes create "$MODEL_VOLUME" \
+              --app "$LLM_APP" \
+              --region "$FLY_REGION" \
+              --size 10 \
+              --yes
+          fi
+
+      - name: Generate shared private worker key
+        id: worker_key
+        shell: bash
+        run: |
+          key="$(openssl rand -hex 32)"
+          echo "::add-mask::$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Store worker key in Fly only
+        env:
+          WORKER_KEY: ${{ steps.worker_key.outputs.key }}
+        run: |
+          flyctl secrets set --app "$LLM_APP" "LLAMA_API_KEY=$WORKER_KEY"
+          flyctl secrets set --app "$ROTATOR_APP" \
+            "SPMT_LLM_API_KEY=$WORKER_KEY" \
+            "SPMT_LLM_BASE_URL=https://$LLM_APP.fly.dev/v1"
+
+      - name: Deploy dedicated llama.cpp worker
+        run: |
+          flyctl deploy \
+            --app "$LLM_APP" \
+            --config llm-worker/fly.toml \
+            --dockerfile llm-worker/Dockerfile \
+            --remote-only \
+            --yes
+
+      - name: Show sanitized worker status
+        run: flyctl status --app "$LLM_APP"
