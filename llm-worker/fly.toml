@@ -1,0 +1,31 @@
+app = "spmt-llm-worker"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  LLM_UPSTREAM_BASE_URL = "http://127.0.0.1:11434/v1"
+  LLM_REQUEST_TIMEOUT_MS = "120000"
+  LLM_MAX_BODY_BYTES = "1048576"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "performance"
+  cpus = 2
+  memory_mb = 4096
