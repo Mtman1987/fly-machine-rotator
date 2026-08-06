@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
+import { handleMcpControlRequest } from "./mcpControlServer.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 
@@ -122,6 +123,7 @@ export function startDshMtFixItOuterGateway(
 ) {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleMcpControlRequest(request, response, env, dashboardPort)) return;
       if (await handleDshMtFixItGatewayRequest(request, response, env, dashboardPort)) return;
       await proxyToAthenaGateway(request, response, athenaPort);
     } catch (error) {
@@ -134,7 +136,7 @@ export function startDshMtFixItOuterGateway(
     }
   });
   server.listen(publicPort, "0.0.0.0", () => {
-    console.log(`DSH mtfixit gateway listening on ${publicPort}; Athena gateway is internal on ${athenaPort}`);
+    console.log(`DSH mtfixit and MCP gateway listening on ${publicPort}; Athena gateway is internal on ${athenaPort}`);
   });
   return server;
 }
