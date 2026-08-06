@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 
@@ -35,33 +35,19 @@ function sendJson(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
-async function proxyToCodexWorker(
+async function proxyRequest(
   incoming: IncomingMessage,
   outgoing: ServerResponse,
-  env: NodeJS.ProcessEnv,
-  internalPort: number,
-  workerPath: string,
+  port: number,
+  path: string,
+  headers: IncomingHttpHeaders,
 ) {
-  const workerSecret = String(env.CODEX_WORKER_SECRET || "").trim();
-  if (!workerSecret) {
-    sendJson(outgoing, 503, { error: "CODEX_WORKER_SECRET is not configured" });
-    return;
-  }
-
-  const headers: IncomingHttpHeaders = {
-    ...incoming.headers,
-    host: `127.0.0.1:${internalPort}`,
-    "x-codex-worker-secret": workerSecret,
-  };
-  delete headers["x-dsh-mtfixit-key"];
-  delete headers.connection;
-
   await new Promise<void>((resolve, reject) => {
     const proxied = httpRequest({
       hostname: "127.0.0.1",
-      port: internalPort,
+      port,
       method: incoming.method,
-      path: workerPath,
+      path,
       headers,
     }, (upstream) => {
       outgoing.writeHead(upstream.statusCode || 502, upstream.headers);
@@ -73,11 +59,43 @@ async function proxyToCodexWorker(
   });
 }
 
+async function proxyToCodexWorker(
+  incoming: IncomingMessage,
+  outgoing: ServerResponse,
+  env: NodeJS.ProcessEnv,
+  dashboardPort: number,
+  workerPath: string,
+) {
+  const workerSecret = String(env.CODEX_WORKER_SECRET || "").trim();
+  if (!workerSecret) {
+    sendJson(outgoing, 503, { error: "CODEX_WORKER_SECRET is not configured" });
+    return;
+  }
+
+  const headers: IncomingHttpHeaders = {
+    ...incoming.headers,
+    host: `127.0.0.1:${dashboardPort}`,
+    "x-codex-worker-secret": workerSecret,
+  };
+  delete headers["x-dsh-mtfixit-key"];
+  delete headers.connection;
+  await proxyRequest(incoming, outgoing, dashboardPort, workerPath, headers);
+}
+
+async function proxyToAthenaGateway(incoming: IncomingMessage, outgoing: ServerResponse, athenaPort: number) {
+  const headers: IncomingHttpHeaders = {
+    ...incoming.headers,
+    host: `127.0.0.1:${athenaPort}`,
+  };
+  delete headers.connection;
+  await proxyRequest(incoming, outgoing, athenaPort, incoming.url || "/", headers);
+}
+
 export async function handleDshMtFixItGatewayRequest(
   request: IncomingMessage,
   response: ServerResponse,
   env: NodeJS.ProcessEnv,
-  internalPort: number,
+  dashboardPort: number,
 ): Promise<boolean> {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (!url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
@@ -92,6 +110,31 @@ export async function handleDshMtFixItGatewayRequest(
     return true;
   }
 
-  await proxyToCodexWorker(request, response, env, internalPort, workerPath);
+  await proxyToCodexWorker(request, response, env, dashboardPort, workerPath);
   return true;
+}
+
+export function startDshMtFixItOuterGateway(
+  env: NodeJS.ProcessEnv,
+  dashboardPort: number,
+  athenaPort: number,
+  publicPort: number,
+) {
+  const server = createServer(async (request, response) => {
+    try {
+      if (await handleDshMtFixItGatewayRequest(request, response, env, dashboardPort)) return;
+      await proxyToAthenaGateway(request, response, athenaPort);
+    } catch (error) {
+      console.error("DSH mtfixit outer gateway failed", error);
+      if (!response.headersSent) {
+        sendJson(response, 502, { error: "Rotator gateway unavailable" });
+      } else {
+        response.end();
+      }
+    }
+  });
+  server.listen(publicPort, "0.0.0.0", () => {
+    console.log(`DSH mtfixit gateway listening on ${publicPort}; Athena gateway is internal on ${athenaPort}`);
+  });
+  return server;
 }
