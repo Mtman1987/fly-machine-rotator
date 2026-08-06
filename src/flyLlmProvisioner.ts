@@ -42,7 +42,7 @@ async function runFly(args: string[], env: NodeJS.ProcessEnv, input?: string, ti
   const token = String(env.FLY_API_TOKEN || "").trim();
   if (!token) throw new Error("FLY_API_TOKEN is not configured");
   return await new Promise((resolve, reject) => {
-    const child = spawn("fly", args, {
+    const child = spawn("flyctl", args, {
       cwd: "/app",
       env: { ...process.env, ...env, FLY_API_TOKEN: token, NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],
@@ -58,7 +58,7 @@ async function runFly(args: string[], env: NodeJS.ProcessEnv, input?: string, ti
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({
-        command: `fly ${args.join(" ")}`,
+        command: `flyctl ${args.join(" ")}`,
         ok: code === 0,
         exitCode: code ?? -1,
         stdout: stdout.slice(-40_000),
