@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "llm-worker/**"
+      - ".github/workflows/deploy-llm-worker.yml"
+      - ".github/workflows/manual-rotator-smoke.yml"
   workflow_dispatch:
 
 permissions:
