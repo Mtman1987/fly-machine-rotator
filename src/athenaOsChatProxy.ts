@@ -1,13 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isSpmtAdmin, requireSpmtIdentity, type SpmtIdentity } from "./spmtAuth.js";
 
-type ChatMessage = {
+export type AthenaProxyChatMessage = {
   role?: unknown;
   content?: unknown;
 };
 
-type ChatRequest = {
-  messages?: ChatMessage[];
+export type AthenaProxyChatRequest = {
+  messages?: AthenaProxyChatMessage[];
   provider?: string;
   model?: string;
   temperature?: number;
@@ -15,6 +15,11 @@ type ChatRequest = {
   adultConfirmed?: boolean;
   conversationId?: string;
   confirmedActionId?: string;
+};
+
+export type NormalizedAthenaHistoryMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
 };
 
 function sendJson(response: ServerResponse, status: number, value: unknown): true {
@@ -27,7 +32,7 @@ function sendJson(response: ServerResponse, status: number, value: unknown): tru
   return true;
 }
 
-async function readJson(request: IncomingMessage): Promise<ChatRequest> {
+async function readJson(request: IncomingMessage): Promise<AthenaProxyChatRequest> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -37,7 +42,7 @@ async function readJson(request: IncomingMessage): Promise<ChatRequest> {
     chunks.push(value);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) as ChatRequest : {};
+  return raw ? JSON.parse(raw) as AthenaProxyChatRequest : {};
 }
 
 function firstIdentityString(identity: SpmtIdentity, keys: string[]): string {
@@ -50,12 +55,12 @@ function firstIdentityString(identity: SpmtIdentity, keys: string[]): string {
   return "";
 }
 
-function normalizedHistory(value: unknown): Array<{ role: "user" | "assistant" | "system"; content: string }> {
+export function normalizeAthenaProxyHistory(value: unknown): NormalizedAthenaHistoryMessage[] {
   if (!Array.isArray(value)) return [];
   return value
     .slice(-40)
     .map((entry: any) => ({
-      role: String(entry?.role || "") as "user" | "assistant" | "system",
+      role: String(entry?.role || "") as NormalizedAthenaHistoryMessage["role"],
       content: typeof entry?.content === "string" ? entry.content.trim().slice(0, 20_000) : "",
     }))
     .filter((entry) => ["user", "assistant", "system"].includes(entry.role) && entry.content);
@@ -76,52 +81,25 @@ function mapGatewayError(payload: any, fallback: string): string {
   return String(payload?.error || payload?.message || fallback).trim() || fallback;
 }
 
-export async function handleAthenaOsChatProxy(
-  request: IncomingMessage,
-  response: ServerResponse,
-  env: NodeJS.ProcessEnv,
-): Promise<boolean> {
-  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-  if (request.method !== "POST" || url.pathname !== "/athena/api/chat") return false;
-
-  const identity = await requireSpmtIdentity(request, env);
-  if (!identity) return sendJson(response, 401, { error: "SPMT login required" });
-
-  let body: ChatRequest;
-  try {
-    body = await readJson(request);
-  } catch (error) {
-    return sendJson(response, 400, { error: error instanceof Error ? error.message : "Invalid chat request" });
-  }
-
-  const history = normalizedHistory(body.messages);
+export function buildAthenaGatewayPayload(identity: SpmtIdentity, body: AthenaProxyChatRequest) {
+  const history = normalizeAthenaProxyHistory(body.messages);
   const latestUserIndex = history.map((entry) => entry.role).lastIndexOf("user");
-  if (latestUserIndex < 0) return sendJson(response, 400, { error: "At least one user chat message is required" });
+  if (latestUserIndex < 0) throw new Error("At least one user chat message is required");
   const latest = history[latestUserIndex];
   const transientHistory = history
     .filter((_, index) => index !== latestUserIndex)
     .slice(-24);
 
-  const key = serviceKey(env);
-  if (!key) return sendJson(response, 503, { error: "SPMT_API_KEY is required for the Athena gateway" });
-
-  const identityId = firstIdentityString(identity, ["twitchId", "twitch_id", "userId", "user_id", "id"]);
   const username = firstIdentityString(identity, ["username", "displayName", "display_name", "handle"]) || "SPMT user";
   const displayName = firstIdentityString(identity, ["displayName", "display_name", "username"]) || username;
+  const identityId = firstIdentityString(identity, ["twitchId", "twitch_id", "userId", "user_id", "id"]) || username;
   const admin = isSpmtAdmin(identity);
   const adultMode = body.adultMode === true;
-  if (adultMode && (!admin || body.adultConfirmed !== true)) {
-    return sendJson(response, 403, { error: "Adult mode requires an SPMT owner/admin session and adult confirmation" });
-  }
 
-  const upstream = await fetch(gatewayUrl(env), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${key}`,
-      "content-type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify({
+  return {
+    adultMode,
+    admin,
+    payload: {
       tenantId: identityId,
       message: latest.content,
       actor: {
@@ -160,7 +138,49 @@ export async function handleAthenaOsChatProxy(
         requestedTemperature: Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : null,
         canonicalProviderPolicy: "local-qwen-primary",
       },
-    }),
+    },
+  };
+}
+
+export async function handleAthenaOsChatProxy(
+  request: IncomingMessage,
+  response: ServerResponse,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  if (request.method !== "POST" || url.pathname !== "/athena/api/chat") return false;
+
+  const identity = await requireSpmtIdentity(request, env);
+  if (!identity) return sendJson(response, 401, { error: "SPMT login required" });
+
+  let body: AthenaProxyChatRequest;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return sendJson(response, 400, { error: error instanceof Error ? error.message : "Invalid chat request" });
+  }
+
+  let built: ReturnType<typeof buildAthenaGatewayPayload>;
+  try {
+    built = buildAthenaGatewayPayload(identity, body);
+  } catch (error) {
+    return sendJson(response, 400, { error: error instanceof Error ? error.message : "Invalid chat request" });
+  }
+  if (built.adultMode && (!built.admin || body.adultConfirmed !== true)) {
+    return sendJson(response, 403, { error: "Adult mode requires an SPMT owner/admin session and adult confirmation" });
+  }
+
+  const key = serviceKey(env);
+  if (!key) return sendJson(response, 503, { error: "SPMT_API_KEY is required for the Athena gateway" });
+
+  const upstream = await fetch(gatewayUrl(env), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(built.payload),
     signal: AbortSignal.timeout(120_000),
   }).catch((error) => {
     console.error("Unified Athena gateway request failed", error);
@@ -178,7 +198,7 @@ export async function handleAthenaOsChatProxy(
     provider: String(payload.provider || "local-qwen"),
     model: String(payload.model || "spmt-qwen3-4b"),
     usage: null,
-    adultMode,
+    adultMode: built.adultMode,
     visibility: payload.visibility,
     surface: payload.surface,
     conversationId: payload.conversationId,
