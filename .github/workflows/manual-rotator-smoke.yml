@@ -7,6 +7,17 @@ on:
     paths:
       - ".github/workflows/manual-rotator-smoke.yml"
   workflow_dispatch:
+    inputs:
+      run_rotation:
+        description: Run one real Fly machine rotation
+        required: false
+        default: true
+        type: boolean
+      run_coder_smoke:
+        description: Generate the targeted DSH Athena Coder smoke proposal
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,7 +32,7 @@ env:
 
 jobs:
   smoke:
-    name: Verify Qwen and run one rotation
+    name: Verify Qwen and exercise Rotator/Coder
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -68,16 +79,29 @@ jobs:
           flyctl logs --app "$ROTATOR_APP" --no-tail || true
           exit 1
 
-      - name: Verify Qwen from inside Rotator
+      - name: Verify Qwen final content from inside Rotator
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
-            "node -e \"const b=process.env.SPMT_LLM_BASE_URL;if(!b)throw new Error('SPMT_LLM_BASE_URL missing');fetch(b+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'spmt-qwen3-4b',messages:[{role:'user',content:'Reply exactly QWEN_CODER_OK'}],max_tokens:24,temperature:0})}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('Qwen HTTP '+r.status+' '+t);console.log(t);if(!t.includes('QWEN_CODER_OK'))throw new Error('Qwen response did not contain expected marker')}).catch(e=>{console.error(e);process.exit(1)})\""
+            'node -e "const b=process.env.SPMT_LLM_BASE_URL;if(!b)throw new Error(\"SPMT_LLM_BASE_URL missing\");fetch(b+\"/chat/completions\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify({model:\"spmt-qwen3-4b\",messages:[{role:\"user\",content:\"Reply exactly QWEN_CODER_OK\"}],max_tokens:64,temperature:0.2,thinking_budget_tokens:0})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(\"Qwen HTTP \"+r.status+\" \"+JSON.stringify(d));const m=d.choices?.[0]?.message||{};console.log(JSON.stringify({model:d.model,content:m.content||\"\",reasoningPresent:Boolean(m.reasoning_content),finishReason:d.choices?.[0]?.finish_reason},null,2));if(!String(m.content||\"\").includes(\"QWEN_CODER_OK\"))throw new Error(\"Qwen final content did not contain expected marker\")}).catch(e=>{console.error(e);process.exit(1)})"'
+
+      - name: Generate targeted DSH Coder proposal
+        if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
+        run: |
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            'node -e "const id=\"discord-stream-hub-new::7d8b6e96742917f6\";const token=process.env.ROTATOR_DASHBOARD_ACTION_TOKEN;if(!token)throw new Error(\"ROTATOR_DASHBOARD_ACTION_TOKEN missing\");fetch(\"http://127.0.0.1:8082/actions/fixes/generate?id=\"+encodeURIComponent(id),{method:\"POST\",headers:{\"x-rotator-action-token\":token,\"content-type\":\"application/json\"},body:\"{}\"}).then(async r=>{const t=await r.text();console.log(t);if(!r.ok)throw new Error(\"Coder generate HTTP \"+r.status+\" \"+t)}).catch(e=>{console.error(e);process.exit(1)})"'
+
+      - name: Show targeted Coder proposal summary
+        if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
+        run: |
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            'node -e "const fs=require(\"node:fs\");const id=\"discord-stream-hub-new::7d8b6e96742917f6\";const rows=JSON.parse(fs.readFileSync(\"/data/fix-proposals.json\",\"utf8\"));const r=rows.find(x=>x.id===id);if(!r)throw new Error(\"Target proposal not found\");console.log(JSON.stringify({id:r.id,status:r.status,summary:r.summary,diagnosis:r.diagnosis,confidence:r.confidence,confidenceScore:r.confidenceScore,sourceSummary:r.sourceSummary,changes:(r.changes||[]).map(c=>({path:c.path,reason:c.reason})),lastError:r.lastError,attempts:(r.attempts||[]).slice(-3)},null,2));if(r.status===\"error\")process.exit(1)"'
 
       - name: Run one real rotation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_rotation }}
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command "node dist/index.js run"
 
-      - name: Capture post-rotation status
+      - name: Capture post-run status
         if: always()
         run: |
           echo "=== ROTATOR STATUS ==="
