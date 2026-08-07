@@ -23,6 +23,7 @@ env:
   FLY_ORG: mtman-new
   FLY_REGION: ord
   MODEL_VOLUME: spmt_llm_models
+  LLM_PORT: "8090"
 
 jobs:
   deploy:
@@ -60,7 +61,7 @@ jobs:
           flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
           flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
           flyctl secrets set --app "$ROTATOR_APP" \
-            "SPMT_LLM_BASE_URL=http://$LLM_APP.internal:8080/v1"
+            "SPMT_LLM_BASE_URL=http://$LLM_APP.internal:$LLM_PORT/v1"
 
       - name: Deploy dedicated llama.cpp worker
         run: |
@@ -74,7 +75,7 @@ jobs:
       - name: Verify worker health over Fly private network
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
-            "node -e \"fetch('http://$LLM_APP.internal:8080/health').then(async r=>{if(!r.ok)throw new Error('health '+r.status);console.log(await r.text())}).catch(e=>{console.error(e);process.exit(1)})\""
+            "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/health').then(async r=>{if(!r.ok)throw new Error('health '+r.status);console.log(await r.text())}).catch(e=>{console.error(e);process.exit(1)})\""
 
       - name: Show sanitized worker status
         run: flyctl status --app "$LLM_APP"
