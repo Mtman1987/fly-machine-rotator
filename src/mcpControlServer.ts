@@ -1,5 +1,10 @@
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
-import { getSpmtLlmWorkerStatus, provisionSpmtLlmWorker } from "./flyLlmProvisioner.js";
+import {
+  getSpmtEmbeddingWorkerStatus,
+  getSpmtLlmWorkerStatus,
+  provisionSpmtEmbeddingWorker,
+  provisionSpmtLlmWorker,
+} from "./flyLlmProvisioner.js";
 import { isSpmtAdmin, requireSpmtIdentity, type SpmtIdentity } from "./spmtAuth.js";
 
 const MCP_PATH = "/mcp";
@@ -87,12 +92,14 @@ export function listMcpTools() {
     { name: "create_coding_job", title: "Create isolated Athena coding job", description: "Create an isolated coding job. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, description: { type: "string", minLength: 1, maxLength: 4000 }, context: { type: "object", additionalProperties: true } }, required: ["appName", "description"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
     { name: "get_coding_job", title: "Read Athena coding job", description: "Read an Athena coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     { name: "get_spmt_llm_worker_status", title: "Read SPMT LLM worker status", description: "Read sanitized Fly status for the SPMT LLM worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+    { name: "get_spmt_embedding_worker_status", title: "Read SPMT embeddings worker status", description: "Read sanitized Fly status and the private base URL for the embeddings worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     { name: "provision_spmt_llm_worker", title: "Provision dedicated SPMT LLM worker", description: "Provision the allowlisted SPMT LLM worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
+    { name: "provision_spmt_embedding_worker", title: "Provision SPMT embeddings worker", description: "Provision the separate CPU embeddings worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" }, modelRepo: { type: "string", minLength: 1, maxLength: 200 }, modelAlias: { type: "string", minLength: 1, maxLength: 120 }, volumeName: { type: "string", pattern: "^[a-zA-Z0-9_]{3,64}$" }, volumeGb: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   ];
 }
 
 function toolRequiresAdmin(name: string): boolean {
-  return name === "create_coding_job" || name === "provision_spmt_llm_worker";
+  return name === "create_coding_job" || name === "provision_spmt_llm_worker" || name === "provision_spmt_embedding_worker";
 }
 
 async function executeTool(name: string, args: Record<string, unknown>, identity: SpmtIdentity, env: NodeJS.ProcessEnv, dashboardPort: number) {
@@ -110,7 +117,9 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
     return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}`);
   }
   if (name === "get_spmt_llm_worker_status") return { status: 200, payload: await getSpmtLlmWorkerStatus(args, env) };
+  if (name === "get_spmt_embedding_worker_status") return { status: 200, payload: await getSpmtEmbeddingWorkerStatus(args, env) };
   if (name === "provision_spmt_llm_worker") return { status: 200, payload: await provisionSpmtLlmWorker(args, env) };
+  if (name === "provision_spmt_embedding_worker") return { status: 200, payload: await provisionSpmtEmbeddingWorker(args, env) };
   return { status: 404, payload: { error: `Unknown tool ${name}` } };
 }
 
@@ -137,7 +146,7 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
   }
 
   if (rpc.method === "initialize") {
-    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.3.0", description: "SPMT-authorized Athena Coder and LLM control bridge" } }));
+    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.4.0", description: "SPMT-authorized Athena Coder, chat-worker, and embeddings-worker control bridge" } }));
     return true;
   }
   if (rpc.method === "notifications/initialized") {
