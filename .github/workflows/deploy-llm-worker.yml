@@ -23,7 +23,7 @@ env:
   FLY_ORG: mtman-new
   FLY_REGION: ord
   MODEL_VOLUME: spmt_llm_models
-  LLM_PORT: "8090"
+  LLM_PORT: "8080"
 
 jobs:
   deploy:
