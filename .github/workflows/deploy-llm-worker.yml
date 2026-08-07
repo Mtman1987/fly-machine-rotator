@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-spmt-llm-worker
+  group: spmt-fly-production-mutation
   cancel-in-progress: false
 
 env:
@@ -55,13 +55,6 @@ jobs:
               --size 10 \
               --yes
           fi
-
-      - name: Configure Rotator private worker address
-        run: |
-          flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
-          flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
-          flyctl secrets set --app "$ROTATOR_APP" \
-            "SPMT_LLM_BASE_URL=http://$LLM_APP.internal:$LLM_PORT/v1"
 
       - name: Deploy dedicated llama.cpp worker
         run: |
