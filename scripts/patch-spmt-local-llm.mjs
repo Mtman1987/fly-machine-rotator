@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-const path = new URL('../src/aiFixer.ts', import.meta.url);
-let source = await readFile(path, 'utf8');
+const aiFixerPath = new URL('../src/aiFixer.ts', import.meta.url);
+let source = await readFile(aiFixerPath, 'utf8');
 
 const providerAnchor = '  const failures: string[] = [];\n';
 const providerBlock = `  const failures: string[] = [];
@@ -49,4 +49,34 @@ if (!source.includes('async function requestSpmtLlmFixPlan(')) {
   source = source.replace(functionAnchor, localFunction + functionAnchor);
 }
 
-await writeFile(path, source);
+await writeFile(aiFixerPath, source);
+
+const ownerAuthTargets = [
+  '../src/athenaSpmtGateway.ts',
+  '../src/athenaCoderUi.ts',
+  '../src/publicCodexFixer.ts',
+  '../src/dashboardServer.ts',
+];
+
+for (const relativePath of ownerAuthTargets) {
+  const path = new URL(relativePath, import.meta.url);
+  let ownerSource = await readFile(path, 'utf8');
+  if (!ownerSource.includes('hasMountainViewAdminSession')) continue;
+
+  const mountainViewImport = /import \{([^}]*)\} from "\.\/mountainView\.js";/;
+  const match = ownerSource.match(mountainViewImport);
+  if (!match) throw new Error(`${relativePath} MountainView import anchor not found`);
+
+  const remainingNames = match[1]
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value) => value !== 'hasMountainViewAdminSession');
+  const replacementImports = [
+    ...(remainingNames.length ? [`import { ${remainingNames.join(', ')} } from "./mountainView.js";`] : []),
+    'import { requireSpmtAdmin } from "./spmtAuth.js";',
+  ].join('\n');
+  ownerSource = ownerSource.replace(mountainViewImport, replacementImports);
+  ownerSource = ownerSource.replaceAll('hasMountainViewAdminSession(', 'requireSpmtAdmin(');
+  await writeFile(path, ownerSource);
+}
