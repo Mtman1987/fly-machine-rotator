@@ -1,5 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getSpmtLlmWorkerStatus, provisionSpmtLlmWorker } from "./flyLlmProvisioner.js";
+import {
+  getSpmtEmbeddingWorkerStatus,
+  getSpmtLlmWorkerStatus,
+  provisionSpmtEmbeddingWorker,
+  provisionSpmtLlmWorker,
+} from "./flyLlmProvisioner.js";
 import { readLlmControlState, writeLlmControlState } from "./llmControlState.js";
 import { requireSpmtAdmin } from "./spmtAuth.js";
 
@@ -44,12 +49,14 @@ export async function handleLlmControlUiRequest(
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/llm-control/state") {
-    const [control, worker] = await Promise.all([
+    const [control, worker, embeddings] = await Promise.all([
       readLlmControlState(env),
       getSpmtLlmWorkerStatus({ appName: "spmt-llm-worker" }, env)
         .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) })),
+      getSpmtEmbeddingWorkerStatus({ appName: env.SPMT_EMBED_APP || "spmt-embed-worker" }, env)
+        .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) })),
     ]);
-    json(response, 200, { control, worker, admin: { id: admin.id, username: admin.username } });
+    json(response, 200, { control, worker, embeddings, admin: { id: admin.id, username: admin.username } });
     return true;
   }
   if (request.method === "POST" && url.pathname === "/api/llm-control/toggle") {
@@ -59,7 +66,21 @@ export async function handleLlmControlUiRequest(
     return true;
   }
   if (request.method === "POST" && url.pathname === "/api/llm-control/provision") {
-    const result = await provisionSpmtLlmWorker({ appName: "spmt-llm-worker", region: "ord" }, env);
+    const body = await readBody(request);
+    const result = await provisionSpmtLlmWorker({ appName: body.appName || "spmt-llm-worker", region: body.region || "ord" }, env);
+    json(response, result.ok ? 200 : 502, result);
+    return true;
+  }
+  if (request.method === "POST" && url.pathname === "/api/llm-control/provision-embeddings") {
+    const body = await readBody(request);
+    const result = await provisionSpmtEmbeddingWorker({
+      appName: body.appName || env.SPMT_EMBED_APP || "spmt-embed-worker",
+      region: body.region || env.SPMT_EMBED_REGION || env.SPMT_LLM_REGION || "ord",
+      modelRepo: body.modelRepo || env.SPMT_EMBED_HF_REPO,
+      modelAlias: body.modelAlias || env.SPMT_EMBED_MODEL,
+      volumeName: body.volumeName || env.SPMT_EMBED_VOLUME_NAME,
+      volumeGb: body.volumeGb || env.SPMT_EMBED_VOLUME_GB,
+    }, env);
     json(response, result.ok ? 200 : 502, result);
     return true;
   }
