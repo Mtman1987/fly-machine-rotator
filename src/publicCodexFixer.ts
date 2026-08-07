@@ -110,12 +110,11 @@ function inferRepo(input: CreateJobInput): RepoConfig {
 }
 
 function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {
-  const result: Record<string, string> = {
+  return {
     PATH: String(env.PATH || "/usr/local/bin:/usr/bin:/bin"),
     LANG: String(env.LANG || "C.UTF-8"),
     TMPDIR: join(dataDir, "tmp"),
   };
-  return result;
 }
 
 async function runCommand(command: string, cwd: string) {
@@ -264,6 +263,23 @@ function authorized(request: IncomingMessage, env: NodeJS.ProcessEnv) {
   return timingSafeEqual(a, b);
 }
 
+function isSameOriginUiRequest(request: IncomingMessage) {
+  const marker = String(request.headers["x-athena-coder-ui"] || "");
+  if (marker !== "1") return false;
+  const origin = String(request.headers.origin || "");
+  const host = String(request.headers.host || "");
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+async function ownerUiAuthorized(request: IncomingMessage, env: NodeJS.ProcessEnv) {
+  return isSameOriginUiRequest(request) && await hasMountainViewAdminSession(request, env);
+}
+
 async function readJson(request: IncomingMessage): Promise<CreateJobInput> {
   let raw = "";
   for await (const chunk of request) {
@@ -278,11 +294,88 @@ function sendJson(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function renderCoderWorkspace(jobs: PublicCodexJob[], env: NodeJS.ProcessEnv) {
+  const counts = {
+    running: jobs.filter((job) => job.status === "running" || job.status === "queued").length,
+    ready: jobs.filter((job) => job.status === "completed" && job.changedFiles.length > 0 && job.checks.every((check) => check.ok)).length,
+    failed: jobs.filter((job) => job.status === "failed").length,
+  };
+  const model = String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol");
+  const cards = jobs.map((job) => {
+    const checksPass = job.checks.length > 0 && job.checks.every((check) => check.ok);
+    const publishable = job.status === "completed" && job.changedFiles.length > 0 && checksPass && !job.pullRequest;
+    const tone = job.status === "completed" ? "good" : job.status === "failed" ? "bad" : "warn";
+    return `<button class="job-card ${tone}" data-job="${escapeHtml(job.id)}" type="button">
+      <span class="job-top"><strong>${escapeHtml(job.appName)}</strong><span class="status ${tone}">${escapeHtml(job.status)}</span></span>
+      <span class="job-desc">${escapeHtml(job.description)}</span>
+      <span class="job-meta">${escapeHtml(job.repoId)} · ${job.changedFiles.length} file${job.changedFiles.length === 1 ? "" : "s"} · ${job.checks.length} check${job.checks.length === 1 ? "" : "s"}</span>
+      ${job.pullRequest ? `<span class="ready-note">Draft PR #${job.pullRequest.number} created</span>` : publishable ? `<span class="ready-note">Ready for owner publish</span>` : ""}
+    </button>`;
+  }).join("");
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Athena Coder · Rotator</title>
+<style>
+:root{color-scheme:dark;--bg:#080b16;--panel:#11172a;--panel2:#171f36;--line:#2a3555;--text:#f6f7fb;--muted:#9ba9c7;--accent:#66e2ff;--accent2:#9e7bff;--good:#66e0a3;--warn:#ffd166;--bad:#ff6b7a;--shadow:0 24px 70px rgba(0,0,0,.28)}*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 20% 0%,rgba(102,226,255,.13),transparent 28rem),radial-gradient(circle at 100% 15%,rgba(158,123,255,.15),transparent 32rem),var(--bg);color:var(--text)}a{color:inherit}.shell{max-width:1500px;margin:auto;padding:24px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.brand{display:flex;align-items:center;gap:12px;font-weight:800}.orb{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,var(--accent) 28%,var(--accent2) 70%,#271d61);box-shadow:0 0 32px rgba(102,226,255,.32)}.nav{display:flex;gap:10px;flex-wrap:wrap}.nav a,.btn{border:1px solid var(--line);background:rgba(255,255,255,.045);border-radius:12px;padding:10px 13px;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:0;color:#07101a}.btn:disabled{opacity:.45;cursor:not-allowed}.hero{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;margin-bottom:18px}.panel{background:linear-gradient(180deg,rgba(23,31,54,.94),rgba(14,19,35,.95));border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}.hero-copy{padding:28px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:800}.hero h1{font-size:clamp(2rem,5vw,4.25rem);line-height:.95;margin:.5rem 0 1rem}.hero p{color:var(--muted);font-size:1.04rem;line-height:1.6;max-width:75ch}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:18px}.metric{padding:16px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.035)}.metric strong{display:block;font-size:1.7rem;margin-top:5px}.metric span{color:var(--muted);font-size:12px}.workspace{display:grid;grid-template-columns:minmax(280px,390px) 1fr;min-height:680px;overflow:hidden}.sidebar{border-right:1px solid var(--line);padding:16px;max-height:760px;overflow:auto}.sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.job-list{display:grid;gap:10px}.job-card{width:100%;text-align:left;padding:14px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.025);color:var(--text);cursor:pointer}.job-card:hover,.job-card.active{border-color:var(--accent);background:rgba(102,226,255,.07)}.job-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.job-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#dfe5f2;margin:9px 0;line-height:1.35}.job-meta,.ready-note{display:block;color:var(--muted);font-size:12px}.ready-note{color:var(--good);margin-top:8px;font-weight:700}.status{font-size:10px;text-transform:uppercase;letter-spacing:.09em;border-radius:999px;padding:5px 8px;border:1px solid currentColor}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.detail{padding:22px;min-width:0}.empty{display:grid;place-items:center;min-height:560px;text-align:center;color:var(--muted)}.detail-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}.detail h2{margin:.25rem 0 .4rem;font-size:1.6rem}.detail-desc{color:var(--muted);line-height:1.5;max-width:80ch}.detail-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:18px 0}.fact{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.025)}.fact span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.fact strong{display:block;margin-top:5px;overflow-wrap:anywhere}.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:12px}.tab{appearance:none;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);font-weight:800;padding:11px 10px;cursor:pointer}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;margin:0;min-height:320px;max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:16px;background:#090d19;color:#dfe9ff;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.checks{display:grid;gap:8px;margin-top:14px}.check{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:12px;padding:11px}.check b{color:var(--good)}.check.fail b{color:var(--bad)}.files{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.file{border:1px solid var(--line);border-radius:999px;padding:6px 9px;color:#d6def0;font-size:12px}.flash{position:fixed;right:20px;bottom:20px;max-width:440px;background:#11192d;border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow);display:none}.flash.show{display:block}@media(max-width:980px){.hero,.workspace{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:360px}.facts{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.shell{padding:14px}.topbar,.detail-head{align-items:flex-start;flex-direction:column}.metrics,.facts{grid-template-columns:1fr}.detail-actions{justify-content:flex-start}}
+</style></head><body><main class="shell">
+<header class="topbar"><div class="brand"><span class="orb"></span><span>Athena Coder · Rotator</span></div><nav class="nav"><a href="/">Ops Deck</a><a href="/mountainview">MountainView</a><button class="btn" type="button" id="refresh">Refresh jobs</button></nav></header>
+<section class="hero"><div class="panel hero-copy"><div class="eyebrow">Owner-only repair workspace</div><h1>Code repairs you can actually inspect.</h1><p>The repair station keeps the useful parts in one view: what Athena found, the exact diff, validation output, changed files, and whether a job is safe to publish as a draft pull request. Publishing remains an explicit owner action; merge and deployment stay outside this workspace.</p></div><aside class="panel metrics"><div class="metric"><span>Active</span><strong>${counts.running}</strong></div><div class="metric"><span>Ready</span><strong>${counts.ready}</strong></div><div class="metric"><span>Failed</span><strong>${counts.failed}</strong></div><div class="metric"><span>Coder model</span><strong style="font-size:1rem">${escapeHtml(model)}</strong></div><div class="metric"><span>Sandbox</span><strong style="font-size:1rem">No network</strong></div><div class="metric"><span>Publish mode</span><strong style="font-size:1rem">Draft PR</strong></div></aside></section>
+<section class="panel workspace"><aside class="sidebar"><div class="sidebar-head"><div><div class="eyebrow">Repair queue</div><strong>${jobs.length} recent jobs</strong></div></div><div class="job-list" id="job-list">${cards || '<div class="empty" style="min-height:220px">No Coder jobs yet.</div>'}</div></aside><section class="detail" id="detail"><div class="empty"><div><div class="eyebrow">Select a repair</div><h2>Choose a job from the queue.</h2><p>Its response, diff, checks, files, and publish state will appear here.</p></div></div></section></section>
+</main><div class="flash" id="flash"></div><script>
+const state={jobs:${JSON.stringify(jobs).replaceAll("<", "\\u003c")},selected:null,artifact:"response"};
+const detail=document.getElementById('detail');const flash=document.getElementById('flash');
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+function toast(message,error=false){flash.textContent=message;flash.style.borderColor=error?'var(--bad)':'var(--line)';flash.classList.add('show');setTimeout(()=>flash.classList.remove('show'),4200);}
+async function api(path,options={}){const headers={...(options.headers||{}),'x-athena-coder-ui':'1'};const response=await fetch(path,{...options,headers,credentials:'same-origin'});const type=response.headers.get('content-type')||'';const data=type.includes('application/json')?await response.json():await response.text();if(!response.ok)throw new Error(typeof data==='string'?data:(data.error||'Request failed'));return data;}
+function canPublish(job){return job.status==='completed'&&job.changedFiles.length>0&&job.checks.length>0&&job.checks.every(c=>c.ok)&&!job.pullRequest;}
+function activateCard(id){document.querySelectorAll('.job-card').forEach(el=>el.classList.toggle('active',el.dataset.job===id));}
+async function selectJob(id){state.selected=id;activateCard(id);try{const job=await api('/api/codex/jobs/'+encodeURIComponent(id));const index=state.jobs.findIndex(item=>item.id===id);if(index>=0)state.jobs[index]=job;renderJob(job);await showArtifact(state.artifact);}catch(error){toast(error.message,true);}}
+function renderJob(job){const checks=job.checks.map(check=>'<div class="check '+(check.ok?'':'fail')+'"><b>'+(check.ok?'PASS':'FAIL')+'</b><span><code>'+esc(check.command)+'</code></span></div>').join('');const files=job.changedFiles.map(file=>'<span class="file">'+esc(file)+'</span>').join('');detail.innerHTML='<div class="detail-head"><div><div class="eyebrow">'+esc(job.repoId)+'</div><h2>'+esc(job.appName)+'</h2><div class="detail-desc">'+esc(job.description)+'</div></div><div class="detail-actions">'+(job.pullRequest?'<a class="btn primary" target="_blank" rel="noopener" href="'+esc(job.pullRequest.url)+'">Open draft PR #'+esc(job.pullRequest.number)+'</a>':'<button class="btn primary" id="publish" '+(canPublish(job)?'':'disabled')+'>Publish draft PR</button>')+'</div></div><div class="facts"><div class="fact"><span>Status</span><strong>'+esc(job.status)+'</strong></div><div class="fact"><span>Changed files</span><strong>'+job.changedFiles.length+'</strong></div><div class="fact"><span>Checks</span><strong>'+job.checks.filter(c=>c.ok).length+' / '+job.checks.length+' pass</strong></div><div class="fact"><span>Updated</span><strong>'+esc(new Date(job.updatedAt).toLocaleString())+'</strong></div></div><div class="files">'+(files||'<span class="file">No changed files</span>')+'</div><div class="checks">'+(checks||'<div class="check"><span>No validation commands recorded yet.</span></div>')+'</div><div class="tabs"><button class="tab" data-artifact="response">Athena response</button><button class="tab" data-artifact="diff">Diff</button><button class="tab" data-artifact="checks">Raw checks</button></div><pre id="artifact">Loading…</pre>'+(job.error?'<p class="bad"><strong>Failure:</strong> '+esc(job.error)+'</p>':'');document.querySelectorAll('.tab').forEach(tab=>{tab.classList.toggle('active',tab.dataset.artifact===state.artifact);tab.addEventListener('click',()=>showArtifact(tab.dataset.artifact));});const publish=document.getElementById('publish');if(publish)publish.addEventListener('click',()=>publishJob(job.id));}
+async function showArtifact(kind){if(!state.selected)return;state.artifact=kind;document.querySelectorAll('.tab').forEach(tab=>tab.classList.toggle('active',tab.dataset.artifact===kind));const target=document.getElementById('artifact');if(!target)return;target.textContent='Loading…';try{target.textContent=await api('/api/codex/jobs/'+encodeURIComponent(state.selected)+'/'+kind);}catch(error){target.textContent='Artifact unavailable: '+error.message;}}
+async function publishJob(id){if(!confirm('Create a draft pull request for this validated repair? This does not merge or deploy it.'))return;try{const result=await api('/api/codex/jobs/'+encodeURIComponent(id)+'/publish',{method:'POST'});toast('Draft pull request created.');await selectJob(id);if(result.pullRequest?.url)window.open(result.pullRequest.url,'_blank','noopener');}catch(error){toast(error.message,true);}}
+async function refresh(){try{const result=await api('/api/codex/jobs');state.jobs=result.jobs||[];location.reload();}catch(error){toast(error.message,true);}}
+document.querySelectorAll('.job-card').forEach(card=>card.addEventListener('click',()=>selectJob(card.dataset.job)));document.getElementById('refresh').addEventListener('click',refresh);if(state.jobs[0])selectJob(state.jobs[0].id);
+</script></body></html>`;
+}
+
 export async function handlePublicCodexRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv): Promise<boolean> {
   const method = request.method || "GET";
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+  if (method === "GET" && url.pathname === "/athena/coder") {
+    if (!(await hasMountainViewAdminSession(request, env))) {
+      response.writeHead(302, { location: "/mountainview/auth/login?next=%2Fathena%2Fcoder", "cache-control": "no-store" });
+      response.end();
+      return true;
+    }
+    const jobs = await listCodexJobs(env, 50);
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "private, no-store",
+      "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "same-origin",
+    });
+    response.end(renderCoderWorkspace(jobs, env));
+    return true;
+  }
+
   if (!url.pathname.startsWith("/api/codex/")) return false;
-  if (!authorized(request, env) && !(method === "GET" && await hasMountainViewAdminSession(request, env))) {
+
+  const serviceAuth = authorized(request, env);
+  const ownerGetAuth = method === "GET" && await hasMountainViewAdminSession(request, env);
+  const ownerWriteAuth = method !== "GET" && await ownerUiAuthorized(request, env);
+  if (!serviceAuth && !ownerGetAuth && !ownerWriteAuth) {
     return sendJson(response, 401, { error: "Unauthorized" }), true;
   }
 
@@ -295,25 +388,43 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
     const now = new Date().toISOString();
     const job: PublicCodexJob = {
       id: `mtfix_${Date.now()}_${randomUUID().slice(0, 8)}`,
-      status: "queued", createdAt: now, updatedAt: now,
-      source: String(input.source || "streamweaver"), reporter: String(input.reporter || "unknown"),
-      reporterId: input.reporterId, tenantId: input.tenantId,
-      appName: String(input.appName || repo.appNames[0]), repoId: repo.id,
-      description: description.slice(0, 4000), changedFiles: [], checks: [],
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+      source: String(input.source || "streamweaver"),
+      reporter: String(input.reporter || "unknown"),
+      reporterId: input.reporterId,
+      tenantId: input.tenantId,
+      appName: String(input.appName || repo.appNames[0]),
+      repoId: repo.id,
+      description: description.slice(0, 4000),
+      changedFiles: [],
+      checks: [],
     };
     await saveJob(env, job);
     void executeJob(job, input, repo, env);
-    return sendJson(response, 202, { ok: true, job, dashboardUrl: String(env.PUBLIC_DASHBOARD_URL || "https://mtman-machine-rotator.fly.dev/") }), true;
+    return sendJson(response, 202, { ok: true, job, dashboardUrl: String(env.PUBLIC_DASHBOARD_URL || "https://mtman-machine-rotator.fly.dev/"), coderUrl: "/athena/coder" }), true;
   }
 
-  if (method === "GET" && url.pathname === "/api/codex/references") return sendJson(response, 200, { references: await listCodeReferences(env) }), true;
+  if (method === "GET" && url.pathname === "/api/codex/jobs") {
+    return sendJson(response, 200, { jobs: await listCodexJobs(env, 50) }), true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/codex/references") {
+    return sendJson(response, 200, { references: await listCodeReferences(env) }), true;
+  }
+
   const publish = url.pathname.match(/^\/api\/codex\/jobs\/([^/]+)\/publish$/);
   if (method === "POST" && publish) {
     const job = await readCodexJob(env, publish[1]);
     if (!job) return sendJson(response, 404, { error: "Job not found" }), true;
-    try { return sendJson(response, 200, { ok: true, pullRequest: await publishJob(job, env) }), true; }
-    catch (error) { return sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }), true; }
+    try {
+      return sendJson(response, 200, { ok: true, pullRequest: await publishJob(job, env) }), true;
+    } catch (error) {
+      return sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }), true;
+    }
   }
+
   const artifact = url.pathname.match(/^\/api\/codex\/jobs\/([^/]+)\/(diff|checks|response)$/);
   if (method === "GET" && artifact) {
     const id = safeJobId(artifact[1]);
@@ -321,15 +432,19 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
     try {
       const file = join(rootDir(env), "jobs", id, artifact[2] === "diff" ? "diff.patch" : `${artifact[2]}.txt`);
       const body = await readFile(file, "utf8");
-      response.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "private, no-store" });
+      response.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "private, no-store", "x-content-type-options": "nosniff" });
       response.end(body);
-    } catch { sendJson(response, 404, { error: "Artifact not found" }); }
+    } catch {
+      sendJson(response, 404, { error: "Artifact not found" });
+    }
     return true;
   }
+
   const match = url.pathname.match(/^\/api\/codex\/jobs\/([^/]+)$/);
   if (method === "GET" && match) {
     const job = await readCodexJob(env, match[1]);
     return sendJson(response, job ? 200 : 404, job || { error: "Job not found" }), true;
   }
+
   return sendJson(response, 404, { error: "Not found" }), true;
 }
