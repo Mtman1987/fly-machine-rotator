@@ -1,6 +1,6 @@
 FROM ghcr.io/ggml-org/llama.cpp:server
 
-ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_HOST=::
 ENV LLAMA_ARG_PORT=8080
 ENV LLAMA_ARG_HF_REPO=Qwen/Qwen3-4B-GGUF:Q4_K_M
 ENV LLAMA_ARG_ALIAS=spmt-qwen3-4b
