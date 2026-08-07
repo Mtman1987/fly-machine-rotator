@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { RepoConfig } from "./repoMap.js";
 
@@ -19,11 +19,19 @@ export async function ensureRepoReady(config: RepoConfig, env: NodeJS.ProcessEnv
 
   const hasGit = await pathExists(join(repoPath, ".git"));
   if (!hasGit) {
-    await runShell(`git clone ${shellQuote(authenticatedRepoUrl(config.repoUrl, env.GITHUB_TOKEN))} ${shellQuote(repoPath)}`, dirname(repoPath));
+    await runShell(
+      `git clone ${shellQuote(config.repoUrl)} ${shellQuote(repoPath)}`,
+      dirname(repoPath),
+      10 * 60 * 1000,
+      true,
+      buildGithubGitAuthEnv(config.repoUrl, env.GITHUB_TOKEN),
+      env.GITHUB_TOKEN,
+    );
   }
 
   await configureGitIdentity(repoPath);
-  await refreshRepoCache(repoPath);
+  await refreshRepoCache(repoPath, env);
+  await assertRemoteDoesNotContainSecret(repoPath, env.GITHUB_TOKEN);
   return repoPath;
 }
 
@@ -128,18 +136,21 @@ export async function pushRepoBranch(repoPath: string, branchName: string, messa
     throw new Error("No repo changes are staged or pending to push.");
   }
   const originUrl = (await runShell("git remote get-url origin", repoPath)).output.trim();
-  const authedOrigin = authenticatedRepoUrl(originUrl, env.GITHUB_TOKEN);
-  try {
-    await runShell(`git remote set-url origin ${shellQuote(authedOrigin)}`, repoPath);
-    await runShell(`git checkout -B ${shellQuote(branchName)}`, repoPath);
-    await runShell("git add -A", repoPath);
-    await runShell(`git commit -m ${shellQuote(message)}`, repoPath, 60_000, false);
-    const commit = (await runShell("git rev-parse HEAD", repoPath)).output.trim();
-    const pushResult = await runShell(`git push -u origin ${shellQuote(branchName)}`, repoPath, 5 * 60 * 1000);
-    return { branch: branchName, commit, output: pushResult.output };
-  } finally {
-    await runShell(`git remote set-url origin ${shellQuote(originUrl)}`, repoPath, 60_000, false).catch(() => undefined);
-  }
+  await assertRemoteDoesNotContainSecret(repoPath, env.GITHUB_TOKEN);
+  await runShell(`git checkout -B ${shellQuote(branchName)}`, repoPath);
+  await runShell("git add -A", repoPath);
+  await runShell(`git commit -m ${shellQuote(message)}`, repoPath, 60_000, false);
+  const commit = (await runShell("git rev-parse HEAD", repoPath)).output.trim();
+  const pushResult = await runShell(
+    `git push -u origin ${shellQuote(branchName)}`,
+    repoPath,
+    5 * 60 * 1000,
+    true,
+    buildGithubGitAuthEnv(originUrl, env.GITHUB_TOKEN),
+    env.GITHUB_TOKEN,
+  );
+  await assertRemoteDoesNotContainSecret(repoPath, env.GITHUB_TOKEN);
+  return { branch: branchName, commit, output: pushResult.output };
 }
 
 export async function checkoutFixBranch(repoPath: string, branchName: string): Promise<void> {
@@ -170,32 +181,47 @@ export async function captureRepoSnapshot(repoPath: string): Promise<RepoSnapsho
   };
 }
 
+export function buildGithubGitAuthEnv(url: string, token: string | undefined): NodeJS.ProcessEnv {
+  if (!token || !isGithubHttpUrl(url)) return {};
+  const basic = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    GIT_TERMINAL_PROMPT: "0",
+  };
+}
+
+async function assertRemoteDoesNotContainSecret(repoPath: string, token: string | undefined): Promise<void> {
+  if (!token) return;
+  const remotes = (await runShell("git remote -v", repoPath, 60_000, false)).output;
+  if (remotes.includes(token) || /https?:\/\/[^\s/@:]+:[^\s/@]+@/i.test(remotes)) {
+    throw new Error("Refusing Git operation because a credential-bearing remote is persisted in .git/config.");
+  }
+}
+
 async function configureGitIdentity(repoPath: string): Promise<void> {
   await runShell('git config user.name "Fly Rotator"', repoPath, 60_000, false);
   await runShell('git config user.email "rotator@local.invalid"', repoPath, 60_000, false);
 }
 
-async function refreshRepoCache(repoPath: string): Promise<void> {
-  await runShell("git fetch --all --prune", repoPath, 5 * 60 * 1000, false);
+async function refreshRepoCache(repoPath: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const originUrl = (await runShell("git remote get-url origin", repoPath, 60_000, false)).output.trim();
+  const gitAuth = buildGithubGitAuthEnv(originUrl, env.GITHUB_TOKEN);
+  await runShell("git fetch --all --prune", repoPath, 5 * 60 * 1000, false, gitAuth, env.GITHUB_TOKEN);
   if (await hasWorkingTreeChanges(repoPath)) return;
   const branch = (await readGitValue(repoPath, "git rev-parse --abbrev-ref HEAD"))?.trim();
   if (!branch || branch === "HEAD") return;
-  await runShell(`git pull --ff-only origin ${shellQuote(branch)}`, repoPath, 5 * 60 * 1000, false);
+  await runShell(`git pull --ff-only origin ${shellQuote(branch)}`, repoPath, 5 * 60 * 1000, false, gitAuth, env.GITHUB_TOKEN);
 }
 
-function authenticatedRepoUrl(url: string, token: string | undefined): string {
-  if (!token) return url;
+function isGithubHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol.startsWith("http")) {
-      parsed.username = "x-access-token";
-      parsed.password = token;
-      return parsed.toString();
-    }
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.hostname.toLowerCase() === "github.com";
   } catch {
-    // Use original.
+    return false;
   }
-  return url;
 }
 
 async function firstExisting(paths: string[]): Promise<string | undefined> {
@@ -236,17 +262,27 @@ function isSubpath(root: string, candidate: string): boolean {
   return normalizedCandidate.startsWith(normalizedRoot);
 }
 
+function redactCommandOutput(value: string, secret?: string): string {
+  let redacted = value;
+  if (secret) redacted = redacted.replaceAll(secret, "[redacted]");
+  redacted = redacted.replace(/https?:\/\/[^\s/@:]+:[^\s/@]+@/gi, "https://[redacted]@");
+  redacted = redacted.replace(/AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=]+/gi, "AUTHORIZATION: basic [redacted]");
+  return redacted;
+}
+
 async function runShell(
   command: string,
   cwd: string,
   timeoutMs = 10 * 60 * 1000,
-  rejectOnError = true
+  rejectOnError = true,
+  envOverrides: NodeJS.ProcessEnv = {},
+  secretToRedact?: string,
 ): Promise<{ exitCode: number; output: string }> {
   const executable = process.platform === "win32" ? "cmd.exe" : "sh";
   const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-lc", command];
 
   return await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd, env: process.env });
+    const child = spawn(executable, args, { cwd, env: { ...process.env, ...envOverrides } });
     const chunks: Buffer[] = [];
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -260,10 +296,11 @@ async function runShell(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      const output = Buffer.concat(chunks).toString("utf8");
+      const output = redactCommandOutput(Buffer.concat(chunks).toString("utf8"), secretToRedact);
+      const safeCommand = redactCommandOutput(command, secretToRedact);
       const exitCode = code ?? 1;
       if (rejectOnError && exitCode !== 0) {
-        reject(new Error(`Command failed (${exitCode}): ${command}\n${output}`));
+        reject(new Error(`Command failed (${exitCode}): ${safeCommand}\n${output}`));
         return;
       }
       resolve({ exitCode, output });
