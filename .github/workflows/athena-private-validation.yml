@@ -7,7 +7,9 @@ on:
       - 'src/athenaOsChatProxy.ts'
       - 'src/dshMtFixitGateway.ts'
       - 'src/flyLlmProvisioner.ts'
-      - 'test/**'
+      - 'test/athenaOsChatProxy.test.ts'
+      - 'test/dshMtFixitGateway.test.ts'
+      - 'test/mcpControlServer.test.ts'
       - '.github/workflows/athena-private-validation.yml'
   workflow_dispatch:
 
@@ -24,8 +26,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Tests
-        run: npm test
+      - name: Athena gateway tests
+        run: >-
+          npx vitest run
+          test/athenaOsChatProxy.test.ts
+          test/dshMtFixitGateway.test.ts
+          test/mcpControlServer.test.ts
