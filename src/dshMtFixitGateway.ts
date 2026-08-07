@@ -8,6 +8,7 @@ import { handleLlmControlUiRequest } from "./llmControlUi.js";
 import { handleRotatorHomeUiRequest } from "./rotatorHomeUi.js";
 import { handleStreamWeaverAdminUiRequest } from "./streamweaverAdminUi.js";
 import { handleRotatorSpmtAuthRequest } from "./spmtAuth.js";
+import { auditOwnerMutation, authorizeOwnerMutation, isOwnerMutationPath } from "./dashboardSecurity.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 
@@ -30,8 +31,13 @@ export function mapDshMtFixItWorkerPath(method: string, pathname: string, search
   return null;
 }
 
-function sendJson(response: ServerResponse, status: number, value: unknown) {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store", "x-content-type-options": "nosniff" });
+function sendJson(response: ServerResponse, status: number, value: unknown, extraHeaders: Record<string, string> = {}) {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+    ...extraHeaders,
+  });
   response.end(JSON.stringify(value));
 }
 
@@ -71,10 +77,36 @@ export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, r
   return true;
 }
 
+async function guardOwnerMutation(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const method = String(request.method || "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  if (!isOwnerMutationPath(url.pathname)) return false;
+
+  const authorization = await authorizeOwnerMutation(request, env);
+  if (!authorization.ok) {
+    await auditOwnerMutation(request, env, url.pathname, "denied", authorization.status).catch(() => undefined);
+    sendJson(
+      response,
+      authorization.status,
+      { error: authorization.error },
+      authorization.retryAfter ? { "retry-after": String(authorization.retryAfter) } : {},
+    );
+    return true;
+  }
+
+  response.once("finish", () => {
+    const outcome = response.statusCode >= 400 ? "failed" : "completed";
+    void auditOwnerMutation(request, env, url.pathname, outcome, response.statusCode).catch(() => undefined);
+  });
+  return false;
+}
+
 export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPort: number, athenaPort: number, publicPort: number) {
   const server = createServer(async (request, response) => {
     try {
       if (await handleRotatorSpmtAuthRequest(request, response, env)) return;
+      if (await guardOwnerMutation(request, response, env)) return;
       if (await handleRotatorHomeUiRequest(request, response, env)) return;
       if (await handleAthenaSettingsRequest(request, response, env)) return;
       if (await handleAthenaChatRequest(request, response, env)) return;
