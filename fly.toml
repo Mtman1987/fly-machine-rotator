@@ -31,6 +31,7 @@ primary_region = "ord"
   CODEX_FIXER_MODEL = "gpt-5.6-sol"
   SPMT_BASE_URL = "https://spmt.live"
   SPACEMOUNTAIN_BASE_URL = "https://spacemountain.live"
+  SPMT_LLM_BASE_URL = "http://spmt-llm-worker.internal:8080/v1"
 
 [http_service]
   internal_port = 8080

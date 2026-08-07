@@ -55,10 +55,10 @@ export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): voi
 
   installed = true;
 
-  // aiFixer already speaks the OpenAI-compatible chat-completions protocol.
-  // This marker selects that code path only and is never sent as authentication.
+  // Generic OpenAI-compatible chat can use the private worker when no real
+  // OpenAI key exists. Athena Coder has its own explicit local-provider path,
+  // so do not overwrite OPENAI_FIX_MODEL with the private Qwen alias here.
   if (!env.OPENAI_API_KEY) env.OPENAI_API_KEY = PRIVATE_LLM_MARKER;
-  if (!env.OPENAI_FIX_MODEL) env.OPENAI_FIX_MODEL = "spmt-qwen3-4b";
 
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (

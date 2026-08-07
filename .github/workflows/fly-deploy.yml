@@ -14,11 +14,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: spmt-fly-production-mutation
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploy fly-machine-rotator
     runs-on: ubuntu-latest
-    concurrency: fly-deploy-machine-rotator
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:

@@ -30,10 +30,11 @@ const localFunction = `async function requestSpmtLlmFixPlan(prompt: string, repo
       model,
       temperature: 0.2,
       thinking_budget_tokens: 0,
+      max_tokens: 6000,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are a senior software engineer. Return strict JSON with summary, diagnosis, confidence, sourceSummary, and changes. Each change must include path, reason, and the full updated file content." },
-        { role: "user", content: prompt }
+        { role: "system", content: "You are a senior software engineer. Return strict JSON with summary, diagnosis, confidence, sourceSummary, and changes. Each change must include path, reason, and the full updated file content. Do not emit reasoning or commentary outside the JSON." },
+        { role: "user", content: prompt + "\\n\\n/no_think" }
       ]
     })
   });
