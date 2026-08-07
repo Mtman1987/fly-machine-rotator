@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleAthenaChatRequest } from "./athenaChat.js";
+import { handleAthenaOsChatProxy } from "./athenaOsChatProxy.js";
 import { handleAthenaRepairUiRequest } from "./athenaRepairUi.js";
 import { handleAthenaSettingsRequest } from "./athenaSettings.js";
 import { handleMcpControlRequest } from "./mcpControlServer.js";
@@ -109,6 +110,7 @@ export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPor
       if (await guardOwnerMutation(request, response, env)) return;
       if (await handleRotatorHomeUiRequest(request, response, env)) return;
       if (await handleAthenaSettingsRequest(request, response, env)) return;
+      if (await handleAthenaOsChatProxy(request, response, env)) return;
       if (await handleAthenaChatRequest(request, response, env)) return;
       if (await handleAthenaRepairUiRequest(request, response, env, dashboardPort)) return;
       if (await handleStreamWeaverAdminUiRequest(request, response, env)) return;
