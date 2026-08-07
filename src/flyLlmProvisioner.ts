@@ -30,6 +30,7 @@ type WorkerDefinition = {
   modelRepo?: string;
   modelAlias?: string;
   extraSecrets?: Record<string, string>;
+  privateNetworkNoAuth?: boolean;
 };
 
 async function enabled(env: NodeJS.ProcessEnv): Promise<boolean> {
@@ -105,6 +106,7 @@ function chatWorkerDefinition(args: Record<string, unknown>, env: NodeJS.Process
     deployDirectory: "/app/llm-worker",
     modelRepo: String(args.modelRepo || env.SPMT_LLM_HF_REPO || "").trim() || undefined,
     modelAlias: String(args.modelAlias || env.SPMT_LLM_MODEL || "").trim() || undefined,
+    privateNetworkNoAuth: true,
   };
 }
 
@@ -153,22 +155,42 @@ async function provisionWorker(definition: WorkerDefinition, args: Record<string
     if (!createdVolume.ok) return { ok: false, appName, region, volumeName, keyStored: false, deployed: false, steps };
   } else steps.push({ name: "create-volume", ok: true, detail: "Persistent model volume already exists." });
 
-  const key = await ensureKey(env, definition.keyFile);
-  const secretValues: Record<string, string> = { LLAMA_API_KEY: key.value, ...definition.extraSecrets };
+  let keyStored = false;
+  const secretValues: Record<string, string> = { ...definition.extraSecrets };
+  if (definition.privateNetworkNoAuth) {
+    const unset = await runFly(["secrets", "unset", "LLAMA_API_KEY", "--app", appName, "--yes"], env, undefined, 2 * 60_000);
+    const absentAlready = /not found|does not exist|no secret/i.test(`${unset.stdout}\n${unset.stderr}`);
+    steps.push({
+      name: "remove-worker-api-key",
+      ok: unset.ok || absentAlready,
+      detail: unset.ok || absentAlready
+        ? "Removed legacy LLAMA_API_KEY; worker authentication is provided by Fly private-network isolation."
+        : summarize(unset),
+    });
+    if (!unset.ok && !absentAlready) return { ok: false, appName, region, volumeName, keyStored: false, deployed: false, steps };
+  } else {
+    const key = await ensureKey(env, definition.keyFile);
+    keyStored = true;
+    secretValues.LLAMA_API_KEY = key.value;
+    steps.push({ name: "worker-api-key", ok: true, detail: `Worker API key ${key.created ? "created" : "reused"} in Rotator secure storage.` });
+  }
+
   if (definition.modelRepo) secretValues.LLAMA_ARG_HF_REPO = definition.modelRepo;
   if (definition.modelAlias) secretValues.LLAMA_ARG_ALIAS = definition.modelAlias;
-  const secretInput = Object.entries(secretValues).map(([name, value]) => `${name}=${value}`).join("\n") + "\n";
-  const setSecret = await runFly(["secrets", "import", "--app", appName], env, secretInput, 2 * 60_000);
-  steps.push({ name: "set-worker-secrets", ok: setSecret.ok, detail: setSecret.ok ? `Worker secrets stored in Fly and API key ${key.created ? "created" : "reused"} in Rotator secure storage.` : summarize(setSecret) });
-  if (!setSecret.ok) return { ok: false, appName, region, volumeName, keyStored: true, deployed: false, steps };
+  if (Object.keys(secretValues).length > 0) {
+    const secretInput = Object.entries(secretValues).map(([name, value]) => `${name}=${value}`).join("\n") + "\n";
+    const setSecret = await runFly(["secrets", "import", "--app", appName], env, secretInput, 2 * 60_000);
+    steps.push({ name: "set-worker-secrets", ok: setSecret.ok, detail: setSecret.ok ? "Worker model/runtime secrets stored in Fly." : summarize(setSecret) });
+    if (!setSecret.ok) return { ok: false, appName, region, volumeName, keyStored, deployed: false, steps };
+  }
 
   const deploy = await runFly(["deploy", definition.deployDirectory, "--app", appName, "--config", definition.configPath, "--dockerfile", definition.dockerfilePath, "--remote-only", "--yes"], env, undefined, 30 * 60_000);
   steps.push({ name: "deploy", ok: deploy.ok, detail: summarize(deploy) });
-  if (!deploy.ok) return { ok: false, appName, region, volumeName, keyStored: true, deployed: false, steps };
+  if (!deploy.ok) return { ok: false, appName, region, volumeName, keyStored, deployed: false, steps };
 
   const statusAfter = await parseJsonCommand(["status", "--app", appName, "--json"], env);
   steps.push({ name: "status", ok: statusAfter.result.ok, detail: statusAfter.result.ok ? "Deployment status read successfully." : summarize(statusAfter.result) });
-  return { ok: deploy.ok && statusAfter.result.ok, appName, region, volumeName, keyStored: true, deployed: deploy.ok, status: statusAfter.payload, steps };
+  return { ok: deploy.ok && statusAfter.result.ok, appName, region, volumeName, keyStored, deployed: deploy.ok, status: statusAfter.payload, steps };
 }
 
 export async function getSpmtLlmWorkerStatus(args: Record<string, unknown>, env: NodeJS.ProcessEnv) {
