@@ -1,0 +1,41 @@
+name: Athena SPMT OAuth validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/athenaOsChatProxy.ts'
+      - 'src/dshMtFixitGateway.ts'
+      - 'src/flyLlmProvisioner.ts'
+      - 'llm-worker/**'
+      - '.github/workflows/deploy-llm-worker.yml'
+      - '.github/workflows/athena-spmt-oauth-validation.yml'
+      - 'test/athenaOsChatProxy.test.ts'
+      - 'test/privateLlmWorkerConfig.test.ts'
+      - 'test/dshMtFixitGateway.test.ts'
+      - 'test/mcpControlServer.test.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Focused Athena and private-worker tests
+        run: >-
+          npx vitest run
+          test/athenaOsChatProxy.test.ts
+          test/privateLlmWorkerConfig.test.ts
+          test/dshMtFixitGateway.test.ts
+          test/mcpControlServer.test.ts

@@ -27,7 +27,7 @@ env:
 
 jobs:
   deploy:
-    name: Provision and deploy spmt-llm-worker
+    name: Provision and deploy private spmt-llm-worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,14 @@ jobs:
               --yes
           fi
 
-      - name: Deploy dedicated llama.cpp worker
+      - name: Remove obsolete model-worker keys
+        run: |
+          # SPMT OAuth authenticates people and apps at the Athena gateway.
+          # Qwen is reachable only over the organization private network.
+          flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
+          flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
+
+      - name: Deploy dedicated private llama.cpp worker
         run: |
           flyctl deploy \
             --app "$LLM_APP" \
@@ -64,6 +71,16 @@ jobs:
             --dockerfile llm-worker/Dockerfile \
             --remote-only \
             --yes
+
+      - name: Release obsolete public worker addresses
+        run: |
+          flyctl ips list --app "$LLM_APP" --json > /tmp/llm-worker-ips.json || echo '[]' > /tmp/llm-worker-ips.json
+          jq -r '.[] | ((.type // .Type // .kind // .Kind // "") | tostring | ascii_downcase) as $kind | select(($kind | contains("private")) | not) | (.address // .Address // .ip // .IP // empty)' /tmp/llm-worker-ips.json \
+            | while IFS= read -r ip; do
+                [ -n "$ip" ] || continue
+                echo "Releasing obsolete public worker address: $ip"
+                flyctl ips release "$ip" --app "$LLM_APP" || true
+              done
 
       - name: Verify worker health over Fly private network
         run: |
