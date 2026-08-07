@@ -1,0 +1,1 @@
+The first live Qwen smoke response placed the requested marker in `reasoning_content` while `message.content` was empty because the small generation limit was consumed by thinking. Athena Coder requires usable final content, so local-model validation must inspect `choices[0].message.content` rather than matching the raw response body.
