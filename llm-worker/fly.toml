@@ -6,7 +6,7 @@ primary_region = "ord"
 
 [env]
   LLAMA_ARG_HOST = "::"
-  LLAMA_ARG_PORT = "8090"
+  LLAMA_ARG_PORT = "8080"
   LLAMA_ARG_HF_REPO = "Qwen/Qwen3-4B-GGUF:Q4_K_M"
   LLAMA_ARG_ALIAS = "spmt-qwen3-4b"
   LLAMA_ARG_CTX_SIZE = "8192"
@@ -25,7 +25,7 @@ primary_region = "ord"
   initial_size = "10gb"
 
 [http_service]
-  internal_port = 8090
+  internal_port = 8080
   force_https = true
   auto_stop_machines = "off"
   auto_start_machines = true
