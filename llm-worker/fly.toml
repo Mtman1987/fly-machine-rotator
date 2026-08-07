@@ -5,7 +5,7 @@ primary_region = "ord"
   dockerfile = "Dockerfile"
 
 [env]
-  LLAMA_ARG_HOST = "0.0.0.0"
+  LLAMA_ARG_HOST = "::"
   LLAMA_ARG_PORT = "8080"
   LLAMA_ARG_HF_REPO = "Qwen/Qwen3-4B-GGUF:Q4_K_M"
   LLAMA_ARG_ALIAS = "spmt-qwen3-4b"
