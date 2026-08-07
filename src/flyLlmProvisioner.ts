@@ -12,6 +12,7 @@ const DEFAULT_KEY_FILE = "/data/spmt-llm-worker-api-key";
 const DEFAULT_EMBED_APP = "spmt-embed-worker";
 const DEFAULT_EMBED_VOLUME = "spmt_embed_models";
 const DEFAULT_EMBED_KEY_FILE = "/data/spmt-embed-worker-api-key";
+const DEFAULT_LLM_PORT = 8090;
 
 export type FlyCommandResult = { command: string; ok: boolean; exitCode: number; stdout: string; stderr: string };
 export type LlmProvisionResult = {
@@ -52,6 +53,10 @@ function positiveInt(value: unknown, fallback: number, min: number, max: number)
   const parsed = Number(value ?? fallback);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new Error(`Expected an integer between ${min} and ${max}.`);
   return parsed;
+}
+
+function workerPort(env: NodeJS.ProcessEnv): number {
+  return positiveInt(env.SPMT_LLM_PORT, DEFAULT_LLM_PORT, 1, 65535);
 }
 
 async function runFly(args: string[], env: NodeJS.ProcessEnv, input?: string, timeoutMs = 20 * 60_000): Promise<FlyCommandResult> {
@@ -180,7 +185,7 @@ export async function getSpmtLlmWorkerStatus(args: Record<string, unknown>, env:
 export async function getSpmtEmbeddingWorkerStatus(args: Record<string, unknown>, env: NodeJS.ProcessEnv) {
   const appName = cleanAppName(args.appName, String(env.SPMT_EMBED_APP || DEFAULT_EMBED_APP));
   const status = await parseJsonCommand(["status", "--app", appName, "--json"], env);
-  return { ok: status.result.ok, appName, status: status.payload, baseUrl: `http://${appName}.internal:8080/v1`, error: status.result.ok ? undefined : summarize(status.result) };
+  return { ok: status.result.ok, appName, status: status.payload, baseUrl: `http://${appName}.internal:${workerPort(env)}/v1`, error: status.result.ok ? undefined : summarize(status.result) };
 }
 
 export async function provisionSpmtLlmWorker(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult> {
@@ -190,5 +195,5 @@ export async function provisionSpmtLlmWorker(args: Record<string, unknown>, env:
 export async function provisionSpmtEmbeddingWorker(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult & { baseUrl: string }> {
   const definition = embeddingWorkerDefinition(args, env);
   const result = await provisionWorker(definition, args, env);
-  return { ...result, baseUrl: `http://${definition.appName}.internal:8080/v1` };
+  return { ...result, baseUrl: `http://${definition.appName}.internal:${workerPort(env)}/v1` };
 }
