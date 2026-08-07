@@ -58,7 +58,11 @@ jobs:
 
       - name: Configure Rotator private worker address
         run: |
+          # The private Qwen worker is intentionally network-isolated instead of
+          # bearer-key protected. Clear every llama.cpp auth source that could
+          # make /v1/chat/completions reject Athena with "Invalid API Key".
           flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
+          flyctl secrets unset --app "$LLM_APP" LLAMA_ARG_API_KEY_FILE || true
           flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
           flyctl secrets set --app "$ROTATOR_APP" \
             "SPMT_LLM_BASE_URL=http://$LLM_APP.internal:$LLM_PORT/v1"
@@ -76,6 +80,13 @@ jobs:
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
             "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/health').then(async r=>{if(!r.ok)throw new Error('health '+r.status);console.log(await r.text())}).catch(e=>{console.error(e);process.exit(1)})\""
+
+      - name: Verify Qwen chat works without an API key
+        run: |
+          # /health is public even when llama.cpp has an API key configured, so
+          # a health-only check cannot catch the exact failure Athena was seeing.
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'spmt-qwen3-4b',messages:[{role:'user',content:'Reply with OK'}],max_tokens:8,temperature:0})}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('chat '+r.status+' '+t);const j=JSON.parse(t);if(!j?.choices?.[0]?.message?.content)throw new Error('chat returned no content');console.log('Qwen chat verified')}).catch(e=>{console.error(e);process.exit(1)})\""
 
       - name: Show sanitized worker status
         run: flyctl status --app "$LLM_APP"
