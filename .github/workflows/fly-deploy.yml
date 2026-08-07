@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths-ignore:
+      - "docs/**"
       - "llm-worker/**"
       - ".github/workflows/deploy-llm-worker.yml"
       - ".github/workflows/manual-rotator-smoke.yml"
