@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
-const port = Number(process.env.PORT || 8090);
+const port = Number(process.env.PORT || 8080);
 const upstreamBase = String(process.env.LLM_UPSTREAM_BASE_URL || "http://127.0.0.1:11434/v1").replace(/\/$/, "");
 const upstreamModel = String(process.env.LLM_DEFAULT_MODEL || "").trim();
 const requestTimeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS || 120000);
@@ -108,7 +108,7 @@ export function createLlmWorkerServer(env = process.env) {
 }
 
 if (process.env.NODE_ENV !== "test") {
-  createLlmWorkerServer().listen(port, "::", () => {
+  createLlmWorkerServer().listen(port, "0.0.0.0", () => {
     console.log(`SPMT LLM worker listening on ${port}`);
   });
 }
