@@ -82,6 +82,16 @@ function mapGatewayError(payload: any, fallback: string): string {
   return String(payload?.error || payload?.message || fallback).trim() || fallback;
 }
 
+export function buildAthenaGatewayHeaders(accessToken: string): Record<string, string> {
+  const token = String(accessToken || "").trim();
+  if (!token) throw new Error("SPMT access token is required");
+  return {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+}
+
 export function buildAthenaGatewayPayload(identity: SpmtIdentity, body: AthenaProxyChatRequest) {
   const history = normalizeAthenaProxyHistory(body.messages);
   const latestUserIndex = history.map((entry) => entry.role).lastIndexOf("user");
@@ -180,11 +190,7 @@ export async function handleAthenaOsChatProxy(
   // session. No Rotator key, Athena key, or model-worker key is created.
   const upstream = await fetch(gatewayUrl(env), {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-      accept: "application/json",
-    },
+    headers: buildAthenaGatewayHeaders(accessToken),
     body: JSON.stringify(built.payload),
     signal: AbortSignal.timeout(120_000),
   }).catch((error) => {
