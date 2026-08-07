@@ -1,6 +1,7 @@
 app = "spmt-llm-worker"
 primary_region = "ord"
 
+# Athena Coder local-model smoke test: keep Qwen3-4B as the first private worker model.
 [build]
   dockerfile = "Dockerfile"
 
