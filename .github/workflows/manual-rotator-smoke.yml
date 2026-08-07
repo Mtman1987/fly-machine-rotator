@@ -1,0 +1,86 @@
+name: Manual Rotator Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/manual-rotator-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-rotator-smoke
+  cancel-in-progress: false
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  ROTATOR_APP: mtman-machine-rotator
+
+jobs:
+  smoke:
+    name: Verify Qwen and run one rotation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Check Fly token
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN is not set"
+            exit 1
+          fi
+
+      - name: Show Rotator machine state
+        run: |
+          flyctl status --app "$ROTATOR_APP" --all || true
+          flyctl machine list --app "$ROTATOR_APP" --json | tee /tmp/rotator-machines.json
+
+      - name: Ensure a Rotator machine is started
+        run: |
+          started_id="$(jq -r '[.[] | select(.state == "started" or .state == "starting")][0].id // empty' /tmp/rotator-machines.json)"
+          if [ -z "$started_id" ]; then
+            machine_id="$(jq -r '.[0].id // empty' /tmp/rotator-machines.json)"
+            if [ -z "$machine_id" ]; then
+              echo "No Rotator machine exists"
+              exit 1
+            fi
+            echo "Starting Rotator machine $machine_id"
+            flyctl machine start "$machine_id" --app "$ROTATOR_APP"
+          fi
+
+          for attempt in $(seq 1 24); do
+            state="$(flyctl machine list --app "$ROTATOR_APP" --json | jq -r '[.[] | select(.state == "started")][0].state // empty')"
+            if [ "$state" = "started" ]; then
+              echo "Rotator machine is started"
+              exit 0
+            fi
+            echo "Waiting for Rotator machine to start (attempt $attempt)"
+            sleep 5
+          done
+
+          echo "Rotator did not remain started"
+          flyctl status --app "$ROTATOR_APP" --all || true
+          flyctl logs --app "$ROTATOR_APP" --no-tail || true
+          exit 1
+
+      - name: Verify Qwen from inside Rotator
+        run: |
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            "node -e \"const b=process.env.SPMT_LLM_BASE_URL;if(!b)throw new Error('SPMT_LLM_BASE_URL missing');fetch(b+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'spmt-qwen3-4b',messages:[{role:'user',content:'Reply exactly QWEN_CODER_OK'}],max_tokens:24,temperature:0})}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('Qwen HTTP '+r.status+' '+t);console.log(t);if(!t.includes('QWEN_CODER_OK'))throw new Error('Qwen response did not contain expected marker')}).catch(e=>{console.error(e);process.exit(1)})\""
+
+      - name: Run one real rotation
+        run: |
+          flyctl ssh console --app "$ROTATOR_APP" --command "node dist/index.js run"
+
+      - name: Capture post-rotation status
+        if: always()
+        run: |
+          echo "=== ROTATOR STATUS ==="
+          flyctl status --app "$ROTATOR_APP" --all || true
+          echo "=== ROTATOR LOGS ==="
+          flyctl logs --app "$ROTATOR_APP" --no-tail || true
