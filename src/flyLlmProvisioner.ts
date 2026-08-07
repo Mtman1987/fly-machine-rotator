@@ -88,6 +88,19 @@ async function ensureKey(env: NodeJS.ProcessEnv, file: string): Promise<{ value:
   return { value, created: true, file };
 }
 
+async function resolveWorkerKey(env: NodeJS.ProcessEnv, file: string) {
+  const shared = String(env.SPMT_LLM_API_KEY || env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
+  if (shared) {
+    return {
+      value: shared,
+      created: false,
+      file: "shared SPMT service key",
+      shared: true,
+    };
+  }
+  return { ...(await ensureKey(env, file)), shared: false };
+}
+
 async function parseJsonCommand(args: string[], env: NodeJS.ProcessEnv): Promise<{ result: FlyCommandResult; payload?: unknown }> {
   const result = await runFly(args, env);
   if (!result.ok) return { result };
@@ -153,13 +166,21 @@ async function provisionWorker(definition: WorkerDefinition, args: Record<string
     if (!createdVolume.ok) return { ok: false, appName, region, volumeName, keyStored: false, deployed: false, steps };
   } else steps.push({ name: "create-volume", ok: true, detail: "Persistent model volume already exists." });
 
-  const key = await ensureKey(env, definition.keyFile);
+  const key = await resolveWorkerKey(env, definition.keyFile);
   const secretValues: Record<string, string> = { LLAMA_API_KEY: key.value, ...definition.extraSecrets };
   if (definition.modelRepo) secretValues.LLAMA_ARG_HF_REPO = definition.modelRepo;
   if (definition.modelAlias) secretValues.LLAMA_ARG_ALIAS = definition.modelAlias;
   const secretInput = Object.entries(secretValues).map(([name, value]) => `${name}=${value}`).join("\n") + "\n";
   const setSecret = await runFly(["secrets", "import", "--app", appName], env, secretInput, 2 * 60_000);
-  steps.push({ name: "set-worker-secrets", ok: setSecret.ok, detail: setSecret.ok ? `Worker secrets stored in Fly and API key ${key.created ? "created" : "reused"} in Rotator secure storage.` : summarize(setSecret) });
+  steps.push({
+    name: "set-worker-secrets",
+    ok: setSecret.ok,
+    detail: setSecret.ok
+      ? key.shared
+        ? "Worker secrets stored in Fly; LLAMA_API_KEY is aligned with the shared SPMT service key."
+        : `Worker secrets stored in Fly and API key ${key.created ? "created" : "reused"} in Rotator secure storage.`
+      : summarize(setSecret),
+  });
   if (!setSecret.ok) return { ok: false, appName, region, volumeName, keyStored: true, deployed: false, steps };
 
   const deploy = await runFly(["deploy", definition.deployDirectory, "--app", appName, "--config", definition.configPath, "--dockerfile", definition.dockerfilePath, "--remote-only", "--yes"], env, undefined, 30 * 60_000);
