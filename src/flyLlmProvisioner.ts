@@ -9,6 +9,9 @@ const DEFAULT_VOLUME = "spmt_llm_models";
 const DEFAULT_REGION = "ord";
 const DEFAULT_VOLUME_GB = 10;
 const DEFAULT_KEY_FILE = "/data/spmt-llm-worker-api-key";
+const DEFAULT_EMBED_APP = "spmt-embed-worker";
+const DEFAULT_EMBED_VOLUME = "spmt_embed_models";
+const DEFAULT_EMBED_KEY_FILE = "/data/spmt-embed-worker-api-key";
 
 export type FlyCommandResult = { command: string; ok: boolean; exitCode: number; stdout: string; stderr: string };
 export type LlmProvisionResult = {
@@ -16,14 +19,39 @@ export type LlmProvisionResult = {
   status?: unknown; steps: Array<{ name: string; ok: boolean; detail: string }>;
 };
 
+type WorkerDefinition = {
+  appName: string;
+  volumeName: string;
+  volumeGb: number;
+  keyFile: string;
+  configPath: string;
+  dockerfilePath: string;
+  deployDirectory: string;
+  modelRepo?: string;
+  modelAlias?: string;
+  extraSecrets?: Record<string, string>;
+};
+
 async function enabled(env: NodeJS.ProcessEnv): Promise<boolean> {
   return (await readLlmControlState(env)).provisioningEnabled;
 }
 
-function cleanAppName(value: unknown): string {
-  const app = String(value || DEFAULT_APP).trim().toLowerCase();
+function cleanAppName(value: unknown, fallback = DEFAULT_APP): string {
+  const app = String(value || fallback).trim().toLowerCase();
   if (!/^spmt-[a-z0-9-]{3,40}$/.test(app)) throw new Error("App name must begin with spmt- and contain only lowercase letters, numbers, and hyphens.");
   return app;
+}
+
+function cleanVolumeName(value: unknown, fallback: string): string {
+  const volume = String(value || fallback).trim();
+  if (!/^[a-zA-Z0-9_]{3,64}$/.test(volume)) throw new Error("Invalid Fly volume name");
+  return volume;
+}
+
+function positiveInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new Error(`Expected an integer between ${min} and ${max}.`);
+  return parsed;
 }
 
 async function runFly(args: string[], env: NodeJS.ProcessEnv, input?: string, timeoutMs = 20 * 60_000): Promise<FlyCommandResult> {
@@ -51,8 +79,7 @@ function summarize(result: FlyCommandResult): string {
   return text.slice(-1200) || `exit ${result.exitCode}`;
 }
 
-async function ensureKey(env: NodeJS.ProcessEnv): Promise<{ value: string; created: boolean; file: string }> {
-  const file = String(env.SPMT_LLM_KEY_FILE || DEFAULT_KEY_FILE);
+async function ensureKey(env: NodeJS.ProcessEnv, file: string): Promise<{ value: string; created: boolean; file: string }> {
   try { const existing = (await readFile(file, "utf8")).trim(); if (existing.length >= 32) return { value: existing, created: false, file }; } catch {}
   const value = randomBytes(32).toString("hex");
   await mkdir(dirname(file), { recursive: true });
@@ -67,20 +94,46 @@ async function parseJsonCommand(args: string[], env: NodeJS.ProcessEnv): Promise
   try { return { result, payload: JSON.parse(result.stdout) }; } catch { return { result, payload: result.stdout.trim() }; }
 }
 
-export async function getSpmtLlmWorkerStatus(args: Record<string, unknown>, env: NodeJS.ProcessEnv) {
-  const appName = cleanAppName(args.appName);
-  const status = await parseJsonCommand(["status", "--app", appName, "--json"], env);
-  return { ok: status.result.ok, appName, status: status.payload, error: status.result.ok ? undefined : summarize(status.result) };
+function chatWorkerDefinition(args: Record<string, unknown>, env: NodeJS.ProcessEnv): WorkerDefinition {
+  return {
+    appName: cleanAppName(args.appName, DEFAULT_APP),
+    volumeName: cleanVolumeName(args.volumeName || env.SPMT_LLM_VOLUME_NAME, DEFAULT_VOLUME),
+    volumeGb: positiveInt(args.volumeGb || env.SPMT_LLM_VOLUME_GB, DEFAULT_VOLUME_GB, 1, 100),
+    keyFile: String(env.SPMT_LLM_KEY_FILE || DEFAULT_KEY_FILE),
+    configPath: "/app/llm-worker/fly.toml",
+    dockerfilePath: "/app/llm-worker/Dockerfile",
+    deployDirectory: "/app/llm-worker",
+    modelRepo: String(args.modelRepo || env.SPMT_LLM_HF_REPO || "").trim() || undefined,
+    modelAlias: String(args.modelAlias || env.SPMT_LLM_MODEL || "").trim() || undefined,
+  };
 }
 
-export async function provisionSpmtLlmWorker(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult> {
+function embeddingWorkerDefinition(args: Record<string, unknown>, env: NodeJS.ProcessEnv): WorkerDefinition {
+  const modelRepo = String(args.modelRepo || env.SPMT_EMBED_HF_REPO || "nomic-ai/nomic-embed-text-v1.5-GGUF").trim();
+  const modelAlias = String(args.modelAlias || env.SPMT_EMBED_MODEL || "spmt-nomic-embed").trim();
+  return {
+    appName: cleanAppName(args.appName, String(env.SPMT_EMBED_APP || DEFAULT_EMBED_APP)),
+    volumeName: cleanVolumeName(args.volumeName || env.SPMT_EMBED_VOLUME_NAME, DEFAULT_EMBED_VOLUME),
+    volumeGb: positiveInt(args.volumeGb || env.SPMT_EMBED_VOLUME_GB, 5, 1, 100),
+    keyFile: String(env.SPMT_EMBED_KEY_FILE || DEFAULT_EMBED_KEY_FILE),
+    configPath: "/app/llm-worker/fly.toml",
+    dockerfilePath: "/app/llm-worker/Dockerfile",
+    deployDirectory: "/app/llm-worker",
+    modelRepo,
+    modelAlias,
+    extraSecrets: {
+      LLAMA_ARG_EMBEDDINGS: "1",
+      LLAMA_ARG_POOLING: String(env.SPMT_EMBED_POOLING || "mean"),
+    },
+  };
+}
+
+async function provisionWorker(definition: WorkerDefinition, args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult> {
   if (!(await enabled(env))) throw new Error("Fly provisioning is disabled in the owner LLM control panel.");
-  const appName = cleanAppName(args.appName);
+  const { appName, volumeName } = definition;
   const region = String(args.region || env.SPMT_LLM_REGION || DEFAULT_REGION).trim().toLowerCase();
   if (!/^[a-z]{3}$/.test(region)) throw new Error("Invalid Fly region");
   const org = String(env.FLY_ORG || env.ORG || "mtman-new").trim();
-  const volumeName = String(env.SPMT_LLM_VOLUME_NAME || DEFAULT_VOLUME).trim();
-  const sizeGb = Number(env.SPMT_LLM_VOLUME_GB || DEFAULT_VOLUME_GB);
   const steps: LlmProvisionResult["steps"] = [];
 
   const statusBefore = await runFly(["status", "--app", appName, "--json"], env, undefined, 60_000);
@@ -95,21 +148,47 @@ export async function provisionSpmtLlmWorker(args: Record<string, unknown>, env:
   const items = Array.isArray(volumes.payload) ? volumes.payload as Array<Record<string, unknown>> : [];
   const hasVolume = items.some((item) => String(item.name || "") === volumeName);
   if (!hasVolume) {
-    const createdVolume = await runFly(["volumes", "create", volumeName, "--app", appName, "--region", region, "--size", String(sizeGb), "--yes"], env, undefined, 3 * 60_000);
+    const createdVolume = await runFly(["volumes", "create", volumeName, "--app", appName, "--region", region, "--size", String(definition.volumeGb), "--yes"], env, undefined, 3 * 60_000);
     steps.push({ name: "create-volume", ok: createdVolume.ok, detail: summarize(createdVolume) });
     if (!createdVolume.ok) return { ok: false, appName, region, volumeName, keyStored: false, deployed: false, steps };
   } else steps.push({ name: "create-volume", ok: true, detail: "Persistent model volume already exists." });
 
-  const key = await ensureKey(env);
-  const setSecret = await runFly(["secrets", "import", "--app", appName], env, `LLAMA_API_KEY=${key.value}\n`, 2 * 60_000);
-  steps.push({ name: "set-api-key", ok: setSecret.ok, detail: setSecret.ok ? `API key stored in Fly and ${key.created ? "created" : "reused"} in Rotator secure storage.` : summarize(setSecret) });
+  const key = await ensureKey(env, definition.keyFile);
+  const secretValues: Record<string, string> = { LLAMA_API_KEY: key.value, ...definition.extraSecrets };
+  if (definition.modelRepo) secretValues.LLAMA_ARG_HF_REPO = definition.modelRepo;
+  if (definition.modelAlias) secretValues.LLAMA_ARG_ALIAS = definition.modelAlias;
+  const secretInput = Object.entries(secretValues).map(([name, value]) => `${name}=${value}`).join("\n") + "\n";
+  const setSecret = await runFly(["secrets", "import", "--app", appName], env, secretInput, 2 * 60_000);
+  steps.push({ name: "set-worker-secrets", ok: setSecret.ok, detail: setSecret.ok ? `Worker secrets stored in Fly and API key ${key.created ? "created" : "reused"} in Rotator secure storage.` : summarize(setSecret) });
   if (!setSecret.ok) return { ok: false, appName, region, volumeName, keyStored: true, deployed: false, steps };
 
-  const deploy = await runFly(["deploy", "/app/llm-worker", "--app", appName, "--config", "/app/llm-worker/fly.toml", "--dockerfile", "/app/llm-worker/Dockerfile", "--remote-only", "--yes"], env, undefined, 30 * 60_000);
+  const deploy = await runFly(["deploy", definition.deployDirectory, "--app", appName, "--config", definition.configPath, "--dockerfile", definition.dockerfilePath, "--remote-only", "--yes"], env, undefined, 30 * 60_000);
   steps.push({ name: "deploy", ok: deploy.ok, detail: summarize(deploy) });
   if (!deploy.ok) return { ok: false, appName, region, volumeName, keyStored: true, deployed: false, steps };
 
   const statusAfter = await parseJsonCommand(["status", "--app", appName, "--json"], env);
   steps.push({ name: "status", ok: statusAfter.result.ok, detail: statusAfter.result.ok ? "Deployment status read successfully." : summarize(statusAfter.result) });
   return { ok: deploy.ok && statusAfter.result.ok, appName, region, volumeName, keyStored: true, deployed: deploy.ok, status: statusAfter.payload, steps };
+}
+
+export async function getSpmtLlmWorkerStatus(args: Record<string, unknown>, env: NodeJS.ProcessEnv) {
+  const appName = cleanAppName(args.appName, DEFAULT_APP);
+  const status = await parseJsonCommand(["status", "--app", appName, "--json"], env);
+  return { ok: status.result.ok, appName, status: status.payload, error: status.result.ok ? undefined : summarize(status.result) };
+}
+
+export async function getSpmtEmbeddingWorkerStatus(args: Record<string, unknown>, env: NodeJS.ProcessEnv) {
+  const appName = cleanAppName(args.appName, String(env.SPMT_EMBED_APP || DEFAULT_EMBED_APP));
+  const status = await parseJsonCommand(["status", "--app", appName, "--json"], env);
+  return { ok: status.result.ok, appName, status: status.payload, baseUrl: `http://${appName}.internal:8080/v1`, error: status.result.ok ? undefined : summarize(status.result) };
+}
+
+export async function provisionSpmtLlmWorker(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult> {
+  return provisionWorker(chatWorkerDefinition(args, env), args, env);
+}
+
+export async function provisionSpmtEmbeddingWorker(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<LlmProvisionResult & { baseUrl: string }> {
+  const definition = embeddingWorkerDefinition(args, env);
+  const result = await provisionWorker(definition, args, env);
+  return { ...result, baseUrl: `http://${definition.appName}.internal:8080/v1` };
 }
