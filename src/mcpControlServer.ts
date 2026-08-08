@@ -89,8 +89,11 @@ async function callInternalCodex(
 export function listMcpTools() {
   return [
     { name: "list_code_references", title: "List authorized code repositories", description: "List repositories Athena Coder can inspect.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+    { name: "list_coding_jobs", title: "List Athena coding jobs", description: "List recent Athena Coder jobs and their validation state.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     { name: "create_coding_job", title: "Create isolated Athena coding job", description: "Create an isolated coding job. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, description: { type: "string", minLength: 1, maxLength: 4000 }, context: { type: "object", additionalProperties: true } }, required: ["appName", "description"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
     { name: "get_coding_job", title: "Read Athena coding job", description: "Read an Athena coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+    { name: "get_coding_job_artifact", title: "Read Athena coding artifact", description: "Read the exact diff, raw validation checks, or Athena response for a coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" }, artifact: { type: "string", enum: ["diff", "checks", "response"] } }, required: ["jobId", "artifact"], additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+    { name: "publish_coding_job", title: "Publish validated Athena repair", description: "Create a draft pull request for a completed coding job with changes and passing checks. Requires SPMT admin or owner; never merges or deploys.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
     { name: "get_spmt_llm_worker_status", title: "Read SPMT LLM worker status", description: "Read sanitized Fly status for the SPMT LLM worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     { name: "get_spmt_embedding_worker_status", title: "Read SPMT embeddings worker status", description: "Read sanitized Fly status and the private base URL for the embeddings worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     { name: "provision_spmt_llm_worker", title: "Provision dedicated SPMT LLM worker", description: "Provision the allowlisted SPMT LLM worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
@@ -99,12 +102,18 @@ export function listMcpTools() {
 }
 
 function toolRequiresAdmin(name: string): boolean {
-  return name === "create_coding_job" || name === "provision_spmt_llm_worker" || name === "provision_spmt_embedding_worker";
+  return name === "create_coding_job" || name === "publish_coding_job" || name === "provision_spmt_llm_worker" || name === "provision_spmt_embedding_worker";
+}
+
+function codingJobId(args: Record<string, unknown>): string | null {
+  const jobId = String(args.jobId || "").trim();
+  return /^[a-zA-Z0-9_-]{8,100}$/.test(jobId) ? jobId : null;
 }
 
 async function executeTool(name: string, args: Record<string, unknown>, identity: SpmtIdentity, env: NodeJS.ProcessEnv, dashboardPort: number) {
   if (toolRequiresAdmin(name) && !isSpmtAdmin(identity)) return { status: 403, payload: { error: "SPMT admin or owner required" } };
   if (name === "list_code_references") return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/references");
+  if (name === "list_coding_jobs") return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/jobs");
   if (name === "create_coding_job") {
     const appName = String(args.appName || "").trim();
     const description = String(args.description || "").trim();
@@ -112,9 +121,21 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
     return await callInternalCodex(env, dashboardPort, "POST", "/api/codex/jobs", { source: "chatgpt-mcp", reporter: String(identity.username || identity.id || "SPMT user"), appName: appName.slice(0, 120), description: description.slice(0, 4000), context: args.context && typeof args.context === "object" ? args.context : {} });
   }
   if (name === "get_coding_job") {
-    const jobId = String(args.jobId || "").trim();
-    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(jobId)) return { status: 400, payload: { error: "Invalid jobId" } };
+    const jobId = codingJobId(args);
+    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
     return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}`);
+  }
+  if (name === "get_coding_job_artifact") {
+    const jobId = codingJobId(args);
+    const artifact = String(args.artifact || "").trim();
+    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
+    if (!new Set(["diff", "checks", "response"]).has(artifact)) return { status: 400, payload: { error: "artifact must be diff, checks, or response" } };
+    return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}/${artifact}`);
+  }
+  if (name === "publish_coding_job") {
+    const jobId = codingJobId(args);
+    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
+    return await callInternalCodex(env, dashboardPort, "POST", `/api/codex/jobs/${encodeURIComponent(jobId)}/publish`, {});
   }
   if (name === "get_spmt_llm_worker_status") return { status: 200, payload: await getSpmtLlmWorkerStatus(args, env) };
   if (name === "get_spmt_embedding_worker_status") return { status: 200, payload: await getSpmtEmbeddingWorkerStatus(args, env) };
@@ -146,7 +167,7 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
   }
 
   if (rpc.method === "initialize") {
-    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.4.0", description: "SPMT-authorized Athena Coder, chat-worker, and embeddings-worker control bridge" } }));
+    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.5.0", description: "SPMT-authorized Athena Coder, chat-worker, and embeddings-worker control bridge" } }));
     return true;
   }
   if (rpc.method === "notifications/initialized") {

@@ -23,8 +23,11 @@ describe("MCP control server", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
+      "list_coding_jobs",
       "create_coding_job",
       "get_coding_job",
+      "get_coding_job_artifact",
+      "publish_coding_job",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
       "provision_spmt_llm_worker",
@@ -35,7 +38,9 @@ describe("MCP control server", () => {
     expect(tools.find((tool) => tool.name === "provision_spmt_embedding_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.filter((tool) => tool.annotations.readOnlyHint).map((tool) => tool.name)).toEqual([
       "list_code_references",
+      "list_coding_jobs",
       "get_coding_job",
+      "get_coding_job_artifact",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
     ]);

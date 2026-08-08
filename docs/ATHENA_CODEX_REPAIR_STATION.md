@@ -39,8 +39,10 @@ SPMT control plane:
 Private rotator worker:
 
 - `POST /api/codex/jobs`
+- `GET /api/codex/jobs`
 - `GET /api/codex/jobs/:id`
 - `GET /api/codex/jobs/:id/{diff|checks|response}`
+- `POST /api/codex/jobs/:id/publish`
 - `GET /api/codex/references`
 
 The operator UI is `https://mtman-machine-rotator.fly.dev/`. It redirects through SPMT OAuth and requires an SPMT administrator session.
@@ -53,7 +55,11 @@ The same gateway can be used from a terminal without exposing Fly, GitHub, or Op
 
 ```bash
 SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- repos
-SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- submit streamweaver-new "Describe the requested fix"
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- jobs
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- submit streamweaver-new "Describe the requested fix" --wait
 SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- status <job-id>
+SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- diff <job-id>
 SPMT_CODEX_SERVICE_SECRET='existing-secret' npm run athena -- publish <job-id>
 ```
+
+Inside the Rotator/Fly server boundary, the CLI automatically uses `CODEX_WORKER_SECRET` and `ATHENA_CODER_BASE_URL` (by default the private dashboard port, `PORT + 2`) instead. This direct mode is intended for smoke tests and operations running on the server; it does not need a browser session or a copied user token.

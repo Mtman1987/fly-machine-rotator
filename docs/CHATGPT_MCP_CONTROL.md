@@ -8,65 +8,45 @@ https://<rotator-app>.fly.dev/mcp
 
 The endpoint is a narrow owner control bridge into the existing Athena Coder workflow. It does not expose a shell, Fly tokens, GitHub tokens, secret values, merge, deployment, or Machine mutation.
 
-## Initial tools
+## Tools
 
 - `list_code_references`: list repositories available to Athena Coder.
+- `list_coding_jobs`: list recent jobs and their validation state.
 - `create_coding_job`: create an isolated Codex workspace and run the repository's configured checks.
 - `get_coding_job`: read job status, summary, changed files, and checks.
+- `get_coding_job_artifact`: read the exact diff, raw checks, or Codex response.
+- `publish_coding_job`: create a draft PR for a completed job with changes and passing checks. This requires an SPMT admin or owner and never merges or deploys.
+- `get_spmt_llm_worker_status` and `get_spmt_embedding_worker_status`: read sanitized worker state.
+- `provision_spmt_llm_worker` and `provision_spmt_embedding_worker`: idempotently provision the allowlisted workers for an SPMT admin or owner.
 
-Creating a coding job changes only its isolated workspace. Publishing a branch or draft pull request remains a separate owner action through the existing Athena Coder UI.
+Creating a coding job changes only its isolated workspace. Publication remains an explicit, separate call and is rejected unless the job is completed, changed at least one file, and passed every recorded check.
 
 ## Required Fly secrets
 
-Generate a long random token and store it only as a Fly secret:
-
-```bash
-fly secrets set MCP_CONTROL_TOKEN='<long-random-token>'
-```
-
-The same token is configured as the remote MCP server bearer credential in the approved client. Never commit it or include it in a prompt.
-
-The MCP bridge also requires the existing internal `CODEX_WORKER_SECRET`, because it calls Athena Coder through the private loopback dashboard API.
-
-## Origin validation
-
-Requests without an `Origin` header are accepted after bearer authentication. Browser-origin requests are rejected unless the exact origin is configured:
-
-```bash
-fly secrets set MCP_ALLOWED_ORIGINS='https://chatgpt.com'
-```
-
-Add only exact trusted origins. Do not use `*`.
+The MCP bridge requires the existing internal `CODEX_WORKER_SECRET`, because it calls Athena Coder through the private loopback dashboard API. It also uses the existing SPMT OAuth configuration to verify callers; there is no separate MCP flag or legacy control token.
 
 ## Authentication
 
-Use either:
+Use a valid SPMT OAuth access token:
 
 ```text
-Authorization: Bearer <MCP_CONTROL_TOKEN>
+Authorization: Bearer <SPMT access token>
 ```
 
-or the compatibility header:
-
-```text
-x-mcp-control-token: <MCP_CONTROL_TOKEN>
-```
-
-Bearer authorization is preferred.
+The Rotator's own authenticated browser session cookies are also accepted by the same identity verifier. The obsolete `x-mcp-control-token` header is intentionally rejected.
 
 ## Safety boundary
 
-The first release intentionally cannot:
+The MCP boundary intentionally cannot:
 
 - execute arbitrary commands;
 - read environment variables or secret values;
-- push branches;
-- publish pull requests;
+- push arbitrary branches;
 - merge changes;
 - deploy applications;
 - create, stop, restart, or delete Fly Machines.
 
-Those operations must be introduced as separate, narrowly scoped tools with explicit owner approval, immutable audit records, and action tokens bound to the exact repository, commit, Fly app, environment, and expiration.
+Draft-PR publication is the only GitHub write: it is a named admin-only tool behind the repair station's validation gate. Merge and deployment remain outside MCP.
 
 ## Validation
 
@@ -78,8 +58,8 @@ npm run typecheck
 npm run build
 ```
 
-After deployment, verify authentication and tool discovery with an MCP-compatible client. Unauthorized requests must return `401`, unapproved browser origins must return `403`, and `tools/list` must return only the three tools documented above.
+After deployment, verify authentication and tool discovery with an MCP-compatible client. Unauthorized requests must return `401`, member calls to privileged tools must return an error result, and `tools/list` must return only the tools documented above.
 
 ## Rollback
 
-Removing the `MCP_CONTROL_TOKEN` Fly secret disables all MCP access without affecting the Rotator dashboard, Machine rotation, log monitoring, MountainView, or existing Athena Coder routes.
+MCP uses the same SPMT identity boundary as the rest of Rotator. Emergency shutdown should disable or remove the public `/mcp` route in the outer gateway; rotating `CODEX_WORKER_SECRET` independently breaks only the MCP-to-Coder loopback until both internal callers are updated.
