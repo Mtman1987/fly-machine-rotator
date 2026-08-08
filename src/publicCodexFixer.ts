@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRepoConfigForApp, listRepoConfigs, type RepoConfig } from "./repoMap.js";
 import { ensureRepoDependencies, ensureRepoReady, pushRepoBranch } from "./repoOps.js";
-import { hasMountainViewAdminSession } from "./mountainView.js";
+import { requireSpmtAdmin } from "./spmtAuth.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -132,8 +132,23 @@ async function syncReference(repo: RepoConfig, env: NodeJS.ProcessEnv) {
   await rm(target, { recursive: true, force: true });
   await mkdir(join(rootDir(env), "references"), { recursive: true });
   await execFileAsync("git", ["clone", "--no-hardlinks", ready, target], { timeout: 120_000 });
-  await ensureRepoDependencies(target, repo.installCommand);
   return { ready, target };
+}
+
+export async function reclaimCodexStorage(env: NodeJS.ProcessEnv): Promise<void> {
+  const dataDir = rootDir(env);
+  await Promise.all([
+    rm(join(dataDir, "references"), { recursive: true, force: true }),
+    rm(join(dataDir, "tmp"), { recursive: true, force: true }),
+  ]);
+
+  const sandboxesDir = join(dataDir, "sandboxes");
+  const sandboxIds = await readdir(sandboxesDir).catch(() => []);
+  for (const id of sandboxIds) {
+    const job = await readCodexJob(env, id);
+    const retainForOwner = job?.status === "completed" && job.changedFiles.length > 0 && !job.pullRequest;
+    if (!retainForOwner) await rm(join(sandboxesDir, id), { recursive: true, force: true });
+  }
 }
 
 export async function listCodeReferences(env: NodeJS.ProcessEnv) {
@@ -212,6 +227,9 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
   }
   job.updatedAt = new Date().toISOString();
   await saveJob(env, job);
+  if (job.status === "failed" || job.changedFiles.length === 0) {
+    await rm(join(dataDir, "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
@@ -251,6 +269,7 @@ async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
   job.pullRequest = { number: payload.number, url: payload.html_url, branch, commit: pushed.commit };
   job.updatedAt = new Date().toISOString();
   await saveJob(env, job);
+  await rm(join(rootDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
   return job.pullRequest;
 }
 
@@ -277,7 +296,7 @@ function isSameOriginUiRequest(request: IncomingMessage) {
 }
 
 async function ownerUiAuthorized(request: IncomingMessage, env: NodeJS.ProcessEnv) {
-  return isSameOriginUiRequest(request) && await hasMountainViewAdminSession(request, env);
+  return isSameOriginUiRequest(request) && await requireSpmtAdmin(request, env);
 }
 
 async function readJson(request: IncomingMessage): Promise<CreateJobInput> {
@@ -353,7 +372,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
   if (method === "GET" && url.pathname === "/athena/coder") {
-    if (!(await hasMountainViewAdminSession(request, env))) {
+    if (!(await requireSpmtAdmin(request, env))) {
       response.writeHead(302, { location: "/mountainview/auth/login?next=%2Fathena%2Fcoder", "cache-control": "no-store" });
       response.end();
       return true;
@@ -373,7 +392,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   if (!url.pathname.startsWith("/api/codex/")) return false;
 
   const serviceAuth = authorized(request, env);
-  const ownerGetAuth = method === "GET" && await hasMountainViewAdminSession(request, env);
+  const ownerGetAuth = method === "GET" && await requireSpmtAdmin(request, env);
   const ownerWriteAuth = method !== "GET" && await ownerUiAuthorized(request, env);
   if (!serviceAuth && !ownerGetAuth && !ownerWriteAuth) {
     return sendJson(response, 401, { error: "Unauthorized" }), true;

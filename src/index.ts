@@ -6,9 +6,11 @@ import { startDshMtFixItOuterGateway } from "./dshMtFixitGateway.js";
 import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
+import { reclaimCodexStorage } from "./publicCodexFixer.js";
 
-function startWebStack(env: NodeJS.ProcessEnv = process.env) {
+async function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const stackEnv = withCodexWorkerAuth(env);
+  await reclaimCodexStorage(stackEnv);
   const publicPort = Number(stackEnv.PORT ?? stackEnv.ROTATOR_DASHBOARD_PORT ?? 8080);
   const athenaPort = Number(stackEnv.ROTATOR_ATHENA_GATEWAY_PORT ?? publicPort + 1);
   const dashboardPort = Number(stackEnv.ROTATOR_INTERNAL_DASHBOARD_PORT ?? publicPort + 2);
@@ -25,7 +27,7 @@ function startWebStack(env: NodeJS.ProcessEnv = process.env) {
 async function main(): Promise<void> {
   const command = process.argv[2] ?? "run";
   if (command === "serve") {
-    startWebStack(process.env);
+    await startWebStack(process.env);
     console.log("Fly Machine Rotator dashboard and Athena Coder are running.");
     await new Promise(() => undefined);
     return;
@@ -33,7 +35,7 @@ async function main(): Promise<void> {
   if (command === "monitor") {
     const { loadConfig } = await import("./config.js");
     const config = loadConfig(process.argv.slice(3));
-    startWebStack(process.env);
+    await startWebStack(process.env);
     void startAutoRotationLoop(process.argv.slice(3));
     await runLogMonitor({
       appNames: config.appNames,

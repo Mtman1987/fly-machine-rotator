@@ -12,11 +12,12 @@ import { getRepoConfigForApp } from "./repoMap.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
-import { handleMountainViewRequest, hasMountainViewAdminSession } from "./mountainView.js";
+import { handleMountainViewRequest } from "./mountainView.js";
+import { requireSpmtAdmin } from "./spmtAuth.js";
 import { isNonActionableErrorMessage } from "./logMonitor.js";
 import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
-import { handlePublicCodexRequest, listCodexJobs, syncAllCodeReferences } from "./publicCodexFixer.js";
+import { handlePublicCodexRequest, listCodexJobs } from "./publicCodexFixer.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -33,9 +34,6 @@ export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   });
   server.listen(port, "0.0.0.0", () => {
     console.log(`dashboard listening on ${port}`);
-    if (env.NODE_ENV === "production" && String(env.CODEX_WORKER_SECRET || "").trim()) {
-      void syncAllCodeReferences(env).catch((error) => console.error("Codex reference sync failed", error));
-    }
   });
   return server;
 }
@@ -167,7 +165,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/") {
-    if (!(await hasMountainViewAdminSession(request, env))) {
+    if (!(await requireSpmtAdmin(request, env))) {
       response.writeHead(302, { location: "/mountainview/auth/login?next=%2F", "cache-control": "no-store" });
       response.end();
       return;
