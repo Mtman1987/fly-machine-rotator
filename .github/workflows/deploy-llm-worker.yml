@@ -27,7 +27,7 @@ env:
 
 jobs:
   deploy:
-    name: Provision and deploy spmt-llm-worker
+    name: Provision and deploy private spmt-llm-worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,15 @@ jobs:
               --yes
           fi
 
-      - name: Deploy dedicated llama.cpp worker
+      - name: Remove obsolete model-worker keys
+        run: |
+          # SPMT authenticates the app/user before any model request. Qwen is an
+          # internal implementation service and must not require a second key.
+          flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
+          flyctl secrets unset --app "$LLM_APP" LLAMA_ARG_API_KEY_FILE || true
+          flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
+
+      - name: Deploy dedicated private llama.cpp worker
         run: |
           flyctl deploy \
             --app "$LLM_APP" \
@@ -65,10 +73,27 @@ jobs:
             --remote-only \
             --yes
 
+      - name: Release obsolete public worker addresses
+        run: |
+          flyctl ips list --app "$LLM_APP" --json > /tmp/llm-worker-ips.json || echo '[]' > /tmp/llm-worker-ips.json
+          jq -r '.[] | ((.type // .Type // .kind // .Kind // "") | tostring | ascii_downcase) as $kind | select(($kind | contains("private")) | not) | (.address // .Address // .ip // .IP // empty)' /tmp/llm-worker-ips.json \
+            | while IFS= read -r ip; do
+                [ -n "$ip" ] || continue
+                echo "Releasing obsolete public worker address: $ip"
+                flyctl ips release "$ip" --app "$LLM_APP" || true
+              done
+
       - name: Verify worker health over Fly private network
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
             "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/health').then(async r=>{if(!r.ok)throw new Error('health '+r.status);console.log(await r.text())}).catch(e=>{console.error(e);process.exit(1)})\""
+
+      - name: Verify Qwen chat over the exact keyless private path
+        run: |
+          # A health endpoint can succeed even when stale llama.cpp auth blocks
+          # chat. Exercise the same endpoint used by Athena and Discord DMs.
+          flyctl ssh console --app "$ROTATOR_APP" --command \
+            "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'spmt-qwen3-4b',messages:[{role:'user',content:'Reply with exactly OK.\\n\\n/no_think'}],thinking_budget_tokens:0,max_tokens:32,temperature:0,stream:false})}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('chat '+r.status+' '+t);const j=JSON.parse(t);const c=String(j?.choices?.[0]?.message?.content||'').trim();if(!c)throw new Error('chat returned no visible content: '+t);console.log('Qwen chat verified:',c.slice(0,80))}).catch(e=>{console.error(e);process.exit(1)})\""
 
       - name: Show sanitized worker status
         run: flyctl status --app "$LLM_APP"
