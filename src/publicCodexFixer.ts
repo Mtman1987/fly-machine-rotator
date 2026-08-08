@@ -143,8 +143,9 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
   let context = "";
   for (const candidate of candidates) {
     const source = await readFile(join(workspace, candidate.path), "utf8").catch(() => "");
-    if (!source || context.length >= 70_000) continue;
-    context += `\n\n--- ${candidate.path} ---\n${source.slice(0, 20_000)}`;
+    if (!source || context.length >= 32_000) continue;
+    const remaining = 32_000 - context.length;
+    context += `\n\n--- ${candidate.path} ---\n${source.slice(0, Math.min(12_000, remaining))}`;
   }
   if (!context) throw new Error("Qwen Coder could not select readable repository context.");
 
@@ -157,7 +158,7 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
       model: String(env.SPMT_LLM_MODEL || "spmt-qwen3-4b"),
       temperature: 0.1,
       thinking_budget_tokens: 0,
-      max_tokens: 8000,
+      max_tokens: 4000,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "You are Athena Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"patch\":\"unified git diff or empty string\"}. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, or APIs. Patch paths must be repository-relative." },
