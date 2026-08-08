@@ -142,6 +142,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   }
 
   console.log(typeof result === "string" ? result : JSON.stringify(result, null, 2));
+  if ((command === "wait" || (command === "submit" && shouldWait)) && String(jobFrom(result)?.status || "") === "failed") {
+    throw new Error(String(jobFrom(result)?.error || `Athena Coder job ${jobFrom(result)?.id || ""} failed.`));
+  }
   return result;
 }
 
