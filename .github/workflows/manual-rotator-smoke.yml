@@ -81,14 +81,28 @@ jobs:
 
       - name: Verify Qwen final content from inside Rotator
         run: |
-          flyctl ssh console --app "$ROTATOR_APP" --command \
-            'node -e "const b=process.env.SPMT_LLM_BASE_URL;if(!b)throw new Error(\"SPMT_LLM_BASE_URL missing\");fetch(b+\"/chat/completions\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify({model:\"spmt-qwen3-4b\",messages:[{role:\"user\",content:\"Reply exactly QWEN_CODER_OK\"}],max_tokens:64,temperature:0.2,thinking_budget_tokens:0})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(\"Qwen HTTP \"+r.status+\" \"+JSON.stringify(d));const m=d.choices?.[0]?.message||{};console.log(JSON.stringify({model:d.model,content:m.content||\"\",reasoningPresent:Boolean(m.reasoning_content),finishReason:d.choices?.[0]?.finish_reason},null,2));if(!String(m.content||\"\").includes(\"QWEN_CODER_OK\"))throw new Error(\"Qwen final content did not contain expected marker\")}).catch(e=>{console.error(e);process.exit(1)})"'
+          for attempt in $(seq 1 5); do
+            if flyctl ssh console --app "$ROTATOR_APP" --command \
+              'node -e "const b=process.env.SPMT_LLM_BASE_URL;if(!b)throw new Error(\"SPMT_LLM_BASE_URL missing\");fetch(b+\"/chat/completions\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify({model:\"spmt-qwen3-4b\",messages:[{role:\"user\",content:\"Reply exactly QWEN_CODER_OK\"}],max_tokens:64,temperature:0.2,thinking_budget_tokens:0})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(\"Qwen HTTP \"+r.status+\" \"+JSON.stringify(d));const m=d.choices?.[0]?.message||{};console.log(JSON.stringify({model:d.model,content:m.content||\"\",reasoningPresent:Boolean(m.reasoning_content),finishReason:d.choices?.[0]?.finish_reason},null,2));if(!String(m.content||\"\").includes(\"QWEN_CODER_OK\"))throw new Error(\"Qwen final content did not contain expected marker\")}).catch(e=>{console.error(e);process.exit(1)})"'; then
+              exit 0
+            fi
+            echo "Qwen SSH preflight failed on attempt $attempt; retrying"
+            sleep 5
+          done
+          exit 1
 
       - name: Verify Athena Coder CLI is shipped
         if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
         run: |
-          flyctl ssh console --app "$ROTATOR_APP" --command \
-            'node scripts/athena-code.mjs --help'
+          for attempt in $(seq 1 5); do
+            if flyctl ssh console --app "$ROTATOR_APP" --command \
+              'node scripts/athena-code.mjs --help'; then
+              exit 0
+            fi
+            echo "CLI SSH preflight failed on attempt $attempt; retrying"
+            sleep 5
+          done
+          exit 1
 
       - name: Run StreamWeaver issue through Athena Coder
         if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
