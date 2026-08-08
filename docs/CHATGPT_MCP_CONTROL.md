@@ -23,7 +23,7 @@ Creating a coding job changes only its isolated workspace. Publication remains a
 
 ## Required Fly secrets
 
-The MCP bridge requires the existing internal `CODEX_WORKER_SECRET`, because it calls Athena Coder through the private loopback dashboard API. It also uses the existing SPMT OAuth configuration to verify callers; there is no separate MCP flag or legacy control token.
+The MCP bridge calls Athena Coder through the private loopback dashboard API. At startup the Rotator generates a root-only process credential in `/tmp` when `CODEX_WORKER_SECRET` is absent, so a normal single-machine deployment needs no extra flag. An explicitly configured `CODEX_WORKER_SECRET` is still honored for installations that require a stable cross-service credential. MCP uses the existing SPMT OAuth configuration to verify callers; there is no separate MCP flag or legacy control token.
 
 ## Authentication
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
 
@@ -38,7 +39,9 @@ function readOption(args, name, fallback) {
 }
 
 export function resolveClient(env = process.env) {
-  const directSecret = String(env.CODEX_WORKER_SECRET || "").trim();
+  let fileSecret = "";
+  try { fileSecret = readFileSync("/tmp/athena-coder-worker-secret", "utf8").trim(); } catch { /* CLI may be running off-server */ }
+  const directSecret = String(env.CODEX_WORKER_SECRET || fileSecret).trim();
   const gatewaySecret = String(env.SPMT_CODEX_SERVICE_SECRET || "").trim();
   if (directSecret) {
     const internalPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT || Number(env.PORT || 8080) + 2);
