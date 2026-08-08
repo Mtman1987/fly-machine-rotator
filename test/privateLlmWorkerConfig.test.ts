@@ -35,4 +35,13 @@ describe("current SPMT Qwen worker configuration", () => {
     expect(workflow).toContain("thinking_budget_tokens:0");
     expect(workflow).toContain("/no_think");
   });
+
+  it("waits through the normal llama.cpp model-loading 503 window", async () => {
+    const workflow = await source(".github/workflows/deploy-llm-worker.yml");
+    expect(workflow).toContain("for attempt in $(seq 1 40)");
+    expect(workflow).toContain("Qwen is still loading");
+    expect(workflow).toContain("AbortSignal.timeout(10000)");
+    expect(workflow).toContain("for attempt in $(seq 1 8)");
+    expect(workflow).toContain("AbortSignal.timeout(120000)");
+  });
 });
