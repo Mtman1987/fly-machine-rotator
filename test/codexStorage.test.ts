@@ -9,9 +9,10 @@ async function exists(path: string) {
 }
 
 describe("Athena Coder storage lifecycle", () => {
-  it("removes rebuildable caches and retains only unpublished successful work", async () => {
+  it("removes rebuildable checkouts while retaining durable job records", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-storage-"));
-    const env = { CODEX_FIXER_DATA_DIR: root };
+    const work = await mkdtemp(join(tmpdir(), "codex-work-"));
+    const env = { CODEX_FIXER_DATA_DIR: root, CODEX_FIXER_WORK_DIR: work };
     await mkdir(join(root, "references", "streamweaver"), { recursive: true });
     await mkdir(join(root, "tmp"), { recursive: true });
     await mkdir(join(root, "jobs"), { recursive: true });
@@ -23,8 +24,8 @@ describe("Athena Coder storage lifecycle", () => {
       { id: "published_12", status: "completed", changedFiles: ["a.ts"], pullRequest: { number: 1 } },
     ];
     for (const job of jobs) {
-      await mkdir(join(root, "sandboxes", job.id), { recursive: true });
-      await writeFile(join(root, "sandboxes", job.id, "marker"), "x");
+      await mkdir(join(work, "sandboxes", job.id), { recursive: true });
+      await writeFile(join(work, "sandboxes", job.id, "marker"), "x");
       await writeFile(join(root, "jobs", `${job.id}.json`), JSON.stringify(job));
     }
 
@@ -32,9 +33,10 @@ describe("Athena Coder storage lifecycle", () => {
 
     expect(await exists(join(root, "references", "streamweaver"))).toBe(false);
     expect(await exists(join(root, "tmp"))).toBe(false);
-    expect(await exists(join(root, "sandboxes", "failed_job_1", "marker"))).toBe(false);
-    expect(await exists(join(root, "sandboxes", "empty_job_12", "marker"))).toBe(false);
-    expect(await exists(join(root, "sandboxes", "published_12", "marker"))).toBe(false);
-    expect(await exists(join(root, "sandboxes", "ready_job_12", "marker"))).toBe(true);
+    expect(await exists(join(work, "sandboxes", "failed_job_1", "marker"))).toBe(false);
+    expect(await exists(join(work, "sandboxes", "empty_job_12", "marker"))).toBe(false);
+    expect(await exists(join(work, "sandboxes", "published_12", "marker"))).toBe(false);
+    expect(await exists(join(work, "sandboxes", "ready_job_12", "marker"))).toBe(false);
+    expect(await exists(join(root, "jobs", "ready_job_12.json"))).toBe(true);
   });
 });

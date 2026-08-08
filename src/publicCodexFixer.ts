@@ -49,6 +49,10 @@ function rootDir(env: NodeJS.ProcessEnv) {
   return resolve(String(env.CODEX_FIXER_DATA_DIR || "/data/codex-fixer"));
 }
 
+function workDir(env: NodeJS.ProcessEnv) {
+  return resolve(String(env.CODEX_FIXER_WORK_DIR || "/tmp/athena-coder"));
+}
+
 function safeJobId(value: string) {
   return /^[a-zA-Z0-9_-]{8,100}$/.test(value) ? value : "";
 }
@@ -199,11 +203,15 @@ async function runCommand(command: string, cwd: string) {
 
 async function syncReference(repo: RepoConfig, env: NodeJS.ProcessEnv) {
   const ready = await ensureRepoReady(repo, env);
-  const target = join(rootDir(env), "references", repo.id);
-  await rm(target, { recursive: true, force: true });
-  await mkdir(join(rootDir(env), "references"), { recursive: true });
-  await execFileAsync("git", ["clone", "--no-hardlinks", ready, target], { timeout: 120_000 });
-  return { ready, target };
+  // The repository cache is already a refreshed, trusted local reference. Do not
+  // duplicate its checkout and object database on the small persistent volume.
+  return { ready, target: ready };
+}
+
+async function cloneWorkspace(target: string, workspace: string) {
+  await mkdir(resolve(workspace, ".."), { recursive: true });
+  await rm(workspace, { recursive: true, force: true });
+  await execFileAsync("git", ["clone", "--shared", target, workspace], { timeout: 120_000 });
 }
 
 export async function reclaimCodexStorage(env: NodeJS.ProcessEnv): Promise<void> {
@@ -211,9 +219,10 @@ export async function reclaimCodexStorage(env: NodeJS.ProcessEnv): Promise<void>
   await Promise.all([
     rm(join(dataDir, "references"), { recursive: true, force: true }),
     rm(join(dataDir, "tmp"), { recursive: true, force: true }),
+    rm(workDir(env), { recursive: true, force: true }),
   ]);
 
-  const sandboxesDir = join(dataDir, "sandboxes");
+  const sandboxesDir = join(workDir(env), "sandboxes");
   const sandboxIds = await readdir(sandboxesDir).catch(() => []);
   for (const id of sandboxIds) {
     const job = await readCodexJob(env, id);
@@ -229,7 +238,7 @@ export async function listCodeReferences(env: NodeJS.ProcessEnv) {
     repoUrl: repo.repoUrl,
     apps: repo.appNames,
     domains: repo.id === "spmt-live" ? ["spmt.live", "spacemountain.live"] : [],
-    volumePath: join(rootDir(env), "references", repo.id),
+    volumePath: join(String(env.ROTATOR_REPO_CACHE_DIR || "/data/repos"), repo.cloneDirName),
   }));
 }
 
@@ -250,15 +259,15 @@ export async function syncAllCodeReferences(env: NodeJS.ProcessEnv) {
 
 async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: RepoConfig, env: NodeJS.ProcessEnv) {
   const dataDir = rootDir(env);
-  const workspace = join(dataDir, "sandboxes", job.id, repo.cloneDirName);
+  const workspace = join(workDir(env), "sandboxes", job.id, repo.cloneDirName);
   try {
     job.status = "running";
     job.updatedAt = new Date().toISOString();
     await saveJob(env, job);
     const { target } = await syncReference(repo, env);
-    await mkdir(join(dataDir, "sandboxes", job.id), { recursive: true });
-    await rm(workspace, { recursive: true, force: true });
-    await execFileAsync("git", ["clone", "--no-hardlinks", target, workspace], { timeout: 120_000 });
+    // Share the trusted local cache's immutable Git objects and put the mutable
+    // checkout/dependencies on the machine filesystem, not the durable volume.
+    await cloneWorkspace(target, workspace);
     await ensureRepoDependencies(workspace, repo.installCommand);
     await mkdir(join(dataDir, "tmp"), { recursive: true });
 
@@ -285,6 +294,9 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
       job.summary = redact(turn.finalResponse || "Codex completed without a final response.");
     }
 
+    // Intent-to-add makes new files part of the durable patch without staging
+    // their contents or changing the publication safety boundary.
+    await runCommand("git add -N -- .", workspace);
     const diff = await runCommand("git diff --binary --no-ext-diff", workspace);
     await mkdir(join(dataDir, "jobs", job.id), { recursive: true });
     await writeFile(join(dataDir, "jobs", job.id, "diff.patch"), diff.output);
@@ -303,7 +315,7 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
   job.updatedAt = new Date().toISOString();
   await saveJob(env, job);
   if (job.status === "failed" || job.changedFiles.length === 0) {
-    await rm(join(dataDir, "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
+    await rm(join(workDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -317,7 +329,23 @@ async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
   if (protectedPath) throw new Error(`Manual publication is required for protected path ${protectedPath}.`);
   const repo = listRepoConfigs().find((item) => item.id === job.repoId);
   if (!repo) throw new Error(`Unknown repository ${job.repoId}.`);
-  const workspace = join(rootDir(env), "sandboxes", job.id, repo.cloneDirName);
+  const workspace = join(workDir(env), "sandboxes", job.id, repo.cloneDirName);
+  const hasWorkspace = await readFile(join(workspace, ".git", "HEAD"), "utf8").then(() => true).catch(() => false);
+  if (!hasWorkspace) {
+    const { target } = await syncReference(repo, env);
+    await cloneWorkspace(target, workspace);
+    const storedPatch = await readFile(join(rootDir(env), "jobs", job.id, "diff.patch"), "utf8");
+    if (!storedPatch.trim()) throw new Error("The saved Athena patch is empty.");
+    const patchFile = join(rootDir(env), "tmp", `publish-${job.id}.patch`);
+    await mkdir(join(rootDir(env), "tmp"), { recursive: true });
+    await writeFile(patchFile, storedPatch);
+    try {
+      await execFileAsync("git", ["apply", "--check", patchFile], { cwd: workspace, timeout: 60_000 });
+      await execFileAsync("git", ["apply", "--whitespace=fix", patchFile], { cwd: workspace, timeout: 60_000 });
+    } finally {
+      await rm(patchFile, { force: true }).catch(() => undefined);
+    }
+  }
   const branch = `agent/athena-${job.id.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 45)}`;
   const pushed = await pushRepoBranch(workspace, branch, `Athena: ${job.description.slice(0, 64)}`, env);
   const repository = new URL(repo.repoUrl).pathname.replace(/^\//, "").replace(/\.git$/, "");
@@ -344,7 +372,7 @@ async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
   job.pullRequest = { number: payload.number, url: payload.html_url, branch, commit: pushed.commit };
   job.updatedAt = new Date().toISOString();
   await saveJob(env, job);
-  await rm(join(rootDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
+  await rm(join(workDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
   return job.pullRequest;
 }
 
