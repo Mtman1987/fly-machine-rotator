@@ -66,7 +66,11 @@ const REPOS: RepoConfig[] = [
     repoUrl: "https://github.com/Mtman1987/streamweaver.git",
     cloneDirName: "streamweaver",
     appNames: ["streamweaver-new"],
-    checkCommands: ["npm run typecheck"],
+    checkCommands: [
+      "node --import tsx --test tests/private-chat-qwen-mode.test.ts",
+      "npm run typecheck",
+      "npm run build:simple"
+    ],
     installCommand: "npm install --no-audit --no-fund",
     branchPrefix: "rotator-fix/streamweaver"
   }

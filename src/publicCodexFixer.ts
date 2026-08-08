@@ -93,7 +93,9 @@ export async function listCodexJobs(env: NodeJS.ProcessEnv, limit = 20): Promise
   }
 }
 
-function inferRepo(input: CreateJobInput): RepoConfig {
+export function inferRepo(input: CreateJobInput): RepoConfig {
+  const explicit = getRepoConfigForApp(String(input.appName || "").trim());
+  if (explicit) return explicit;
   const text = `${input.appName || ""} ${input.description || ""}`.toLowerCase();
   const appName = text.includes("spmt") || text.includes("spacemountain.live")
     ? "spmt-live"
@@ -107,6 +109,75 @@ function inferRepo(input: CreateJobInput): RepoConfig {
             ? "chat-tag-new"
             : "streamweaver-new";
   return getRepoConfigForApp(appName) || listRepoConfigs().find((repo) => repo.id === "streamweaver")!;
+}
+
+function parseQwenCoderResult(content: string): { summary: string; patch: string } {
+  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("Qwen Coder did not return a JSON object.");
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { summary?: unknown; patch?: unknown };
+  return {
+    summary: redact(String(parsed.summary || "Qwen inspected the assigned repository.")),
+    patch: String(parsed.patch || "").trim(),
+  };
+}
+
+async function runQwenCoder(description: string, workspace: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const tracked = (await execFileAsync("git", ["ls-files"], { cwd: workspace, timeout: 60_000 })).stdout
+    .split(/\r?\n/).filter(Boolean);
+  const terms = [...new Set(description.toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) || [])]
+    .filter((term) => !new Set(["with", "that", "this", "from", "only", "current", "default", "without"]).has(term));
+  const score = (path: string) => terms.reduce((total, term) => total + (path.toLowerCase().includes(term) ? 3 : 0), 0)
+    + (/private|chat|qwen|adult|llm|model|provider|setting/i.test(path) ? 5 : 0)
+    + (/AGENTS\.md$|package\.json$/i.test(path) ? 10 : 0);
+  const candidates = tracked.map((path) => ({ path, score: score(path) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, 18);
+
+  let context = "";
+  for (const candidate of candidates) {
+    const source = await readFile(join(workspace, candidate.path), "utf8").catch(() => "");
+    if (!source || context.length >= 70_000) continue;
+    context += `\n\n--- ${candidate.path} ---\n${source.slice(0, 20_000)}`;
+  }
+  if (!context) throw new Error("Qwen Coder could not select readable repository context.");
+
+  const baseUrl = String(env.SPMT_LLM_BASE_URL || "http://spmt-llm-worker.internal:8080/v1").replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    signal: AbortSignal.timeout(5 * 60_000),
+    body: JSON.stringify({
+      model: String(env.SPMT_LLM_MODEL || "spmt-qwen3-4b"),
+      temperature: 0.1,
+      thinking_budget_tokens: 0,
+      max_tokens: 8000,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "You are Athena Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"patch\":\"unified git diff or empty string\"}. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, or APIs. Patch paths must be repository-relative." },
+        { role: "user", content: `Task:\n${description}\n\nSelected repository files:${context}\n\n/no_think` },
+      ],
+    }),
+  });
+  const body = await response.json().catch(() => ({})) as { choices?: Array<{ message?: { content?: unknown } }>; error?: unknown };
+  if (!response.ok) throw new Error(`Qwen Coder HTTP ${response.status}: ${redact(JSON.stringify(body))}`);
+  const content = String(body.choices?.[0]?.message?.content || "").trim();
+  const result = parseQwenCoderResult(content);
+  if (result.patch) {
+    if (result.patch.length > 120_000) throw new Error("Qwen Coder patch exceeded the safety limit.");
+    const patchFile = join(rootDir(env), "tmp", `qwen-${randomUUID()}.patch`);
+    await mkdir(join(rootDir(env), "tmp"), { recursive: true });
+    await writeFile(patchFile, result.patch);
+    try {
+      await execFileAsync("git", ["apply", "--check", patchFile], { cwd: workspace, timeout: 60_000 });
+      await execFileAsync("git", ["apply", "--whitespace=fix", patchFile], { cwd: workspace, timeout: 60_000 });
+    } finally {
+      await rm(patchFile, { force: true }).catch(() => undefined);
+    }
+  }
+  return result.summary;
 }
 
 function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {
@@ -191,24 +262,28 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     await ensureRepoDependencies(workspace, repo.installCommand);
     await mkdir(join(dataDir, "tmp"), { recursive: true });
 
-    const codex = new Codex({
-      apiKey: String(env.OPENAI_API_KEY || ""),
-      env: minimalCodexEnv(env, dataDir),
-      config: { sandbox_workspace_write: { network_access: false } },
-    });
-    const thread = codex.startThread({
-      workingDirectory: workspace,
-      model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),
-      modelReasoningEffort: "high",
-      sandboxMode: "workspace-write",
-      networkAccessEnabled: false,
-      webSearchMode: "disabled",
-      approvalPolicy: "never",
-    });
-    const prompt = `${ATHENA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${String(input.description || "").slice(0, 4000)}\nContext JSON: ${JSON.stringify(input.context || {}).slice(0, 6000)}`;
-    const turn = await thread.run(prompt);
-    job.threadId = thread.id || undefined;
-    job.summary = redact(turn.finalResponse || "Codex completed without a final response.");
+    if (String(env.SPMT_LLM_BASE_URL || "").trim()) {
+      job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);
+    } else {
+      const codex = new Codex({
+        apiKey: String(env.OPENAI_API_KEY || ""),
+        env: minimalCodexEnv(env, dataDir),
+        config: { sandbox_workspace_write: { network_access: false } },
+      });
+      const thread = codex.startThread({
+        workingDirectory: workspace,
+        model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),
+        modelReasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        networkAccessEnabled: false,
+        webSearchMode: "disabled",
+        approvalPolicy: "never",
+      });
+      const prompt = `${ATHENA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${String(input.description || "").slice(0, 4000)}\nContext JSON: ${JSON.stringify(input.context || {}).slice(0, 6000)}`;
+      const turn = await thread.run(prompt);
+      job.threadId = thread.id || undefined;
+      job.summary = redact(turn.finalResponse || "Codex completed without a final response.");
+    }
 
     const diff = await runCommand("git diff --binary --no-ext-diff", workspace);
     await mkdir(join(dataDir, "jobs", job.id), { recursive: true });
@@ -399,7 +474,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   }
 
   if (method === "POST" && url.pathname === "/api/codex/jobs") {
-    if (!String(env.OPENAI_API_KEY || "").trim()) return sendJson(response, 503, { error: "OPENAI_API_KEY is not configured" }), true;
+    if (!String(env.SPMT_LLM_BASE_URL || env.OPENAI_API_KEY || "").trim()) return sendJson(response, 503, { error: "No Athena Coder model provider is configured" }), true;
     const input = await readJson(request);
     const description = String(input.description || "").trim();
     if (!description) return sendJson(response, 400, { error: "description is required" }), true;
