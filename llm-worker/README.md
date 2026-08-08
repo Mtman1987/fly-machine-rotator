@@ -1,6 +1,6 @@
-# SPMT LLM Worker
+# SPMT Qwen Worker
 
-This directory deploys a real CPU-hosted LLM as a separate Fly application. It does not run inside Fly Machine Rotator, StreamWeaver, or another tenant app.
+This directory deploys the Qwen service that SPMT already uses today. It is a CPU-hosted Fly application, not the proposed future GPU host, and it is shared by owner-controlled SPMT surfaces such as Athena Coder and StreamWeaver private Discord DMs.
 
 The worker uses the official llama.cpp server image and downloads:
 
@@ -11,79 +11,59 @@ The worker uses the official llama.cpp server image and downloads:
 
 The downloaded GGUF is cached on the persistent `spmt_llm_models` Fly Volume at `/models`, so ordinary restarts do not download it again.
 
-## Routes
+## Private transport and authentication
 
-llama.cpp provides OpenAI-compatible routes including:
+The worker listens on port 8080 only inside Fly's encrypted private network. `fly.toml` deliberately has no `[http_service]` or `[[services]]` block, so the llama.cpp service is not published through Fly Proxy.
 
-- `GET /health`
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-- `POST /v1/responses`
-- `POST /v1/embeddings`
-- `GET /metrics`
+User and application authentication happens before a request reaches Qwen. The worker itself does not use `LLAMA_API_KEY`, `LLAMA_ARG_API_KEY_FILE`, or a second SPMT model key. Applications in the same Fly organization call:
 
-Requests other than public health endpoints require the `LLAMA_API_KEY` secret.
+```text
+http://spmt-llm-worker.internal:8080/v1/chat/completions
+```
 
-## Initial sizing
+No model credential belongs in a browser, tenant setting, Discord DM, Streamer.bot action, or StreamWeaver `.env` file.
 
-The first configuration uses its own:
+## Current sizing
+
+The current configuration uses:
 
 - 8 performance CPUs
 - 16 GB RAM
 - 10 GB persistent volume
-- one always-running Machine
-- 8,192-token context
+- 32,768 total context tokens
 - two parallel request slots
+- alias `spmt-qwen3-4b`
 
-This is intentionally conservative for reliable CPU testing. Reduce CPU/RAM only after measuring latency and memory under actual StreamWeaver bot concurrency.
+## Deployment
 
-## Create and deploy
+The `Deploy SPMT LLM Worker` GitHub workflow:
 
-From the repository root:
+1. ensures the Fly app and model volume exist;
+2. removes obsolete llama.cpp authentication secrets;
+3. deploys the private worker;
+4. releases obsolete public Fly addresses;
+5. checks `/health` from the Rotator app; and
+6. sends a real keyless `/v1/chat/completions` request over Fly private networking.
 
-```bash
-fly apps create spmt-llm-worker --org mtman-new
-fly volumes create spmt_llm_models --app spmt-llm-worker --region ord --size 10
-fly secrets set --app spmt-llm-worker LLAMA_API_KEY='use-a-long-random-service-token'
-fly deploy --config llm-worker/fly.toml --dockerfile llm-worker/Dockerfile
-```
+The real chat smoke test matters because `/health` can still pass when a stale llama.cpp API-key setting blocks generation.
 
-If the app already exists, skip `fly apps create`. If the volume already exists, skip `fly volumes create`.
+## Private application test
 
-The first boot can remain in a loading state while llama.cpp downloads the model into `/models`. The Fly health check allows up to ten minutes for this initial load.
-
-## Test
-
-```bash
-curl https://spmt-llm-worker.fly.dev/health
-```
-
-Authenticated model listing:
+From another app in the same Fly organization:
 
 ```bash
-curl https://spmt-llm-worker.fly.dev/v1/models \
-  -H 'Authorization: Bearer YOUR_LLM_API_KEY'
-```
-
-Authenticated chat:
-
-```bash
-curl https://spmt-llm-worker.fly.dev/v1/chat/completions \
-  -H 'Authorization: Bearer YOUR_LLM_API_KEY' \
+curl http://spmt-llm-worker.internal:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "spmt-qwen3-4b",
-    "messages": [{"role": "user", "content": "Reply with one sentence confirming the local route works."}],
-    "max_tokens": 80
+    "messages": [{"role": "user", "content": "Reply with exactly OK.\n\n/no_think"}],
+    "thinking_budget_tokens": 0,
+    "max_tokens": 32,
+    "temperature": 0,
+    "stream": false
   }'
 ```
 
-## Application integration
+## Changing models later
 
-Do not put `LLAMA_API_KEY` in a browser, Streamer.bot action, or tenant-visible settings. Store it only in the SPMT AI router or server-side app secret store.
-
-Existing paid provider routes remain unchanged. Applications should call this worker only when the authenticated owner/test preference enables the local route, and should fall back to their current provider when the worker is unavailable.
-
-## Changing models
-
-To test another GGUF model, change `LLAMA_ARG_HF_REPO` and `LLAMA_ARG_ALIAS` in `fly.toml`, then deploy again. Keep models in the same volume or create separate worker apps/volumes when different workloads require independent CPU and memory.
+A future GPU service can replace the internal implementation without adding tenant configuration. Until then, Adult Mode and Athena Coder use this existing `spmt-qwen3-4b` worker. Model changes belong in the owner deployment configuration, not in user-facing settings.
