@@ -76,6 +76,28 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     return;
   }
 
+  if (method === "GET" && (url.pathname === "/logs/errors.md" || url.pathname === "/logs/observations.md")) {
+    if (!(await requireSpmtAdmin(request, env))) {
+      response.writeHead(302, {
+        location: `/auth/spmt/login?next=${encodeURIComponent(url.pathname)}`,
+        "cache-control": "no-store"
+      });
+      response.end();
+      return;
+    }
+    const observations = url.pathname.endsWith("observations.md");
+    const events = observations ? await readObservationHistory(env) : await readErrorHistory(env);
+    const retentionMs = observations ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    response.writeHead(200, {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `inline; filename="${observations ? "observed-incidents-7d" : "athena-repair-queue-24h"}.md"`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff"
+    });
+    response.end(renderIncidentMarkdown(events, observations ? "Observation ledger (7 days)" : "Athena repair queue (24 hours)", retentionMs));
+    return;
+  }
+
   if (method === "GET" && (url.pathname === "/brand/avatar.png" || url.pathname === "/brand/logo.png")) {
     const fileName = url.pathname.endsWith("avatar.png")
       ? "space-mountain-avatar-transparent.png"
@@ -1812,6 +1834,24 @@ function pruneLast24Hours(events: StoredErrorEvent[]): StoredErrorEvent[] {
 function pruneRecent(events: StoredErrorEvent[], retentionMs: number): StoredErrorEvent[] {
   const cutoff = Date.now() - retentionMs;
   return events.filter((event) => Date.parse(event.recordedAt) >= cutoff);
+}
+
+function renderIncidentMarkdown(events: StoredErrorEvent[], title: string, retentionMs: number): string {
+  const recent = dedupeErrorEvents(pruneRecent(events, retentionMs));
+  const lines = [`# ${title}`, "", `Generated: ${new Date().toISOString()}`, `Unique incidents: ${recent.length}`, ""];
+  for (const event of recent) {
+    const incident = event.classification ?? classifyIncident(event);
+    lines.push(`## ${event.appName} — ${incident.disposition.replace(/_/g, " ")}`);
+    lines.push("");
+    lines.push(`- Fingerprint: \`${event.fingerprint}\``);
+    lines.push(`- Incident: \`${incident.key}\``);
+    lines.push(`- Recorded: ${event.timestamp ?? event.recordedAt}`);
+    lines.push(`- Athena eligible: ${incident.autoFixEligible ? "yes" : "no"}`);
+    lines.push(`- Reason: ${redactSensitiveText(incident.reason)}`);
+    lines.push("");
+    lines.push("```text", redactSensitiveText(event.message), "```", "");
+  }
+  return lines.join("\n").slice(-900_000);
 }
 
 function summarizeFailureCounts(events: StoredErrorEvent[]): Array<[string, number]> {

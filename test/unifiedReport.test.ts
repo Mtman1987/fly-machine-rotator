@@ -78,11 +78,15 @@ describe("buildUnifiedPayload", () => {
     expect(embed.fields[2]?.name).toBe("Rotation 2");
     expect(embed.fields[2]?.value).toContain("streamweaver-new");
     expect(embed.fields[2]?.inline).toBe(true);
-    expect(embed.fields[3]?.name).toBe("24h Failure Totals");
+    expect(embed.fields[3]?.name).toBe("Athena Queue by App");
     expect(embed.fields[3]?.value).toContain("chat-tag-bot-new: 1");
     expect(embed.fields[3]?.value).toContain("streamweaver-new: 1");
     expect(embed.fields[4]?.name).toBe("Notes");
     expect(embed.fields[4]?.value).toContain("1 handoffs");
+    expect(embed.fields[5]?.name).toBe("Latest Athena Attempt");
+    expect(embed.fields[6]?.name).toBe("Logs and Incident Lists");
+    expect(embed.fields[6]?.value).toContain("/logs/errors.md");
+    expect(embed.fields[6]?.value).toContain("/logs/observations.md");
     expect(embed.footer?.text).toContain("rotation start");
     expect(embed.footer?.text).toContain("last finished");
   });

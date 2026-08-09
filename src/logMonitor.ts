@@ -6,6 +6,7 @@ import { getIgnoreRulesFile, IgnoreRuleStore } from "./ignoreRules.js";
 import { classifyIncident, type IncidentClassification } from "./incidentClassifier.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
+import { scheduleAthenaForIncident } from "./athenaIncidentTrigger.js";
 
 interface LogMonitorOptions {
   appNames: string[];
@@ -259,11 +260,15 @@ async function handleLogLine(
 
   history.add(event, classification);
   await history.save();
+  dedupe.add(fingerprint);
+  await dedupe.save();
+  scheduleAthenaForIncident(event, {
+    ...process.env,
+    ...(options.discordWebhookUrl ? { DISCORD_WEBHOOK_URL: options.discordWebhookUrl } : {})
+  });
   const sent = await sendErrorReport(options.discordWebhookUrl, event, history, reportState);
   if (sent) {
     if (stats) stats.sent += 1;
-    dedupe.add(fingerprint);
-    await dedupe.save();
     console.log(`reported ${appName} ${fingerprint}: ${entry.message.slice(0, 180)}`);
   }
 }

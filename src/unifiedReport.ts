@@ -4,6 +4,17 @@ import { RotatorRuntimeState, getRuntimeStateFile, RotatorRuntimeStateStore } fr
 import { AppRotationResult } from "./types.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 
+type AthenaIncidentAttempt = {
+  incidentId: string;
+  appName: string;
+  fingerprint: string;
+  rotationKey: string;
+  attemptedAt: string;
+  finishedAt?: string;
+  status: "running" | "completed" | "failed";
+  summary?: string;
+};
+
 type RotationHistoryEntry = {
   at: string;
   startedAt?: string;
@@ -39,17 +50,20 @@ export async function upsertUnifiedDiscordReport(
 
   const rotationHistoryFile = process.env.ROTATION_HISTORY_FILE ?? "/data/rotation-history.json";
   const errorHistoryFile = process.env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
+  const observationHistoryFile = process.env.LOG_OBSERVATION_HISTORY_FILE ?? "/data/observed-incidents.json";
   const stateFile = getUnifiedReportStateFile();
   const dashboardUrl = getDashboardUrl();
 
-  const [rotationHistory, errorHistory, currentState, runtimeState] = await Promise.all([
+  const [rotationHistory, errorHistory, observationHistory, athenaAttempts, currentState, runtimeState] = await Promise.all([
     readRotationHistory(rotationHistoryFile),
     readErrorHistory(errorHistoryFile),
+    readErrorHistory(observationHistoryFile),
+    readAthenaIncidentAttempts(process.env.ROTATOR_ATHENA_ATTEMPTS_FILE ?? "/data/athena-incident-attempts.json"),
     DiscordUnifiedReportState.load(stateFile),
     RotatorRuntimeStateStore.load(getRuntimeStateFile()).then((store) => store.snapshot()),
   ]);
 
-  const payload = buildUnifiedPayload(rotationHistory, errorHistory, runtimeState, latestRotationResults, dashboardUrl);
+  const payload = buildUnifiedPayload(rotationHistory, errorHistory, runtimeState, latestRotationResults, dashboardUrl, observationHistory, athenaAttempts.at(-1));
   const webhook = parseDiscordWebhookUrl(webhookUrl);
   const currentMessage = currentState.get();
 
@@ -102,9 +116,12 @@ export function buildUnifiedPayload(
   errorHistory: StoredErrorEvent[],
   runtimeState: RotatorRuntimeState,
   latestRotationResults: AppRotationResult[] | undefined,
-  dashboardUrl: string
+  dashboardUrl: string,
+  observationHistory: StoredErrorEvent[] = [],
+  latestAthenaAttempt?: AthenaIncidentAttempt
 ): object {
   const prunedErrors = pruneErrorHistory(errorHistory);
+  const observations = pruneRecentHistory(observationHistory, 7 * 24 * 60 * 60 * 1000);
   const latestHistoryEntry = rotationHistory.at(-1);
   const brandAssets = getBrandAssetUrls(dashboardUrl);
   const latestRotation = latestRotationResults ? summarizeRotationResults(latestRotationResults) : summarizeLatestRotation(rotationHistory);
@@ -134,7 +151,22 @@ export function buildUnifiedPayload(
     `Finished: ${formatTimestamp(finishedAt)}`,
     `Next run: ${formatTimestamp(runtimeState.nextRunAt)}`,
     `Total runs: ${totalRuns}`,
-    `24h errors: ${prunedErrors.length}`
+    `Athena queue (24h): ${prunedErrors.length}`,
+    `Observed only (7d): ${observations.length}`
+  ].join("\n");
+  const baseUrl = dashboardUrl.replace(/\/$/, "");
+  const athenaText = latestAthenaAttempt
+    ? [
+        `${latestAthenaAttempt.appName} • ${latestAthenaAttempt.status}`,
+        `fingerprint ${latestAthenaAttempt.fingerprint}`,
+        `started ${formatTimestamp(latestAthenaAttempt.attemptedAt)}`,
+        latestAthenaAttempt.finishedAt ? `finished ${formatTimestamp(latestAthenaAttempt.finishedAt)}` : "still running",
+        latestAthenaAttempt.summary?.slice(0, 420)
+      ].filter(Boolean).join("\n")
+    : "Athena has not attempted an incident in the current retained history.";
+  const queueLinks = [
+    `[Athena repair queue](${baseUrl}/#fixes) • [Observation ledger](${baseUrl}/#observations)`,
+    `[Repair queue Markdown](${baseUrl}/logs/errors.md) • [Observation Markdown](${baseUrl}/logs/observations.md)`
   ].join("\n");
   const footerParts = [
     startedAt ? `rotation start ${formatTimestamp(startedAt)}` : undefined,
@@ -145,7 +177,7 @@ export function buildUnifiedPayload(
     username: "Fly Machine Rotator",
     avatar_url: brandAssets.avatarUrl,
     attachments: [],
-    content: "Rolling Fly rotation and error report.",
+    content: "Rotator and Athena operations report.",
     embeds: [
       {
         title: "Open rotator dashboard",
@@ -170,7 +202,7 @@ export function buildUnifiedPayload(
             inline: true
           },
           {
-            name: "24h Failure Totals",
+            name: "Athena Queue by App",
             value: codeBlock(failureCounts),
             inline: true
           },
@@ -178,6 +210,16 @@ export function buildUnifiedPayload(
             name: "Notes",
             value: codeBlock(notesText),
             inline: true
+          },
+          {
+            name: "Latest Athena Attempt",
+            value: codeBlock(athenaText),
+            inline: false
+          },
+          {
+            name: "Logs and Incident Lists",
+            value: queueLinks,
+            inline: false
           }
         ],
         footer: footerParts.length > 0 ? { text: footerParts.join(" | ") } : undefined,
@@ -283,7 +325,11 @@ function inferMode(previousActiveId: string | undefined, newActiveId: string | u
 }
 
 function pruneErrorHistory(events: StoredErrorEvent[]): StoredErrorEvent[] {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return pruneRecentHistory(events, 24 * 60 * 60 * 1000);
+}
+
+function pruneRecentHistory(events: StoredErrorEvent[], retentionMs: number): StoredErrorEvent[] {
+  const cutoff = Date.now() - retentionMs;
   return events.filter((event) => Date.parse(event.recordedAt) >= cutoff);
 }
 
@@ -360,6 +406,15 @@ async function readRotationHistory(path: string): Promise<RotationHistoryEntry[]
 async function readErrorHistory(path: string): Promise<StoredErrorEvent[]> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as StoredErrorEvent[];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readAthenaIncidentAttempts(path: string): Promise<AthenaIncidentAttempt[]> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as AthenaIncidentAttempt[];
     return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
   } catch {
     return [];
