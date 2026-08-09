@@ -68,7 +68,7 @@ const REPOS: RepoConfig[] = [
     appNames: ["streamweaver-new"],
     checkCommands: [
       "node --import tsx --test tests/private-chat-qwen-mode.test.ts",
-      "npx tsc --noEmit --skipLibCheck --target ES2020 --module esnext --moduleResolution bundler --esModuleInterop --resolveJsonModule --isolatedModules --jsx preserve src/lib/private-chat-settings-store.ts src/services/qwen-private-chat.ts tests/private-chat-qwen-mode.test.ts"
+      "trap 'rm -f .athena-tsconfig.json' EXIT; node -e 'require(\"node:fs\").writeFileSync(\".athena-tsconfig.json\", JSON.stringify({extends:\"./tsconfig.json\",compilerOptions:{incremental:false},include:[\"src/lib/private-chat-settings-store.ts\",\"src/services/qwen-private-chat.ts\",\"tests/private-chat-qwen-mode.test.ts\"],exclude:[\"node_modules\",\".next\"]}))' && npx tsc -p .athena-tsconfig.json --noEmit --incremental false"
     ],
     installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/streamweaver"
