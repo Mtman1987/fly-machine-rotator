@@ -17,7 +17,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "spmt-live",
     appNames: ["spmt-live", "spacemountain-live"],
     checkCommands: ["npm run typecheck", "npm run build"],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/spmt"
   },
   {
@@ -27,7 +27,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "fly-machine-rotator",
     appNames: ["mtman-machine-rotator", "mountainview"],
     checkCommands: ["npm run typecheck", "npm test", "npm run build"],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/rotator"
   },
   {
@@ -37,7 +37,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "chat-tag",
     appNames: ["chat-tag-bot-new", "chat-tag-new"],
     checkCommands: ["npm run typecheck"],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/chat-tag"
   },
   {
@@ -47,7 +47,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "discord-stream-hub",
     appNames: ["discord-stream-hub-new", "dsh-clip-worker"],
     checkCommands: ["npm run typecheck"],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/dsh"
   },
   {
@@ -57,7 +57,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "hearmeout-main",
     appNames: ["hearmeout-main", "hmo-dj-worker"],
     checkCommands: ["npm run typecheck"],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/hearmeout"
   },
   {
@@ -69,9 +69,9 @@ const REPOS: RepoConfig[] = [
     checkCommands: [
       "node --import tsx --test tests/private-chat-qwen-mode.test.ts",
       "npm run typecheck",
-      "npm run build:simple"
+      "NODE_OPTIONS=--max-old-space-size=512 NEXT_TELEMETRY_DISABLED=1 npm run build:simple"
     ],
-    installCommand: "npm install --no-audit --no-fund",
+    installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/streamweaver"
   }
 ];
