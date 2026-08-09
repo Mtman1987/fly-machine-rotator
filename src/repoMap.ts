@@ -69,7 +69,7 @@ const REPOS: RepoConfig[] = [
     checkCommands: [
       "node --import tsx --test tests/private-chat-qwen-mode.test.ts",
       "npm run typecheck",
-      "NODE_OPTIONS=--max-old-space-size=512 NEXT_TELEMETRY_DISABLED=1 npm run build:simple"
+      "NODE_OPTIONS=--max-old-space-size=1280 NEXT_TELEMETRY_DISABLED=1 npm run build:simple"
     ],
     installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/streamweaver"

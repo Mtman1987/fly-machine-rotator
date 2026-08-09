@@ -45,7 +45,7 @@ export async function ensureRepoDependencies(repoPath: string, installCommand: s
   ]);
   if (!(await pathExists(packageJsonPath))) return;
 
-  const markerPath = join(repoPath, ".rotator-install-state.json");
+  const markerPath = join(repoPath, "node_modules", ".rotator-install-state.json");
   const current = {
     packageJsonHash: await hashFile(packageJsonPath),
     lockHash: lockPath ? await hashFile(lockPath) : "none"
