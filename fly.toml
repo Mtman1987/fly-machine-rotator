@@ -51,7 +51,7 @@ primary_region = "ord"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 2048
+  memory_mb = 4096
 
 [mounts]
   source = "rotator_data"
