@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect, StringCodec } from "nats";
 import { getIgnoreRulesFile, IgnoreRuleStore } from "./ignoreRules.js";
+import { classifyIncident, type IncidentClassification } from "./incidentClassifier.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 
@@ -13,6 +14,7 @@ interface LogMonitorOptions {
   discordWebhookUrl?: string;
   dedupeFile: string;
   historyFile: string;
+  observationFile?: string;
   reportMessageFile: string;
   baselineFile?: string;
   contextLines: number;
@@ -48,6 +50,7 @@ interface StoredErrorEvent {
   message: string;
   suggestion: string;
   context: string[];
+  classification?: IncidentClassification;
 }
 
 interface DiscordReportMessageState {
@@ -76,8 +79,10 @@ const ERROR_PATTERNS = [
 ];
 
 export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
+  await partitionIncidentHistory(options.historyFile, options.observationFile ?? "/data/observed-incidents.json");
   const dedupe = await DedupeStore.load(options.dedupeFile);
   const history = await ErrorHistoryStore.load(options.historyFile);
+  const observations = await ErrorHistoryStore.load(options.observationFile ?? "/data/observed-incidents.json", 7 * 24 * 60 * 60 * 1000);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
   const observationBaseline = await ObservationBaselineStore.load(options.baselineFile);
@@ -109,6 +114,7 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
       options,
       dedupe,
       history,
+      observations,
       reportState,
       ignoreRules,
       observationBaseline,
@@ -116,6 +122,44 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
       subject
     );
   }
+}
+
+export async function partitionIncidentHistory(historyFile: string, observationFile: string): Promise<{ moved: number; actionable: number; observed: number }> {
+  const [history, observations] = await Promise.all([
+    readStoredEvents(historyFile),
+    readStoredEvents(observationFile)
+  ]);
+  const actionable: StoredErrorEvent[] = [];
+  const moved: StoredErrorEvent[] = [];
+
+  for (const event of history) {
+    const classification = classifyIncident(event);
+    const classified = { ...event, classification };
+    if (classification.autoFixEligible) actionable.push(classified);
+    else moved.push(classified);
+  }
+
+  if (moved.length > 0 || actionable.length !== history.length) {
+    await Promise.all([
+      writeStoredEvents(historyFile, actionable),
+      writeStoredEvents(observationFile, [...observations, ...moved].slice(-4000))
+    ]);
+  }
+  return { moved: moved.length, actionable: actionable.length, observed: observations.length + moved.length };
+}
+
+async function readStoredEvents(path: string): Promise<StoredErrorEvent[]> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeStoredEvents(path: string, events: StoredErrorEvent[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(events, null, 2));
 }
 
 async function handleLogOutput(
@@ -126,6 +170,7 @@ async function handleLogOutput(
   dedupe: DedupeStore
 ): Promise<{ entries: number; errors: number; sent: number }> {
   const history = await ErrorHistoryStore.load(options.historyFile);
+  const observations = await ErrorHistoryStore.load(options.observationFile ?? "/data/observed-incidents.json", 7 * 24 * 60 * 60 * 1000);
   const reportState = await DiscordReportStateStore.load(options.reportMessageFile);
   const ignoreRules = await IgnoreRuleStore.load(getIgnoreRulesFile(process.env));
   const observationBaseline = await ObservationBaselineStore.load(options.baselineFile);
@@ -133,14 +178,14 @@ async function handleLogOutput(
   const objects = splitJsonObjects(output);
   if (objects.length > 0) {
     for (const objectText of objects) {
-      await handleLogLine(appName, objectText, context, options, dedupe, history, reportState, ignoreRules, observationBaseline, stats);
+      await handleLogLine(appName, objectText, context, options, dedupe, history, observations, reportState, ignoreRules, observationBaseline, stats);
     }
     return stats;
   }
 
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (trimmed) await handleLogLine(appName, trimmed, context, options, dedupe, history, reportState, ignoreRules, observationBaseline, stats);
+    if (trimmed) await handleLogLine(appName, trimmed, context, options, dedupe, history, observations, reportState, ignoreRules, observationBaseline, stats);
   }
   return stats;
 }
@@ -152,6 +197,7 @@ async function handleLogLine(
   options: LogMonitorOptions,
   dedupe: DedupeStore,
   history: ErrorHistoryStore,
+  observations: ErrorHistoryStore,
   reportState: DiscordReportStateStore,
   ignoreRules: IgnoreRuleStore,
   observationBaseline: ObservationBaselineStore,
@@ -165,7 +211,7 @@ async function handleLogLine(
   if (stats) stats.entries += 1;
   pushContext(context, entry, options.contextLines);
 
-  if (!looksLikeError(entry.message)) return;
+  if (!looksLikeError(entry.message) && !isExpectedApplicationResponse(stripAnsi(entry.message))) return;
   if (stats) stats.errors += 1;
   const baseline = await observationBaseline.inspect(entry.timestamp);
   if (baseline.changed) {
@@ -173,7 +219,7 @@ async function handleLogLine(
     dedupe.reset();
   }
   if (baseline.excludes) return;
-  await Promise.all([history.syncFromDisk(), dedupe.syncFromDisk()]);
+  await Promise.all([history.syncFromDisk(), observations.syncFromDisk(), dedupe.syncFromDisk()]);
 
   const fingerprint = fingerprintError(appName, entry);
   if (dedupe.has(fingerprint)) {
@@ -188,15 +234,30 @@ async function handleLogLine(
     suggestion: suggestFix(entry.message)
   };
 
-  if (ignoreRules.matches({
+  const ignored = ignoreRules.matches({
     appName,
     fingerprint,
     message: entry.message
-  })) {
+  });
+
+  const classification = classifyIncident({
+    appName,
+    fingerprint,
+    message: entry.message,
+    context: event.context.map(formatEntry)
+  });
+  const actionable = classification.autoFixEligible && !ignored;
+
+  if (!actionable) {
+    observations.add(event, classification);
+    await observations.save();
+    dedupe.add(fingerprint);
+    await dedupe.save();
+    console.log(`observed ${appName} ${fingerprint} [${classification.disposition}]: ${entry.message.slice(0, 180)}`);
     return;
   }
 
-  history.add(event);
+  history.add(event, classification);
   await history.save();
   const sent = await sendErrorReport(options.discordWebhookUrl, event, history, reportState);
   if (sent) {
@@ -759,20 +820,21 @@ class DiscordReportStateStore {
 class ErrorHistoryStore {
   private constructor(
     private readonly path: string,
-    private readonly values: StoredErrorEvent[]
+    private readonly values: StoredErrorEvent[],
+    private readonly retentionMs = 24 * 60 * 60 * 1000
   ) {}
 
-  static async load(path: string): Promise<ErrorHistoryStore> {
+  static async load(path: string, retentionMs?: number): Promise<ErrorHistoryStore> {
     try {
       const content = await readFile(path, "utf8");
       const parsed = JSON.parse(content) as StoredErrorEvent[];
-      return new ErrorHistoryStore(path, Array.isArray(parsed) ? redactSensitiveValue(parsed) : []);
+      return new ErrorHistoryStore(path, Array.isArray(parsed) ? redactSensitiveValue(parsed) : [], retentionMs);
     } catch {
-      return new ErrorHistoryStore(path, []);
+      return new ErrorHistoryStore(path, [], retentionMs);
     }
   }
 
-  add(event: ErrorEvent): void {
+  add(event: ErrorEvent, classification?: IncidentClassification): void {
     this.prune();
     this.values.push({
       recordedAt: new Date().toISOString(),
@@ -783,7 +845,8 @@ class ErrorHistoryStore {
       timestamp: event.errorLine.timestamp,
       message: redactSensitiveText(event.errorLine.message),
       suggestion: redactSensitiveText(event.suggestion),
-      context: event.context.map(formatEntry).map(redactSensitiveText)
+      context: event.context.map(formatEntry).map(redactSensitiveText),
+      classification
     });
     this.prune();
   }
@@ -856,7 +919,7 @@ class ErrorHistoryStore {
   }
 
   private prune(): void {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - this.retentionMs;
     while (this.values.length > 0 && Date.parse(this.values[0].recordedAt) < cutoff) {
       this.values.shift();
     }

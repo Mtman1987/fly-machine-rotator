@@ -389,6 +389,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
   const finishedAt = runtime.lastFinishedAt ?? latestHistoryEntry?.finishedAt ?? latestHistoryEntry?.at;
   const totalRuns = runtime.totalRuns > 0 ? runtime.totalRuns : rotationHistory.length;
   const rawErrors = pruneLast24Hours(await readErrorHistory(env));
+  const observations = dedupeErrorEvents(pruneRecent(await readObservationHistory(env), 7 * 24 * 60 * 60 * 1000));
   const ignoreStore = await IgnoreRuleStore.load(getIgnoreRulesFile(env));
   const prunedUnsafeRules = ignoreStore.pruneUnsafe();
   if (prunedUnsafeRules > 0) await ignoreStore.save();
@@ -434,9 +435,9 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       detail: errors.length > 0 ? "fix cards waiting below" : "queue is clear",
     },
     {
-      label: "Hidden noise",
-      value: String(ignoredErrors.length),
-      detail: ignoreRules.length > 0 ? `${ignoreRules.length} active ignore rules` : "no ignore rules yet",
+      label: "Observed only",
+      value: String(observations.length),
+      detail: "retained 7 days, excluded from Athena",
     }
   ].map((item) => `
         <article class="metric-card">
@@ -887,7 +888,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
         <a href="#ops">Ops Deck</a>
         <a href="#codex-jobs">Athena Coder</a>
         <a href="#fixes">Fix Queue</a>
-        <a href="#noise">Noise Filters</a>
+        <a href="#observations">Observed</a>
         <a href="/mountainview">MountainView</a>
         <a href="/mountainview/apk">Download APK</a>
         <a href="#" onclick="downloadLogs(); return false;">Download Logs</a>
@@ -1020,6 +1021,20 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       </div>
       <div class="fix-grid">
         ${errors.length === 0 ? '<div class="muted">No current error groups to review.</div>' : errors.map((event) => renderFixCard(event, fixesById.get(buildFixId(event.appName, event.fingerprint)))).join("")}
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 18px;" id="observations">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Observation Ledger</div>
+          <h2>Active incidents Athena must not patch</h2>
+        </div>
+        <p class="muted small">Unique groups retained for 7 days: ${observations.length}</p>
+      </div>
+      <p class="muted section-copy">Authentication and configuration gaps, provider or network failures, expected user responses, already-fixed signatures, and unknown incidents remain auditable here. They never enter Athena's repair queue.</p>
+      <div class="fix-grid">
+        ${observations.length === 0 ? '<div class="muted">No observation-only incidents recorded.</div>' : observations.map(renderObservationCard).join("")}
       </div>
     </section>
 
@@ -1285,6 +1300,23 @@ function renderFixCard(event: StoredErrorEvent, fix: FixRecord | undefined): str
         ` : ""}
       </div>
     ` : ""}
+  </article>`;
+}
+
+function renderObservationCard(event: StoredErrorEvent): string {
+  const incident = event.classification ?? classifyIncident(event);
+  const observedAt = event.timestamp ?? event.recordedAt;
+  return `<article class="fix-card">
+    <div class="fix-head">
+      <div>
+        <div class="eyebrow">${escapeHtml(event.appName)}</div>
+        <h2>${escapeHtml(incident.disposition.replace(/_/g, " "))}</h2>
+        <div class="fix-meta">${escapeHtml(observedAt)} • ${escapeHtml(incident.key)}</div>
+      </div>
+      <div class="badge">observed</div>
+    </div>
+    <div class="check-box">${escapeHtml(event.message)}</div>
+    <p class="muted small">${escapeHtml(incident.reason)}</p>
   </article>`;
 }
 
@@ -1639,6 +1671,7 @@ function isTrustedRepairContext(record: FixRecord): boolean {
 
 async function clearErrorState(env: NodeJS.ProcessEnv): Promise<{ events: number; proposals: number; archiveDir: string }> {
   const historyFile = env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
+  const observationFile = env.LOG_OBSERVATION_HISTORY_FILE ?? "/data/observed-incidents.json";
   const dedupeFile = env.LOG_ERROR_DEDUPE_FILE ?? "/data/error-fingerprints.json";
   const fixesFile = getFixStoreFile(env);
   const ignoreFile = getIgnoreRulesFile(env);
@@ -1648,6 +1681,7 @@ async function clearErrorState(env: NodeJS.ProcessEnv): Promise<{ events: number
 
   const archiveFiles = [
     [historyFile, "error-history.redacted.json"],
+    [observationFile, "observed-incidents.redacted.json"],
     [dedupeFile, "error-fingerprints.redacted.json"],
     [fixesFile, "fix-proposals.redacted.json"],
     [ignoreFile, "ignore-rules.redacted.json"]
@@ -1717,6 +1751,16 @@ async function readErrorHistory(env: NodeJS.ProcessEnv): Promise<StoredErrorEven
   }
 }
 
+async function readObservationHistory(env: NodeJS.ProcessEnv): Promise<StoredErrorEvent[]> {
+  const historyFile = env.LOG_OBSERVATION_HISTORY_FILE ?? "/data/observed-incidents.json";
+  try {
+    const parsed = JSON.parse(await readFile(historyFile, "utf8")) as StoredErrorEvent[];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function findErrorEventById(id: string, env: NodeJS.ProcessEnv): Promise<StoredErrorEvent> {
   const events = dedupeErrorEvents(pruneLast24Hours(await readErrorHistory(env)));
   const event = events.find((item) => buildFixId(item.appName, item.fingerprint) === id);
@@ -1762,7 +1806,11 @@ function dedupeErrorEvents(events: StoredErrorEvent[]): StoredErrorEvent[] {
 }
 
 function pruneLast24Hours(events: StoredErrorEvent[]): StoredErrorEvent[] {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return pruneRecent(events, 24 * 60 * 60 * 1000);
+}
+
+function pruneRecent(events: StoredErrorEvent[], retentionMs: number): StoredErrorEvent[] {
+  const cutoff = Date.now() - retentionMs;
   return events.filter((event) => Date.parse(event.recordedAt) >= cutoff);
 }
 
