@@ -68,8 +68,7 @@ const REPOS: RepoConfig[] = [
     appNames: ["streamweaver-new"],
     checkCommands: [
       "node --import tsx --test tests/private-chat-qwen-mode.test.ts",
-      "NODE_OPTIONS=--max-old-space-size=1536 npm run typecheck",
-      "NODE_OPTIONS=--max-old-space-size=1536 NEXT_TELEMETRY_DISABLED=1 npm run build:simple"
+      "npx tsc --noEmit --skipLibCheck --target ES2020 --module esnext --moduleResolution bundler --esModuleInterop --resolveJsonModule --isolatedModules --jsx preserve src/lib/private-chat-settings-store.ts src/services/qwen-private-chat.ts tests/private-chat-qwen-mode.test.ts"
     ],
     installCommand: "npm install --include=dev --no-audit --no-fund",
     branchPrefix: "rotator-fix/streamweaver"

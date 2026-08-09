@@ -161,7 +161,7 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
       max_tokens: 4000,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are Athena Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"patch\":\"unified git diff or empty string\"}. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, or APIs. Patch paths must be repository-relative." },
+        { role: "system", content: "You are Athena Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"patch\":\"unified git diff or empty string\"}. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, APIs, or validation results. The executor runs checks after your response, so do not claim tests, typechecks, or builds ran. Patch paths must be repository-relative." },
         { role: "user", content: `Task:\n${description}\n\nSelected repository files:${context}\n\n/no_think` },
       ],
     }),
