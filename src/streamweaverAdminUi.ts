@@ -49,9 +49,10 @@ async function callStreamWeaver(
   request: IncomingMessage,
   env: NodeJS.ProcessEnv,
   target: TargetName,
+  methodOverride?: string,
 ): Promise<{ status: number; contentType: string; body: string }> {
   const definition = TARGETS[target];
-  const method = String(request.method || "GET").toUpperCase();
+  const method = String(methodOverride || request.method || "GET").toUpperCase();
   if (!(definition.methods as readonly string[]).includes(method)) {
     return { status: 405, contentType: "application/json", body: JSON.stringify({ error: "Method not allowed" }) };
   }
@@ -80,10 +81,12 @@ async function callStreamWeaver(
   };
 }
 
-async function aggregate(request: IncomingMessage, env: NodeJS.ProcessEnv) {
+export async function aggregateStreamWeaverState(request: IncomingMessage, env: NodeJS.ProcessEnv) {
   const entries = await Promise.all((Object.keys(TARGETS) as TargetName[]).map(async (target) => {
     try {
-      const result = await callStreamWeaver({ ...request, method: "GET" } as IncomingMessage, env, target);
+      // IncomingMessage properties such as `headers` are not enumerable. Keep the
+      // authenticated request intact and override only the upstream method.
+      const result = await callStreamWeaver(request, env, target, "GET");
       let data: unknown = result.body;
       try { data = JSON.parse(result.body); } catch { /* retain text */ }
       return [target, { ok: result.status >= 200 && result.status < 300, status: result.status, data }] as const;
@@ -117,7 +120,7 @@ export async function handleStreamWeaverAdminUiRequest(
     sendJson(response, 200, {
       admin: { id: admin.id, username: admin.username },
       streamWeaverBaseUrl: streamWeaverBaseUrl(env),
-      sections: await aggregate(request, env),
+      sections: await aggregateStreamWeaverState(request, env),
     });
     return true;
   }
