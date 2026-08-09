@@ -21,7 +21,7 @@ if (!source.includes('requestSpmtLlmFixPlan(prompt')) {
 const functionAnchor = 'async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {';
 const localFunction = `async function requestSpmtLlmFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
   const baseUrl = String(env.SPMT_LLM_BASE_URL || "http://spmt-llm-worker.internal:8080/v1").replace(/\\/$/, "");
-  const model = env.SPMT_LLM_MODEL || "spmt-qwen3-4b";
+  const model = env.SPMT_LLM_MODEL || "spmt-qwen3-8b";
   const response = await fetch(\`\${baseUrl}/chat/completions\`, {
     signal: AbortSignal.timeout(providerTimeoutMs(env)),
     method: "POST",
