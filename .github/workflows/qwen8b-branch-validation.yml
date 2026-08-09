@@ -1,0 +1,64 @@
+name: Qwen8B Branch Validation
+
+on:
+  push:
+    branches:
+      - feat/qwen3-8b-worker
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.event.head_commit.message != 'Apply Qwen3 8B source default'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/qwen3-8b-worker
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply repo model patch
+        run: |
+          npm run patch:spmt-llm
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'src/aiFixer.ts';
+          let s = fs.readFileSync(p, 'utf8');
+          s = s.replaceAll('spmt-qwen3-4b', 'spmt-qwen3-8b');
+          fs.writeFileSync(p, s);
+          NODE
+      - name: Verify worker and rotator model aliases agree
+        run: |
+          grep -q 'Qwen/Qwen3-8B-GGUF:Q4_K_M' llm-worker/fly.toml
+          grep -q 'LLAMA_ARG_ALIAS = "spmt-qwen3-8b"' llm-worker/fly.toml
+          grep -q "model:'spmt-qwen3-8b'" .github/workflows/deploy-llm-worker.yml
+          grep -q 'SPMT_LLM_MODEL || "spmt-qwen3-8b"' src/aiFixer.ts
+          if grep -R 'spmt-qwen3-4b' llm-worker src/aiFixer.ts scripts/patch-spmt-local-llm.mjs .github/workflows/deploy-llm-worker.yml; then
+            echo 'Found stale 4B worker alias'
+            exit 1
+          fi
+      - name: Run worker tests
+        run: cd llm-worker && npm test
+      - name: Run rotator tests
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Commit generated source default
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/aiFixer.ts
+          if git diff --cached --quiet; then
+            echo 'No generated source changes.'
+          else
+            git commit -m 'Apply Qwen3 8B source default'
+            git push origin HEAD:feat/qwen3-8b-worker
+          fi
