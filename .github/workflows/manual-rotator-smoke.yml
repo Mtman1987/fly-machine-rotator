@@ -108,7 +108,7 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
-            'node scripts/athena-code.mjs submit streamweaver-new "Inspect current main and verify the private chat Adult Mode toggle changes only policy while built-in SPMT Qwen remains the default LLM both on and off. No Qwen URL or model flags may be required. Reject custom remote HTTP providers, run the focused tests, typecheck, and production build, and change code only if current main does not already satisfy this behavior." --wait --timeout 1800'
+          'node scripts/athena-code.mjs submit streamweaver-new "Inspect current main and verify the private chat Adult Mode toggle changes only policy while built-in SPMT Qwen remains the default LLM both on and off. No Qwen URL or model flags may be required. Reject custom remote HTTP providers. Change code only if current main does not already satisfy this behavior. The Fly executor will run the focused runtime tests and an issue-scoped TypeScript check; the full production build is validated separately by normal CI." --wait --timeout 1800'
 
       - name: Run one real rotation
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_rotation }}
