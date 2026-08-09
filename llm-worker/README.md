@@ -1,13 +1,13 @@
 # SPMT Qwen Worker
 
-This directory deploys the Qwen service that SPMT already uses today. It is a CPU-hosted Fly application, not the proposed future GPU host, and it is shared by owner-controlled SPMT surfaces such as Athena Coder and StreamWeaver private Discord DMs.
+This directory deploys the Qwen service that SPMT uses for owner-controlled surfaces such as Athena Coder and StreamWeaver private Discord DMs. It is a CPU-hosted Fly application, not the proposed future GPU host.
 
 The worker uses the official llama.cpp server image and downloads:
 
-- repository: `Qwen/Qwen3-4B-GGUF`
+- repository: `Qwen/Qwen3-8B-GGUF`
 - quantization: `Q4_K_M`
-- API model alias: `spmt-qwen3-4b`
-- approximate model download: 2.5 GB
+- API model alias: `spmt-qwen3-8b`
+- approximate model download: about 5 GB
 
 The downloaded GGUF is cached on the persistent `spmt_llm_models` Fly Volume at `/models`, so ordinary restarts do not download it again.
 
@@ -27,12 +27,15 @@ No model credential belongs in a browser, tenant setting, Discord DM, Streamer.b
 
 The current configuration uses:
 
+- Qwen3-8B Q4_K_M
 - 8 performance CPUs
 - 16 GB RAM
 - 10 GB persistent volume
 - 32,768 total context tokens
 - two parallel request slots
-- alias `spmt-qwen3-4b`
+- alias `spmt-qwen3-8b`
+
+The 8B model is the production step up from the previous 4B model. A 14B Q4 model is intentionally not the default on this 16 GB CPU machine because model memory plus KV cache and parallel context would leave much less operating headroom.
 
 ## Deployment
 
@@ -43,9 +46,9 @@ The `Deploy SPMT LLM Worker` GitHub workflow:
 3. deploys the private worker;
 4. releases obsolete public Fly addresses;
 5. checks `/health` from the Rotator app; and
-6. sends a real keyless `/v1/chat/completions` request over Fly private networking.
+6. sends a real `spmt-qwen3-8b` `/v1/chat/completions` request over Fly private networking.
 
-The real chat smoke test matters because `/health` can still pass when a stale llama.cpp API-key setting blocks generation.
+The real chat smoke test matters because `/health` can pass before first inference has proven the model path is usable.
 
 ## Private application test
 
@@ -55,7 +58,7 @@ From another app in the same Fly organization:
 curl http://spmt-llm-worker.internal:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "spmt-qwen3-4b",
+    "model": "spmt-qwen3-8b",
     "messages": [{"role": "user", "content": "Reply with exactly OK.\n\n/no_think"}],
     "thinking_budget_tokens": 0,
     "max_tokens": 32,
@@ -66,4 +69,4 @@ curl http://spmt-llm-worker.internal:8080/v1/chat/completions \
 
 ## Changing models later
 
-A future GPU service can replace the internal implementation without adding tenant configuration. Until then, Adult Mode and Athena Coder use this existing `spmt-qwen3-4b` worker. Model changes belong in the owner deployment configuration, not in user-facing settings.
+StreamWeaver reads the worker's OpenAI-compatible `/v1/models` endpoint and can surface the effective model to the signed-in tenant. Larger-model changes still belong in this owner deployment configuration so the worker cannot be pointed at an unavailable model from a browser.

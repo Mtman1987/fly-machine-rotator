@@ -10,8 +10,8 @@ primary_region = "ord"
 [env]
   LLAMA_ARG_HOST = "::"
   LLAMA_ARG_PORT = "8080"
-  LLAMA_ARG_HF_REPO = "Qwen/Qwen3-4B-GGUF:Q4_K_M"
-  LLAMA_ARG_ALIAS = "spmt-qwen3-4b"
+  LLAMA_ARG_HF_REPO = "Qwen/Qwen3-8B-GGUF:Q4_K_M"
+  LLAMA_ARG_ALIAS = "spmt-qwen3-8b"
   # llama.cpp divides total context across parallel server slots. 32K total
   # keeps two concurrent slots while giving each request about 16K tokens.
   LLAMA_ARG_CTX_SIZE = "32768"
