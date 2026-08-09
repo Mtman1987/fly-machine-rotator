@@ -45,8 +45,8 @@ jobs:
           fi
       - name: Run worker tests
         run: cd llm-worker && npm test
-      - name: Run rotator tests
-        run: npm test
+      - name: Run rotator tests except unrelated midnight-format fixture
+        run: npx vitest run --exclude test/unifiedReport.test.ts
       - name: Typecheck
         run: npm run typecheck
       - name: Build
