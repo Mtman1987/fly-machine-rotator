@@ -37,4 +37,20 @@ describe("StreamWeaver admin relay", () => {
     }
     expect(Object.values(sections).every((section) => (section as { ok: boolean }).ok)).toBe(true);
   });
+
+  it("uses the canonical Fly origin when no StreamWeaver override is configured", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => {
+      requestedUrls.push(String(url));
+      return new Response('{}', { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    await aggregateStreamWeaverState({
+      method: "GET",
+      headers: { authorization: "Bearer current-spmt-session" },
+    } as IncomingMessage, {});
+
+    expect(requestedUrls).toHaveLength(5);
+    expect(requestedUrls.every((url) => url.startsWith("https://streamweaver-new.fly.dev/"))).toBe(true);
+  });
 });

@@ -42,7 +42,10 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 function streamWeaverBaseUrl(env: NodeJS.ProcessEnv): string {
-  return String(env.STREAMWEAVER_BASE_URL || "https://streamweaver.live").replace(/\/$/, "");
+  // The Fly hostname is the canonical service origin. The streamweaver.live
+  // custom domain currently has an invalid certificate chain for server-side
+  // callers, which prevents the protected relay from reaching StreamWeaver.
+  return String(env.STREAMWEAVER_BASE_URL || "https://streamweaver-new.fly.dev").replace(/\/$/, "");
 }
 
 async function callStreamWeaver(
