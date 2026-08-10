@@ -13,6 +13,33 @@ function replaceRequired(source, from, to, label) {
   return source.replace(from, to);
 }
 
+function ensureSharedUiImport(source) {
+  const importLine = 'import { spmtSharedUiHead, spmtSharedUiScript } from "./spmtSharedUi.js";';
+  return source.includes(importLine) ? source : `${importLine}\n${source}`;
+}
+
+function installSharedUi(source, appId, profileEndpoint = '/athena/api/settings') {
+  source = ensureSharedUiImport(source);
+  const headCall = '${spmtSharedUiHead("' + appId + '")}';
+  const scriptCall = '${spmtSharedUiScript("' + appId + '", "' + profileEndpoint + '")}';
+  if (source.includes('</head>') && !source.includes(headCall)) source = source.replace('</head>', `${headCall}</head>`);
+  if (source.includes('</body>') && !source.includes(scriptCall)) source = source.replace('</body>', `${scriptCall}</body>`);
+  return source;
+}
+
+function installSharedUiInFunction(source, functionMarker, appId, profileEndpoint) {
+  source = ensureSharedUiImport(source);
+  const start = source.indexOf(functionMarker);
+  if (start < 0) throw new Error(`workspace parity patch marker missing: ${functionMarker}`);
+  const before = source.slice(0, start);
+  let section = source.slice(start);
+  const headCall = '${spmtSharedUiHead("' + appId + '")}';
+  const scriptCall = '${spmtSharedUiScript("' + appId + '", "' + profileEndpoint + '")}';
+  if (!section.includes(headCall)) section = replaceRequired(section, '</head>', `${headCall}</head>`, `${appId} head`);
+  if (!section.includes(scriptCall)) section = replaceRequired(section, '</body>', `${scriptCall}</body>`, `${appId} body`);
+  return before + section;
+}
+
 await patch('src/athenaSpmtGateway.ts', (source) => {
   source = source.replace('import { hasMountainViewAdminSession } from "./mountainView.js";', 'import { requireSpmtAdmin } from "./spmtAuth.js";');
   source = source.replaceAll('await hasMountainViewAdminSession(request, env)', 'await requireSpmtAdmin(request, env)');
@@ -24,8 +51,12 @@ await patch('src/athenaCoderUi.ts', (source) => {
   source = source.replace('import { hasMountainViewAdminSession } from "./mountainView.js";', 'import { requireSpmtAdmin } from "./spmtAuth.js";');
   source = source.replaceAll('await hasMountainViewAdminSession(request, env)', 'await requireSpmtAdmin(request, env)');
   source = source.replace('location: `/mountainview/auth/login?next=${next}`', 'location: `/auth/spmt/login?next=${next}`');
-  return source;
+  return installSharedUi(source, 'athena-coder');
 });
+
+await patch('src/athenaRepairUi.ts', (source) => installSharedUi(source, 'athena-repair'));
+await patch('src/athenaChat.ts', (source) => installSharedUi(source, 'athena-llm'));
+await patch('src/streamweaverAdminUi.ts', (source) => installSharedUi(source, 'streamweaver-ops'));
 
 await patch('src/dashboardServer.ts', (source) => source.replaceAll('/mountainview/auth/login?next=', '/auth/spmt/login?next='));
 
@@ -44,7 +75,7 @@ await patch('src/mountainView.ts', (source) => {
     const workspaceMethod = `${tokenMethod}\n\n  async loadWorkspace(userId: string): Promise<JsonRecord | null> {\n    const accessToken = this.getServiceToken(userId, "spmt");\n    if (!accessToken) return null;\n    const base = this.serviceBaseUrl("spmt").replace(/\\/$/, "");\n    const headers = { authorization: \`Bearer \${accessToken}\`, accept: "application/json" };\n    try {\n      const [profileResponse, overlayResponse] = await Promise.all([\n        fetch(\`\${base}/api/workspace-profile\`, { headers, signal: AbortSignal.timeout(10_000) }),\n        fetch(\`\${base}/api/overlay-workspace\`, { headers, signal: AbortSignal.timeout(10_000) }),\n      ]);\n      if (!profileResponse.ok) return null;\n      const profile = asRecord(await profileResponse.json().catch(() => ({})));\n      const overlay = overlayResponse.ok ? asRecord(await overlayResponse.json().catch(() => ({}))) : {};\n      return { profile: profile.profile ?? null, overlay: overlay.layout ?? null };\n    } catch {\n      return null;\n    }\n  }`;
     source = source.replace(tokenMethod, workspaceMethod);
   }
-  return source;
+  return installSharedUiInFunction(source, 'function renderMountainViewHtml', 'mountainview', '/mountainview/api/bootstrap');
 });
 
 await patch('mobile/App.tsx', (source) => {
