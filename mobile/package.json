@@ -4,9 +4,13 @@
   "private": true,
   "main": "expo/AppEntry.js",
   "scripts": {
+    "prestart": "node ../scripts/patch-ecosystem-workspace-parity.mjs",
     "start": "expo start",
+    "preprebuild:android": "node ../scripts/patch-ecosystem-workspace-parity.mjs",
     "prebuild:android": "expo prebuild --platform android",
+    "preios": "node ../scripts/patch-ecosystem-workspace-parity.mjs",
     "ios": "expo run:ios",
+    "preandroid": "node ../scripts/patch-ecosystem-workspace-parity.mjs",
     "android": "expo run:android"
   },
   "dependencies": {
