@@ -13,6 +13,16 @@ function replaceRequired(source, from, to, label) {
   return source.replace(from, to);
 }
 
+function installSharedUi(source, appId) {
+  const importLine = 'import { spmtSharedUiHead, spmtSharedUiScript } from "./spmtSharedUi.js";';
+  if (!source.includes(importLine)) source = `${importLine}\n${source}`;
+  const headCall = '${spmtSharedUiHead("' + appId + '")}';
+  const scriptCall = '${spmtSharedUiScript("' + appId + '")}';
+  if (source.includes('</head>') && !source.includes(headCall)) source = source.replace('</head>', `${headCall}</head>`);
+  if (source.includes('</body>') && !source.includes(scriptCall)) source = source.replace('</body>', `${scriptCall}</body>`);
+  return source;
+}
+
 await patch('src/athenaSpmtGateway.ts', (source) => {
   source = source.replace('import { hasMountainViewAdminSession } from "./mountainView.js";', 'import { requireSpmtAdmin } from "./spmtAuth.js";');
   source = source.replaceAll('await hasMountainViewAdminSession(request, env)', 'await requireSpmtAdmin(request, env)');
@@ -24,8 +34,12 @@ await patch('src/athenaCoderUi.ts', (source) => {
   source = source.replace('import { hasMountainViewAdminSession } from "./mountainView.js";', 'import { requireSpmtAdmin } from "./spmtAuth.js";');
   source = source.replaceAll('await hasMountainViewAdminSession(request, env)', 'await requireSpmtAdmin(request, env)');
   source = source.replace('location: `/mountainview/auth/login?next=${next}`', 'location: `/auth/spmt/login?next=${next}`');
-  return source;
+  return installSharedUi(source, 'athena-coder');
 });
+
+await patch('src/athenaRepairUi.ts', (source) => installSharedUi(source, 'athena-repair'));
+await patch('src/athenaChat.ts', (source) => installSharedUi(source, 'athena-llm'));
+await patch('src/streamweaverAdminUi.ts', (source) => installSharedUi(source, 'streamweaver-ops'));
 
 await patch('src/dashboardServer.ts', (source) => source.replaceAll('/mountainview/auth/login?next=', '/auth/spmt/login?next='));
 
