@@ -75,10 +75,23 @@ function number(value: unknown, fallback: number, min: number, max: number) { co
 async function fetchShared(request: IncomingMessage, env: NodeJS.ProcessEnv) {
   const token = readSpmtAccessToken(request); if (!token) throw new Error("SPMT access token missing");
   const base = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
-  const upstream = await fetch(`${base}/api/workspace-profile`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" }, signal: AbortSignal.timeout(12_000) });
-  const payload = await upstream.json().catch(() => ({}));
-  if (!upstream.ok) throw new Error((payload as any)?.error || `SPMT shared settings load failed (${upstream.status})`);
-  return { ok: true, ...(payload as object) };
+  const headers = { authorization: `Bearer ${token}`, accept: "application/json" };
+  const [profileResponse, overlayResponse] = await Promise.all([
+    fetch(`${base}/api/workspace-profile`, { headers, signal: AbortSignal.timeout(12_000) }),
+    fetch(`${base}/api/overlay-workspace`, { headers, signal: AbortSignal.timeout(12_000) }),
+  ]);
+  const [payload, overlayPayload] = await Promise.all([
+    profileResponse.json().catch(() => ({})),
+    overlayResponse.json().catch(() => ({})),
+  ]);
+  if (!profileResponse.ok) throw new Error((payload as any)?.error || `SPMT shared settings load failed (${profileResponse.status})`);
+  return {
+    ok: true,
+    ...(payload as object),
+    overlayWorkspace: overlayResponse.ok
+      ? ((overlayPayload as any)?.layout || (overlayPayload as any)?.overlayWorkspace || null)
+      : null,
+  };
 }
 async function patchShared(request: IncomingMessage, env: NodeJS.ProcessEnv, revision: number, profile: unknown) {
   const token = readSpmtAccessToken(request); if (!token) return { status: 401, payload: { error: "SPMT access token missing" } };
