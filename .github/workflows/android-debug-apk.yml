@@ -2,6 +2,18 @@ name: Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/android-debug-apk.yml"
+      - "mobile/**"
+      - "scripts/patch-ecosystem-workspace-parity.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/android-debug-apk.yml"
+      - "mobile/**"
+      - "scripts/patch-ecosystem-workspace-parity.mjs"
 
 permissions:
   contents: write
@@ -28,8 +40,8 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
-      - name: Generate Android project
-        run: npx expo prebuild --platform android --no-install
+      - name: Generate Android project with current SPMT workspace parity
+        run: npm run prebuild:android -- --no-install
         env:
           MOUNTAINVIEW_ENABLE_META_DAT: "false"
       - name: Build debug APK
@@ -40,6 +52,7 @@ jobs:
         with:
           name: mountainview-ai-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
   release:
     name: Build MountainView Android release APK
     runs-on: ubuntu-latest
@@ -61,23 +74,26 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
-      - name: Generate Android project
-        run: npx expo prebuild --platform android --no-install
+      - name: Generate Android project with current SPMT workspace parity
+        run: npm run prebuild:android -- --no-install
         env:
           MOUNTAINVIEW_ENABLE_META_DAT: "false"
       - name: Build release APK
         run: ./gradlew assembleRelease
         working-directory: mobile/android
+      - name: Stage public APK name
+        run: cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/MountainView-Android.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mountainview-ai-release-apk
-          path: mobile/android/app/build/outputs/apk/release/*.apk
+          path: mobile/android/app/build/outputs/apk/release/MountainView-Android.apk
       - name: Publish latest APK release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mountainview-latest
           name: MountainView AI Latest Android APK
-          body: Latest installable MountainView AI Android APK for development testing.
+          body: Latest installable MountainView AI Android APK for testing. Includes the current SPMT workspace integration.
           prerelease: true
-          files: mobile/android/app/build/outputs/apk/release/app-release.apk
+          files: mobile/android/app/build/outputs/apk/release/MountainView-Android.apk
