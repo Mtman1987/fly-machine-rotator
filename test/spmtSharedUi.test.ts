@@ -42,4 +42,12 @@ describe("SPMT shared runtime shell", () => {
     expect(settingsSource).toContain("/api/overlay-workspace");
     expect(settingsSource).toContain("overlayWorkspace:");
   });
+
+  it("allows the web-only Docker build to skip the optional MountainView mobile patch", () => {
+    const patchSource = readFileSync(new URL("../scripts/patch-ecosystem-workspace-parity.mjs", import.meta.url), "utf8");
+
+    expect(patchSource).toContain("path === 'mobile/App.tsx'");
+    expect(patchSource).toContain("error?.code === 'ENOENT'");
+    expect(patchSource).toContain("skipped optional mobile/App.tsx workspace parity patch");
+  });
 });
