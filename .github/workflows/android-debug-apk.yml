@@ -40,8 +40,10 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
-      - name: Generate Android project with current SPMT workspace parity
-        run: npm run prebuild:android -- --no-install
+      - name: Apply current SPMT workspace parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --no-install
         env:
           MOUNTAINVIEW_ENABLE_META_DAT: "false"
       - name: Build debug APK
@@ -74,8 +76,10 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
-      - name: Generate Android project with current SPMT workspace parity
-        run: npm run prebuild:android -- --no-install
+      - name: Apply current SPMT workspace parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --no-install
         env:
           MOUNTAINVIEW_ENABLE_META_DAT: "false"
       - name: Build release APK
