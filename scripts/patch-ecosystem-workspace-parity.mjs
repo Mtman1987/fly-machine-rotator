@@ -1,5 +1,14 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
+const SUITE_BACKGROUND_STYLE = `<style id="spmt-suite-background">
+html[data-spmt-theme="solar-flare"]{--spmt-suite-bg-image:url("https://spacemountain.live/assets/theme-solar-flare-background.webp")}
+html[data-spmt-theme="nebula-purple"]{--spmt-suite-bg-image:url("https://spacemountain.live/assets/theme-nebula-purple-background.webp")}
+html[data-spmt-theme="oceanic-blue"]{--spmt-suite-bg-image:url("https://spacemountain.live/assets/theme-oceanic-blue-background.webp")}
+html[data-spmt-theme="aurora-green"]{--spmt-suite-bg-image:url("https://spacemountain.live/assets/theme-aurora-green-background.webp")}
+body.spmt-host-shell:before{content:"";position:fixed;inset:-3%;z-index:-3;pointer-events:none;background-image:linear-gradient(180deg,rgba(2,6,18,.28),rgba(2,6,18,.72)),var(--spmt-suite-bg-image);background-size:cover;background-position:center;background-repeat:no-repeat;transform:scale(1.035)}
+body.spmt-host-shell:after{background:radial-gradient(circle at 10% 0%,rgba(var(--spmt-accent-rgb),calc(.25 * var(--spmt-nebula))),transparent 36rem),radial-gradient(circle at 92% 86%,rgba(var(--spmt-accent-rgb),calc(.12 * var(--spmt-nebula))),transparent 34rem)!important}
+</style>`;
+
 async function patch(path, transform) {
   let before;
   try {
@@ -27,11 +36,18 @@ function ensureSharedUiImport(source) {
   return source.includes(importLine) ? source : `${importLine}\n${source}`;
 }
 
+function installSuiteBackground(source) {
+  if (source.includes('id="spmt-suite-background"')) return source;
+  if (!source.includes('</head>')) return source;
+  return source.replace('</head>', `${SUITE_BACKGROUND_STYLE}</head>`);
+}
+
 function installSharedUi(source, appId, profileEndpoint = '/athena/api/settings') {
   source = ensureSharedUiImport(source);
   const headCall = '${spmtSharedUiHead("' + appId + '")}';
   const scriptCall = '${spmtSharedUiScript("' + appId + '", "' + profileEndpoint + '")}';
   if (source.includes('</head>') && !source.includes(headCall)) source = source.replace('</head>', `${headCall}</head>`);
+  source = installSuiteBackground(source);
   if (source.includes('</body>') && !source.includes(scriptCall)) source = source.replace('</body>', `${scriptCall}</body>`);
   return source;
 }
@@ -45,6 +61,7 @@ function installSharedUiInFunction(source, functionMarker, appId, profileEndpoin
   const headCall = '${spmtSharedUiHead("' + appId + '")}';
   const scriptCall = '${spmtSharedUiScript("' + appId + '", "' + profileEndpoint + '")}';
   if (!section.includes(headCall)) section = replaceRequired(section, '</head>', `${headCall}</head>`, `${appId} head`);
+  section = installSuiteBackground(section);
   if (!section.includes(scriptCall)) section = replaceRequired(section, '</body>', `${scriptCall}</body>`, `${appId} body`);
   return before + section;
 }

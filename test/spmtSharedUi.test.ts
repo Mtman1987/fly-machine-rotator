@@ -35,6 +35,17 @@ describe("SPMT shared runtime shell", () => {
     expect(script).toContain("sm:'12px',md:'18px',lg:'26px',full:'999px'");
   });
 
+  it("injects the same canonical theme artwork used by the suite", () => {
+    const patchSource = readFileSync(new URL("../scripts/patch-ecosystem-workspace-parity.mjs", import.meta.url), "utf8");
+
+    expect(patchSource).toContain('id="spmt-suite-background"');
+    expect(patchSource).toContain('theme-solar-flare-background.webp');
+    expect(patchSource).toContain('theme-nebula-purple-background.webp');
+    expect(patchSource).toContain('theme-oceanic-blue-background.webp');
+    expect(patchSource).toContain('theme-aurora-green-background.webp');
+    expect(patchSource).toContain('var(--spmt-suite-bg-image)');
+  });
+
   it("loads both the canonical workspace profile and saved overlay layout", () => {
     const settingsSource = readFileSync(new URL("../src/athenaSettings.ts", import.meta.url), "utf8");
 
