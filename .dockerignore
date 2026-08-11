@@ -7,7 +7,8 @@ coverage
 .vscode
 
 .android-sdk
-mobile
+mobile/**
+!mobile/App.tsx
 artifacts
 
 docs
