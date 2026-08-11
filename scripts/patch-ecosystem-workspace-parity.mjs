@@ -1,7 +1,16 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 async function patch(path, transform) {
-  const before = await readFile(path, 'utf8');
+  let before;
+  try {
+    before = await readFile(path, 'utf8');
+  } catch (error) {
+    if (path === 'mobile/App.tsx' && error?.code === 'ENOENT') {
+      console.log('skipped optional mobile/App.tsx workspace parity patch');
+      return;
+    }
+    throw error;
+  }
   const after = transform(before);
   if (after === before) return;
   await writeFile(path, after);
