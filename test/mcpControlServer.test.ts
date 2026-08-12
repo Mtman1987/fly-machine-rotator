@@ -19,7 +19,7 @@ describe("MCP control server", () => {
     expect(isSpmtAdmin({ id: "1", role: "member" })).toBe(false);
   });
 
-  it("exposes narrow coding and allowlisted LLM provisioning tools", () => {
+  it("exposes coding, Fly observability, and allowlisted worker tools without shell or secret access", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
@@ -28,12 +28,15 @@ describe("MCP control server", () => {
       "get_coding_job",
       "get_coding_job_artifact",
       "publish_coding_job",
+      "list_fly_app_states",
+      "sample_fly_logs",
+      "get_fly_observability_snapshot",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
       "provision_spmt_llm_worker",
       "provision_spmt_embedding_worker",
     ]);
-    expect(tools.some((tool) => /merge|shell|secret-value|delete/i.test(tool.name))).toBe(false);
+    expect(tools.some((tool) => /merge|shell|secret-value|delete|restart|stop-machine/i.test(tool.name))).toBe(false);
     expect(tools.find((tool) => tool.name === "provision_spmt_llm_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.find((tool) => tool.name === "provision_spmt_embedding_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.filter((tool) => tool.annotations.readOnlyHint).map((tool) => tool.name)).toEqual([
@@ -41,8 +44,16 @@ describe("MCP control server", () => {
       "list_coding_jobs",
       "get_coding_job",
       "get_coding_job_artifact",
+      "list_fly_app_states",
+      "sample_fly_logs",
+      "get_fly_observability_snapshot",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
     ]);
+    expect(tools.find((tool) => tool.name === "sample_fly_logs")?.inputSchema.properties).toMatchObject({
+      limit: { type: "integer", minimum: 1, maximum: 500 },
+      durationMs: { type: "integer", minimum: 500, maximum: 10000 },
+      errorsOnly: { type: "boolean" },
+    });
   });
 });
