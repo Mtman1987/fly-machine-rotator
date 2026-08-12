@@ -141,7 +141,8 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
   }
   if (name === "get_coding_job") {
     const jobId = codingJobId(args);
-    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" };
+    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
+    return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}`);
   }
   if (name === "get_coding_job_artifact") {
     const jobId = codingJobId(args);
