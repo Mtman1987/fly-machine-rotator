@@ -1,0 +1,303 @@
+[
+    {
+        "id": "812e6dc97424e8",
+        "name": "hidden-dawn-488",
+        "state": "stopped",
+        "region": "lax",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "spmt-live",
+            "tag": "deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "digest": "sha256:62120814b3fd9101177dc9bd962fcb257c956e7ff180f1a2210a1c63d2394c9f",
+            "labels": {
+                "GH_ACTION_NAME": "__run_2",
+                "GH_EVENT_NAME": "push",
+                "GH_REPO": "Mtman1987/spmt-live",
+                "GH_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf",
+                "GITHUB_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf"
+            }
+        },
+        "instance_id": "01KZTB8BGXGPKAMNHRZVYHGN4P",
+        "private_ip": "fdaa:55:aa13:a7b:5d:38c8:18ec:2",
+        "created_at": "2026-08-12T05:33:29Z",
+        "updated_at": "2026-08-12T06:41:23Z",
+        "config": {
+            "env": {
+                "CLOUD_XBOX_MAX_SESSIONS": "1",
+                "CLOUD_XBOX_PROFILE_ROOT": "/var/lib/spmt-xbox/profiles",
+                "CLOUD_XBOX_WORKER_PORT": "3003",
+                "CLOUD_XBOX_WORKER_URL": "http://xbox.process.spmt-live.internal:3003",
+                "CODEX_REPAIR_DASHBOARD_URL": "https://mtman-machine-rotator.fly.dev/",
+                "CODEX_WORKER_URL": "https://mtman-machine-rotator.fly.dev",
+                "FLY_PROCESS_GROUP": "xbox",
+                "PRIMARY_REGION": "lax"
+            },
+            "init": {
+                "cmd": [
+                    "node",
+                    "xbox-worker.cjs"
+                ]
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 2,
+                "memory_mb": 2048
+            },
+            "metadata": {
+                "fly_builder_id": "d8d0d59a95e038",
+                "fly_flyctl_version": "0.4.82",
+                "fly_platform_version": "v2",
+                "fly_process_group": "xbox",
+                "fly_release_id": "rel_9v3d2ve1rjknygn6",
+                "fly_release_version": "170"
+            },
+            "image": "registry.fly.io/spmt-live:deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            },
+            "standbys": [
+                "e826d01a5e5068"
+            ]
+        },
+        "events": [
+            {
+                "type": "update",
+                "status": "stopped",
+                "source": "flyd",
+                "timestamp": 1786516883553
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1786516876950
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1786516876829
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    },
+    {
+        "id": "e826d01a5e5068",
+        "name": "billowing-grass-8639",
+        "state": "started",
+        "region": "lax",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "spmt-live",
+            "tag": "deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "digest": "sha256:62120814b3fd9101177dc9bd962fcb257c956e7ff180f1a2210a1c63d2394c9f",
+            "labels": {
+                "GH_ACTION_NAME": "__run_2",
+                "GH_EVENT_NAME": "push",
+                "GH_REPO": "Mtman1987/spmt-live",
+                "GH_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf",
+                "GITHUB_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf"
+            }
+        },
+        "instance_id": "01KZTB8BEN155P092BEFNKBME7",
+        "private_ip": "fdaa:55:aa13:a7b:73d:f24:1d0f:2",
+        "created_at": "2026-08-12T05:32:58Z",
+        "updated_at": "2026-08-12T06:41:25Z",
+        "config": {
+            "env": {
+                "CLOUD_XBOX_MAX_SESSIONS": "1",
+                "CLOUD_XBOX_PROFILE_ROOT": "/var/lib/spmt-xbox/profiles",
+                "CLOUD_XBOX_WORKER_PORT": "3003",
+                "CLOUD_XBOX_WORKER_URL": "http://xbox.process.spmt-live.internal:3003",
+                "CODEX_REPAIR_DASHBOARD_URL": "https://mtman-machine-rotator.fly.dev/",
+                "CODEX_WORKER_URL": "https://mtman-machine-rotator.fly.dev",
+                "FLY_PROCESS_GROUP": "xbox",
+                "PRIMARY_REGION": "lax"
+            },
+            "init": {
+                "cmd": [
+                    "node",
+                    "xbox-worker.cjs"
+                ]
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 2,
+                "memory_mb": 2048
+            },
+            "metadata": {
+                "fly_builder_id": "d8d0d59a95e038",
+                "fly_flyctl_version": "0.4.82",
+                "fly_platform_version": "v2",
+                "fly_process_group": "xbox",
+                "fly_release_id": "rel_9v3d2ve1rjknygn6",
+                "fly_release_version": "170"
+            },
+            "image": "registry.fly.io/spmt-live:deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            }
+        },
+        "events": [
+            {
+                "type": "start",
+                "status": "started",
+                "request": {},
+                "source": "flyd",
+                "timestamp": 1786516885959
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1786516876919
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1786516876757
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    },
+    {
+        "id": "48ee053be53478",
+        "name": "dark-fire-104",
+        "state": "started",
+        "region": "lax",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "spmt-live",
+            "tag": "deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "digest": "sha256:62120814b3fd9101177dc9bd962fcb257c956e7ff180f1a2210a1c63d2394c9f",
+            "labels": {
+                "GH_ACTION_NAME": "__run_2",
+                "GH_EVENT_NAME": "push",
+                "GH_REPO": "Mtman1987/spmt-live",
+                "GH_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf",
+                "GITHUB_SHA": "f601be0197063436d4f6e4591a140ff153ed1fbf"
+            }
+        },
+        "instance_id": "01KZTB8BFA9BMHWQPKWGFCSYEC",
+        "private_ip": "fdaa:55:aa13:a7b:58:ad38:9dae:2",
+        "created_at": "2026-06-24T17:23:22Z",
+        "updated_at": "2026-08-12T06:41:26Z",
+        "config": {
+            "env": {
+                "CLOUD_XBOX_MAX_SESSIONS": "1",
+                "CLOUD_XBOX_PROFILE_ROOT": "/var/lib/spmt-xbox/profiles",
+                "CLOUD_XBOX_WORKER_PORT": "3003",
+                "CLOUD_XBOX_WORKER_URL": "http://xbox.process.spmt-live.internal:3003",
+                "CODEX_REPAIR_DASHBOARD_URL": "https://mtman-machine-rotator.fly.dev/",
+                "CODEX_WORKER_URL": "https://mtman-machine-rotator.fly.dev",
+                "FLY_PROCESS_GROUP": "app",
+                "PRIMARY_REGION": "lax"
+            },
+            "init": {
+                "cmd": [
+                    "node",
+                    "start.cjs"
+                ]
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 1,
+                "memory_mb": 1024
+            },
+            "metadata": {
+                "fly_builder_id": "d8d0d59a95e038",
+                "fly_flyctl_version": "0.4.82",
+                "fly_platform_version": "v2",
+                "fly_process_group": "app",
+                "fly_release_id": "rel_9v3d2ve1rjknygn6",
+                "fly_release_version": "170"
+            },
+            "mounts": [
+                {
+                    "encrypted": true,
+                    "path": "/data",
+                    "size_gb": 1,
+                    "volume": "vol_vde2p30e6xo8d0k4",
+                    "name": "spmt_data"
+                }
+            ],
+            "services": [
+                {
+                    "protocol": "tcp",
+                    "internal_port": 3000,
+                    "autostop": false,
+                    "autostart": true,
+                    "min_machines_running": 1,
+                    "ports": [
+                        {
+                            "port": 80,
+                            "handlers": [
+                                "http"
+                            ],
+                            "force_https": true
+                        },
+                        {
+                            "port": 443,
+                            "handlers": [
+                                "http",
+                                "tls"
+                            ]
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "type": "http",
+                            "interval": "30s",
+                            "timeout": "5s",
+                            "grace_period": "10s",
+                            "method": "GET",
+                            "path": "/api/health/ready"
+                        }
+                    ],
+                    "force_instance_key": null
+                }
+            ],
+            "image": "registry.fly.io/spmt-live:deployment-01KZTB4X240EXCB1AD5JCAT6EG",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            }
+        },
+        "events": [
+            {
+                "type": "start",
+                "status": "started",
+                "request": {},
+                "source": "flyd",
+                "timestamp": 1786516886965
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1786516876913
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1786516876778
+            }
+        ],
+        "checks": [
+            {
+                "name": "servicecheck-00-http-3000",
+                "status": "passing",
+                "output": "{\"status\":\"ready\",\"app\":\"spmt-live\",\"version\":\"1.0.0\",\"buildSha\":\"f601be0197063436d4f6e4591a140ff153ed1fbf\",\"uptime\":3.6070241,\"checkedAt\":\"2026-08-12T06:41:30.675Z\",\"users\":15,\"database\":{\"status\":\"ready\",\"storage\":\"persistent-volume\",\"persistentExpected\":true,\"file\":\"spmt.db\",\"bytes\":580829184,\"journalMode\":\"wal\",\"integrity\":\"verified_by_backup_restore_drill\",\"writable\":true,\"latencyMs\":0.38},\"configuration\":{\"jwtSecret\":\"configured\",\"ownerRecovery\":\"configured\",\"oauthClientSecrets\":{\"status\":\"configured\",\"configured\":6,\"total\":6}},\"dependencies\":{\"discordIdentityLookup\":\"configured\",\"twitchIdentityLookup\":\"unavailable\",\"discordStreamHubPoints\":\"configured\"},\"degradedReasons\":[]}",
+                "updated_at": "2026-08-12T06:41:30.794Z"
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    }
+]
