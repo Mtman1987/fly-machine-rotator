@@ -1,9 +1,10 @@
+import { connect, StringCodec } from "nats";
 import { parseAppNames } from "./config.js";
 import { FlyApiClient } from "./flyClient.js";
 import { redactSensitiveText } from "./redaction.js";
 import type { FlyMachine, FlyMachineCheck } from "./types.js";
 
-export type RecentFlyLog = {
+export type SampledFlyLog = {
   appName: string;
   machineId?: string;
   region?: string;
@@ -13,52 +14,94 @@ export type RecentFlyLog = {
   message: string;
 };
 
-const MAX_RECENT_LOGS = 2_000;
-const recentLogs: RecentFlyLog[] = [];
-const logBufferStartedAt = new Date().toISOString();
-
 export function getManagedFlyApps(env: NodeJS.ProcessEnv = process.env): string[] {
   return parseAppNames(env.FLY_ROTATOR_APPS ?? env.MANAGED_FLY_APPS ?? "");
 }
 
-export function recordRecentFlyLog(input: Omit<RecentFlyLog, "observedAt"> & { observedAt?: string }): void {
-  const appName = String(input.appName || "").trim();
-  if (!appName) return;
-  recentLogs.push({
-    appName,
-    machineId: input.machineId ? String(input.machineId) : undefined,
-    region: input.region ? String(input.region) : undefined,
-    level: input.level ? String(input.level) : undefined,
-    timestamp: input.timestamp ? String(input.timestamp) : undefined,
-    observedAt: input.observedAt || new Date().toISOString(),
-    message: redactSensitiveText(String(input.message || "")).slice(0, 4_000),
-  });
-  if (recentLogs.length > MAX_RECENT_LOGS) recentLogs.splice(0, recentLogs.length - MAX_RECENT_LOGS);
+function positiveInt(value: unknown, fallback: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(parsed)));
 }
 
-export function getRecentFlyLogs(args: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env) {
-  const allowed = new Set(getManagedFlyApps(env));
-  const requestedApp = String(args.appName || "").trim();
-  if (requestedApp && !allowed.has(requestedApp)) {
-    throw new Error(`App ${requestedApp} is not in the managed Fly app allowlist.`);
+function parseLogSubject(subject: string): { appName: string; region: string; machineId: string } | null {
+  const [prefix, appName, region, machineId] = String(subject || "").split(".");
+  if (prefix !== "logs" || !appName || !region || !machineId) return null;
+  return { appName, region, machineId };
+}
+
+function sampledLog(subject: { appName: string; region: string; machineId: string }, payload: string): SampledFlyLog {
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value = JSON.parse(payload);
+    if (value && typeof value === "object" && !Array.isArray(value)) parsed = value as Record<string, unknown>;
+  } catch {
+    // Plain-text Fly log lines are valid too.
   }
-  const rawLimit = Number(args.limit ?? 100);
-  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, Math.floor(rawLimit))) : 100;
+  const firstString = (...values: unknown[]) => values.find((value): value is string => typeof value === "string" && value.length > 0);
+  const message = firstString(parsed?.message, parsed?.msg, parsed?.log, parsed?.event, parsed?.output) || payload;
+  return {
+    appName: subject.appName,
+    machineId: firstString(parsed?.machine_id, parsed?.machine, parsed?.instance, parsed?.id) || subject.machineId,
+    region: firstString(parsed?.region) || subject.region,
+    level: firstString(parsed?.level),
+    timestamp: firstString(parsed?.timestamp, parsed?.time, parsed?.ts),
+    observedAt: new Date().toISOString(),
+    message: redactSensitiveText(message).slice(0, 4_000),
+  };
+}
+
+export async function sampleManagedFlyLogs(args: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env) {
+  const allowedApps = getManagedFlyApps(env);
+  if (!allowedApps.length) throw new Error("No managed Fly apps are configured.");
+  const allowed = new Set(allowedApps);
+  const requestedApp = String(args.appName || "").trim();
+  if (requestedApp && !allowed.has(requestedApp)) throw new Error(`App ${requestedApp} is not in the managed Fly app allowlist.`);
+  const token = String(env.FLY_LOG_TOKEN || env.FLY_API_TOKEN || "").trim();
+  if (!token) throw new Error("FLY_LOG_TOKEN or FLY_API_TOKEN is not configured on the rotator.");
+  const org = String(env.FLY_ORG || env.ORG || "").trim();
+  if (!org) throw new Error("FLY_ORG is not configured on the rotator.");
+
+  const limit = positiveInt(args.limit, 100, 500);
+  const durationMs = Math.max(500, Math.min(10_000, positiveInt(args.durationMs, 2_000, 10_000)));
   const errorsOnly = args.errorsOnly === true;
   const errorPattern = /\berror\b|\bexception\b|\bfatal\b|\bpanic\b|\bfailed\b|\bunhandled\b|\brejection\b/i;
-  const filtered = recentLogs.filter((entry) => {
-    if (!allowed.has(entry.appName)) return false;
-    if (requestedApp && entry.appName !== requestedApp) return false;
-    if (errorsOnly && !errorPattern.test(entry.message)) return false;
-    return true;
+  const codec = StringCodec();
+  const logs: SampledFlyLog[] = [];
+  const nc = await connect({
+    servers: "[fdaa::3]:4223",
+    user: org,
+    pass: token,
+    name: "mtman-machine-rotator-mcp-log-sample",
   });
+  const subscription = nc.subscribe("logs.>");
+  const timer = setTimeout(() => subscription.unsubscribe(), durationMs);
+  try {
+    for await (const incoming of subscription) {
+      const subject = parseLogSubject(incoming.subject);
+      if (!subject || !allowed.has(subject.appName)) continue;
+      if (requestedApp && subject.appName !== requestedApp) continue;
+      const entry = sampledLog(subject, codec.decode(incoming.data));
+      if (errorsOnly && !errorPattern.test(entry.message)) continue;
+      logs.push(entry);
+      if (logs.length >= limit) {
+        subscription.unsubscribe();
+        break;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    await nc.drain().catch(() => nc.close());
+  }
+
   return {
     source: "fly-nats-live-log-stream",
-    bufferStartedAt: logBufferStartedAt,
-    bufferedEntries: recentLogs.length,
+    sampledAt: new Date().toISOString(),
+    sampleDurationMs: durationMs,
     appName: requestedApp || null,
+    configuredAppCount: allowedApps.length,
     errorsOnly,
-    logs: filtered.slice(-limit),
+    logs,
   };
 }
 
@@ -148,6 +191,6 @@ export async function getManagedFlyAppStates(env: NodeJS.ProcessEnv = process.en
 export async function getFlyObservabilitySnapshot(args: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env) {
   const requestedApp = String(args.appName || "").trim() || undefined;
   const states = await getManagedFlyAppStates(env, requestedApp);
-  const logs = getRecentFlyLogs({ appName: requestedApp, limit: args.limit ?? 100, errorsOnly: args.errorsOnly === true }, env);
+  const logs = await sampleManagedFlyLogs({ appName: requestedApp, limit: args.limit ?? 100, durationMs: args.durationMs ?? 2_000, errorsOnly: args.errorsOnly === true }, env);
   return { states, logs };
 }
