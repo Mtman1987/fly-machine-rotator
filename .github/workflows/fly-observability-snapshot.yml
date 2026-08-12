@@ -19,6 +19,7 @@ jobs:
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       FLY_ORG: mtman-new
+      FLY_OBSERVABILITY_EXCLUDE_APPS: aetherra,mika-bot
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -41,12 +42,20 @@ jobs:
           flyctl apps list -q -o "$FLY_ORG" --access-token "$FLY_API_TOKEN" \
             | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
             | sed '/^[[:space:]]*$/d' \
+            | EXCLUDED_APPS="$FLY_OBSERVABILITY_EXCLUDE_APPS" awk '
+                BEGIN {
+                  count = split(ENVIRON["EXCLUDED_APPS"], apps, ",");
+                  for (i = 1; i <= count; i++) excluded[apps[i]] = 1;
+                }
+                !excluded[$0]
+              ' \
             | sort -u > snapshot/apps.txt
           app_count=$(wc -l < snapshot/apps.txt | tr -d ' ')
           echo "=== FLY OBSERVABILITY SNAPSHOT ==="
           echo "organization=$FLY_ORG"
           echo "captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "app_count=$app_count"
+          echo "excluded_apps=$FLY_OBSERVABILITY_EXCLUDE_APPS"
 
           redact_file() {
             local file="$1"
