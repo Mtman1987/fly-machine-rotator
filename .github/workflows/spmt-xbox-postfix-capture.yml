@@ -1,0 +1,47 @@
+name: SPMT Xbox post-fix capture
+
+on:
+  push:
+    branches:
+      - ops/spmt-xbox-postfix-capture
+    paths:
+      - ".github/workflows/spmt-xbox-postfix-capture.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ops/spmt-xbox-postfix-capture
+          fetch-depth: 0
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Capture live SPMT Xbox state
+        run: |
+          set -euo pipefail
+          mkdir -p capture
+          date -u +%Y-%m-%dT%H:%M:%SZ > capture/captured-at.txt
+          flyctl status -a spmt-live --json --access-token "$FLY_API_TOKEN" > capture/status.json
+          flyctl machine list -a spmt-live --json --access-token "$FLY_API_TOKEN" > capture/machines.json
+          flyctl logs -a spmt-live --json --no-tail --access-token "$FLY_API_TOKEN" > capture/logs.jsonl || true
+      - name: Upload capture
+        uses: actions/upload-artifact@v4
+        with:
+          name: spmt-xbox-postfix-capture
+          path: capture/
+          retention-days: 1
+      - name: Remove one-shot workflow
+        run: |
+          rm .github/workflows/spmt-xbox-postfix-capture.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove temporary SPMT Xbox post-fix capture"
+          git push origin HEAD:ops/spmt-xbox-postfix-capture
