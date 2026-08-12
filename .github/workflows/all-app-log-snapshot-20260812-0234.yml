@@ -1,0 +1,112 @@
+name: All app log snapshot 20260812 0234
+
+on:
+  push:
+    branches:
+      - ops/all-app-log-snapshot-20260812-0234
+    paths:
+      - ".github/workflows/all-app-log-snapshot-20260812-0234.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_ORG: mtman-new
+      EXCLUDED_APPS: aetherra,mika-bot
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ops/all-app-log-snapshot-20260812-0234
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Install redactor dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Capture full buffered logs and status
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p snapshot
+          flyctl apps list -q -o "$FLY_ORG" --access-token "$FLY_API_TOKEN" \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | sed '/^[[:space:]]*$/d' \
+            | EXCLUDED_APPS="$EXCLUDED_APPS" awk '
+                BEGIN { n=split(ENVIRON["EXCLUDED_APPS"], a, ","); for(i=1;i<=n;i++) x[a[i]]=1 }
+                !x[$0]
+              ' | sort -u > snapshot/apps.txt
+
+          redact_file() {
+            local file="$1"
+            SNAPSHOT_FILE="$file" node --import tsx -e '
+              import fs from "node:fs";
+              import { redactSensitiveText } from "./src/redaction.ts";
+              const p = process.env.SNAPSHOT_FILE;
+              const raw = fs.readFileSync(p, "utf8");
+              fs.writeFileSync(p, redactSensitiveText(raw).slice(-1000000), "utf8");
+            '
+          }
+
+          echo "captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee snapshot/meta.txt
+          echo "app_count=$(wc -l < snapshot/apps.txt | tr -d ' ')" | tee -a snapshot/meta.txt
+          echo "excluded=$EXCLUDED_APPS" | tee -a snapshot/meta.txt
+
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe=$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')
+            flyctl status -a "$app" --json --access-token "$FLY_API_TOKEN" > "snapshot/${safe}-status.json" 2>&1 || true
+            flyctl machine list -a "$app" --json --access-token "$FLY_API_TOKEN" > "snapshot/${safe}-machines.json" 2>&1 || true
+            flyctl logs -a "$app" --json --no-tail --access-token "$FLY_API_TOKEN" > "snapshot/${safe}-logs.jsonl" 2>&1 || true
+            redact_file "snapshot/${safe}-status.json"
+            redact_file "snapshot/${safe}-machines.json"
+            redact_file "snapshot/${safe}-logs.jsonl"
+          done < snapshot/apps.txt
+
+      - name: Summarize errors and machine state
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== CURRENT FLY APP REVIEW ==="
+          cat snapshot/meta.txt
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe=$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')
+            logs="snapshot/${safe}-logs.jsonl"
+            machines="snapshot/${safe}-machines.json"
+            echo
+            echo "===== APP: $app ====="
+            echo "-- machines --"
+            jq -c '[.[]? | {id,name,state,region,host_status,updated_at,process_group:(.config.env.FLY_PROCESS_GROUP // .config.metadata.fly_process_group // null),restart_count:(.restart_count // null),last_event:(.events[0] // null)}]' "$machines" 2>/dev/null || head -c 4000 "$machines" || true
+            echo
+            echo "-- error/warn-like messages from full buffered log --"
+            if [ -s "$logs" ]; then
+              jq -r 'try (.message // .msg // .MESSAGE // .log // empty) catch empty' "$logs" 2>/dev/null \
+                | grep -Eai 'error|warn|fail|fatal|exception|timeout|timed out|unhandled|uncaught|crash|denied|unauthor|forbidden|not configured|undefined|ECONN|ENOTFOUND|EAI_AGAIN|429|500|502|503|504' \
+                | tail -n 160 || true
+            fi
+            echo "-- last 25 log messages --"
+            jq -r 'try (.message // .msg // .MESSAGE // .log // empty) catch empty' "$logs" 2>/dev/null | tail -n 25 || tail -n 25 "$logs" || true
+          done < snapshot/apps.txt
+      - name: Upload full redacted snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-app-log-snapshot-20260812-0234
+          path: snapshot/
+          retention-days: 1
+          if-no-files-found: error
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          rm -f .github/workflows/all-app-log-snapshot-20260812-0234.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/all-app-log-snapshot-20260812-0234.yml
+          git commit -m "Remove temporary all-app log snapshot" || exit 0
+          git push origin HEAD:ops/all-app-log-snapshot-20260812-0234
