@@ -19,7 +19,7 @@ describe("MCP control server", () => {
     expect(isSpmtAdmin({ id: "1", role: "member" })).toBe(false);
   });
 
-  it("exposes coding, Fly observability, and allowlisted worker tools without shell or secret access", () => {
+  it("exposes coding, Fly observability, bounded Quackverse volume reads, and allowlisted worker tools without generic shell or secret access", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
@@ -31,6 +31,8 @@ describe("MCP control server", () => {
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
+      "get_quackverse_art_inventory",
+      "read_quackverse_art_asset",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
       "provision_spmt_llm_worker",
@@ -47,6 +49,8 @@ describe("MCP control server", () => {
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
+      "get_quackverse_art_inventory",
+      "read_quackverse_art_asset",
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
     ]);
@@ -54,6 +58,15 @@ describe("MCP control server", () => {
       limit: { type: "integer", minimum: 1, maximum: 500 },
       durationMs: { type: "integer", minimum: 500, maximum: 10000 },
       errorsOnly: { type: "boolean" },
+    });
+    expect(tools.find((tool) => tool.name === "get_quackverse_art_inventory")?.inputSchema).toEqual({
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    });
+    expect(tools.find((tool) => tool.name === "read_quackverse_art_asset")?.inputSchema).toMatchObject({
+      required: ["fileName"],
+      additionalProperties: false,
     });
   });
 });
