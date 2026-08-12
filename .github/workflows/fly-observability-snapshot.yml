@@ -38,7 +38,10 @@ jobs:
           fi
 
           mkdir -p snapshot
-          flyctl apps list -q -o "$FLY_ORG" --access-token "$FLY_API_TOKEN" | sed '/^[[:space:]]*$/d' | sort -u > snapshot/apps.txt
+          flyctl apps list -q -o "$FLY_ORG" --access-token "$FLY_API_TOKEN" \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | sed '/^[[:space:]]*$/d' \
+            | sort -u > snapshot/apps.txt
           app_count=$(wc -l < snapshot/apps.txt | tr -d ' ')
           echo "=== FLY OBSERVABILITY SNAPSHOT ==="
           echo "organization=$FLY_ORG"
