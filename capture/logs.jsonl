@@ -1,0 +1,3100 @@
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly. Services exposed on ports [80, 443] will have intermittent failures until the health check passes.",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:41.528146Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "spmt.live database initialized",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:44.671880801Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "spmt.live running on http://localhost:3000",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:44.679381823Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 is now passing.",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:45.160036Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "812e6dc97424e8",
+    "message": "Successfully prepared image registry.fly.io/spmt-live@sha256:f00d303166dc47c5d45af30c99a817caaf7fb89ba144f5f297d0ef8adf164f4e (15.801341145s)",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:45.436379954Z",
+    "meta": {
+        "Instance": "812e6dc97424e8",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "812e6dc97424e8",
+    "message": "Configuring firecracker",
+    "region": "lax",
+    "timestamp": "2026-08-12T05:33:46.478272927Z",
+    "meta": {
+        "Instance": "812e6dc97424e8",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly. Services exposed on ports [80, 443] will have intermittent failures until the health check passes.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:15:50.903825Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 is now passing.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:20.480607Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Pulling container image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:45.118497026Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "812e6dc97424e8",
+    "message": "Pulling container image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:45.273673491Z",
+    "meta": {
+        "Instance": "812e6dc97424e8",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Pulling container image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:45.569273605Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM08] machine is in a non-startable state: replacing",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:49.306397Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machine is in a non-startable state: replacing"
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM08] machine is in a non-startable state: replacing",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:49.454458Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machine is in a non-startable state: replacing"
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM08] machine is in a non-startable state: replacing",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:49.809401Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machine is in a non-startable state: replacing"
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Successfully prepared image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2 (5.466776082s)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.586091978Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Setting up volume 'spmt_data'",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.70108228Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Opening encrypted volume",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.70108647Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM08] machine is in a non-startable state: replacing",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.867965Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machine is in a non-startable state: replacing"
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Successfully prepared image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2 (5.396140209s)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.966124331Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "812e6dc97424e8",
+    "message": "Successfully prepared image registry.fly.io/spmt-live@sha256:35d4e29cbc4e31a25c6243ae33beacfbd2a2b2feb18501517f17af7d20ad0cb2 (5.699879308s)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:50.974436541Z",
+    "meta": {
+        "Instance": "812e6dc97424e8",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Configuring firecracker",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:51.657380036Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Sending signal SIGINT to main child process w/ PID 651",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:51.667324867Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "812e6dc97424e8",
+    "message": "Configuring firecracker",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:51.798115127Z",
+    "meta": {
+        "Instance": "812e6dc97424e8",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Configuring firecracker",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:51.877284204Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Sending signal SIGINT to main child process w/ PID 652",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:51.895211047Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Main child exited normally with code: 0",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.204024846Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting clean up.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.22107201Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[ 2609.989642] reboot: Restarting system",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.223266939Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Main child exited with signal (with signal 'SIGINT', core dumped? false)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.33536015Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Starting clean up.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.354976227Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Umounting /dev/vdc from /data",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.356994872Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "[ 2592.285852] reboot: Restarting system",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.425731775Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM08] machine is in a non-startable state: replacing",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:52.951258Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machine is in a non-startable state: replacing"
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Starting machine",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.263789Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM01] machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\"",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.265572Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:16:53.280344435 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Running Firecracker v1.14.4",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.280391253Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:16:53.280508473 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Listening on API socket (\"/fc.sock\").",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.28051819Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "2026-08-12T06:16:53.514478595 [01KZT9VE5NWHXQNBJAZ3RZEJHQ:main] Running Firecracker v1.14.4",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.514538415Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "2026-08-12T06:16:53.514678257 [01KZT9VE5NWHXQNBJAZ3RZEJHQ:main] Listening on API socket (\"/fc.sock\").",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.514705767Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting init (commit: a3f1cf3)...",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:53.906325536Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Preparing to run: `docker-entrypoint.sh node xbox-worker.cjs` as root",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.000264616Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m [fly api proxy] listening at /.fly/api",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.003985519Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Machine created and started in 8.493s",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.138966625Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026/08/12 06:16:54 INFO SSH listening listen_address=[fdaa:55:aa13:a7b:73d:f24:1d0f:2]:22",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.268938742Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Starting init (commit: a3f1cf3)...",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.39806962Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Checking filesystem on /data",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.505563752Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "/dev/vdc: clean, 510/64512 files, 242191/258048 blocks",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.509398428Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Mounting /dev/vdc at /data w/ uid: 0, gid: 0 and chmod 0755",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.51120608Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Resized /data to 1056964608 bytes",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.516176791Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m Preparing to run: `docker-entrypoint.sh node start.cjs` as root",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.527711151Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "\u001b[32m INFO\u001b[0m [fly api proxy] listening at /.fly/api",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.542401378Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Starting machine",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.619089Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM01] machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\"",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.621031Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Starting machine",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.654408Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "[PM01] machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\"",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.656728Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "proxy"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": "machines API returned an error: \"machine ID 48ee053be53478 lease currently held by 9e1ad1c3-9c0c-5d2b-a03f-8dc4bae8d365@tokens.fly.io, expires at 2026-08-12T06:17:04Z\""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Machine created and started in 9.46s",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.676133799Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "error",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 has failed. Your app is not responding properly. Services exposed on ports [80, 443] will have intermittent failures until the health check passes.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.879093Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "2026/08/12 06:16:54 INFO SSH listening listen_address=[fdaa:55:aa13:a7b:58:ad38:9dae:2]:22",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:54.94535044Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[XboxWorker] listening on [::]:3003; maxSessions=1; profileRoot=/var/lib/spmt-xbox/profiles",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:57.220191637Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "spmt.live database initialized",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:58.177259385Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "spmt.live running on http://localhost:3000",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:58.187386957Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "48ee053be53478",
+    "message": "Health check 'servicecheck-00-http-3000' on port 3000 is now passing.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:16:58.507511Z",
+    "meta": {
+        "Instance": "48ee053be53478",
+        "Region": "lax",
+        "Event": {
+            "Provider": "health"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "/app/xbox-worker.cjs:140",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.977842992Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "        reject(new Error(`${method} timed out`));",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.97785392Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "               ^",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.97785501Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Error: Runtime.evaluate timed out",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.977855895Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at Timeout._onTimeout (/app/xbox-worker.cjs:140:16)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.977856253Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at listOnTimeout (node:internal/timers:581:17)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.977856648Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at process.processTimers (node:internal/timers:519:7)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.97785715Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Node.js v20.20.2",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:07.977857552Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Main child exited normally with code: 1",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:08.578922734Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting clean up.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:08.601098702Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[  435.271663] reboot: Restarting system",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:08.63304131Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:24:12.365338909 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Running Firecracker v1.14.4",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:12.365392715Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:24:12.365476377 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Listening on API socket (\"/fc.sock\").",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:12.36549763Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting init (commit: a3f1cf3)...",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:12.983164383Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Preparing to run: `docker-entrypoint.sh node xbox-worker.cjs` as root",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:13.087841122Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m [fly api proxy] listening at /.fly/api",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:13.090960171Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Machine started in 1.38s",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:13.298884445Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026/08/12 06:24:13 INFO SSH listening listen_address=[fdaa:55:aa13:a7b:73d:f24:1d0f:2]:22",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:13.306379242Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[XboxWorker] listening on [::]:3003; maxSessions=1; profileRoot=/var/lib/spmt-xbox/profiles",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:24:16.377672062Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "/app/xbox-worker.cjs:140",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257427519Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "        reject(new Error(`${method} timed out`));",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257434933Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "               ^",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257436288Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Error: Runtime.evaluate timed out",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257437825Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at Timeout._onTimeout (/app/xbox-worker.cjs:140:16)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257438187Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at listOnTimeout (node:internal/timers:581:17)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.25743885Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "    at process.processTimers (node:internal/timers:519:7)",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257439261Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Node.js v20.20.2",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:54.257439679Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Main child exited normally with code: 1",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:55.231764171Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting clean up.",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:55.253973166Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[  102.969854] reboot: Restarting system",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:55.411209058Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:25:56.454774231 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Running Firecracker v1.14.4",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:56.454833191Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026-08-12T06:25:56.454952969 [01KZT9VEGDGX6SYK9JAH4MHBGR:main] Listening on API socket (\"/fc.sock\").",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:56.45496833Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Starting init (commit: a3f1cf3)...",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:57.077837866Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m Preparing to run: `docker-entrypoint.sh node xbox-worker.cjs` as root",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:57.197217597Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "\u001b[32m INFO\u001b[0m [fly api proxy] listening at /.fly/api",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:57.200209718Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "2026/08/12 06:25:57 INFO SSH listening listen_address=[fdaa:55:aa13:a7b:73d:f24:1d0f:2]:22",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:57.495240376Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "Machine started in 1.252s",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:25:57.641412693Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "runner"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
+{
+    "level": "info",
+    "instance": "e826d01a5e5068",
+    "message": "[XboxWorker] listening on [::]:3003; maxSessions=1; profileRoot=/var/lib/spmt-xbox/profiles",
+    "region": "lax",
+    "timestamp": "2026-08-12T06:26:00.431508507Z",
+    "meta": {
+        "Instance": "e826d01a5e5068",
+        "Region": "lax",
+        "Event": {
+            "Provider": "app"
+        },
+        "HTTP": {
+            "Request": {
+                "ID": "",
+                "Method": "",
+                "Version": ""
+            },
+            "Response": {
+                "status_code": 0
+            }
+        },
+        "Error": {
+            "Code": 0,
+            "Message": ""
+        },
+        "URL": {
+            "Full": ""
+        }
+    }
+}
