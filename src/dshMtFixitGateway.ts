@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleAthenaChatRequest } from "./athenaChat.js";
 import { handleAthenaRepairUiRequest } from "./athenaRepairUi.js";
@@ -7,22 +6,13 @@ import { handleMcpControlRequest } from "./mcpControlServer.js";
 import { handleLlmControlUiRequest } from "./llmControlUi.js";
 import { handleRotatorHomeUiRequest } from "./rotatorHomeUi.js";
 import { handleStreamWeaverAdminUiRequest } from "./streamweaverAdminUi.js";
-import { handleRotatorSpmtAuthRequest } from "./spmtAuth.js";
+import { handleRotatorSpmtAuthRequest, requireSpmtService } from "./spmtAuth.js";
 import { auditOwnerMutation, authorizeOwnerMutation, isOwnerMutationPath } from "./dashboardSecurity.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 
-function secretMatches(expected: string, supplied: string): boolean {
-  if (!expected || !supplied) return false;
-  const expectedHash = createHash("sha256").update(expected).digest();
-  const suppliedHash = createHash("sha256").update(supplied).digest();
-  return timingSafeEqual(expectedHash, suppliedHash);
-}
-
-export function isDshMtFixItAuthorized(request: Pick<IncomingMessage, "headers">, env: NodeJS.ProcessEnv): boolean {
-  const expected = String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
-  const supplied = String(request.headers["x-dsh-mtfixit-key"] || "").trim();
-  return secretMatches(expected, supplied);
+export async function isDshMtFixItAuthorized(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<boolean> {
+  return Boolean(await requireSpmtService(request, env, { clientId: 'discord-stream-hub', scope: 'athena:write' }));
 }
 
 export function mapDshMtFixItWorkerPath(method: string, pathname: string, search = ""): string | null {
@@ -57,7 +47,7 @@ async function proxyToCodexWorker(incoming: IncomingMessage, outgoing: ServerRes
   const workerSecret = String(env.CODEX_WORKER_SECRET || "").trim();
   if (!workerSecret) { sendJson(outgoing, 503, { error: "CODEX_WORKER_SECRET is not configured" }); return; }
   const headers: IncomingHttpHeaders = { ...incoming.headers, host: `127.0.0.1:${dashboardPort}`, "x-codex-worker-secret": workerSecret };
-  delete headers["x-dsh-mtfixit-key"]; delete headers.connection;
+  delete headers["x-dsh-mtfixit-key"]; delete headers.authorization; delete headers.connection;
   await proxyRequest(incoming, outgoing, dashboardPort, workerPath, headers);
 }
 
@@ -72,7 +62,7 @@ export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, r
   if (!url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
   const workerPath = mapDshMtFixItWorkerPath(request.method || "GET", url.pathname, url.search);
   if (!workerPath) { sendJson(response, 404, { error: "Unknown DSH mtfixit operation" }); return true; }
-  if (!isDshMtFixItAuthorized(request, env)) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
+  if (!(await isDshMtFixItAuthorized(request, env))) { sendJson(response, 401, { error: "SPMT service authorization required" }); return true; }
   await proxyToCodexWorker(request, response, env, dashboardPort, workerPath);
   return true;
 }

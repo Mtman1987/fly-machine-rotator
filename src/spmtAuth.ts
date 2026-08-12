@@ -198,3 +198,32 @@ export async function requireSpmtAdmin(request: IncomingMessage, env: NodeJS.Pro
   const identity = await requireSpmtIdentity(request, env);
   return identity && isSpmtAdmin(identity) ? identity : null;
 }
+
+export type SpmtServiceIdentity = {
+  client_id: string;
+  token_use: 'client_credentials';
+  scopes: string[];
+};
+
+export async function requireSpmtService(
+  request: IncomingMessage,
+  env: NodeJS.ProcessEnv,
+  options: { clientId?: string; scope?: string } = {},
+): Promise<SpmtServiceIdentity | null> {
+  const token = readSpmtAccessToken(request);
+  if (!token) return null;
+  const baseUrl = String(env.SPMT_BASE_URL || 'https://spmt.live').replace(/\/$/, '');
+  const response = await fetch(`${baseUrl}/api/oauth/serviceinfo`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!response?.ok) return null;
+  const payload = await response.json().catch(() => null) as any;
+  const clientId = String(payload?.client_id || '').trim();
+  const tokenUse = String(payload?.token_use || '').trim();
+  const scopes = Array.isArray(payload?.scopes) ? payload.scopes.map(String) : [];
+  if (!clientId || tokenUse !== 'client_credentials') return null;
+  if (options.clientId && clientId !== options.clientId) return null;
+  if (options.scope && !scopes.includes(options.scope)) return null;
+  return { client_id: clientId, token_use: 'client_credentials', scopes };
+}
