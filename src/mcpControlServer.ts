@@ -5,6 +5,7 @@ import {
   provisionSpmtEmbeddingWorker,
   provisionSpmtLlmWorker,
 } from "./flyLlmProvisioner.js";
+import { getFlyObservabilitySnapshot, getManagedFlyAppStates, sampleManagedFlyLogs } from "./flyObservability.js";
 import { isSpmtAdmin, requireSpmtIdentity, type SpmtIdentity } from "./spmtAuth.js";
 
 const MCP_PATH = "/mcp";
@@ -80,29 +81,42 @@ async function callInternalCodex(
       });
     });
     request.on("error", reject);
-    request.setTimeout(30_000, () => request.destroy(new Error("Internal Codex request timed out")));
+    request.setTimeout(30_000, () => request.destroy(new Error("Internal coding request timed out")));
     if (serialized) request.write(serialized);
     request.end();
   });
 }
 
+const readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
 export function listMcpTools() {
   return [
-    { name: "list_code_references", title: "List authorized code repositories", description: "List repositories Athena Coder can inspect.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    { name: "list_coding_jobs", title: "List Athena coding jobs", description: "List recent Athena Coder jobs and their validation state.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    { name: "create_coding_job", title: "Create isolated Athena coding job", description: "Create an isolated coding job. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, description: { type: "string", minLength: 1, maxLength: 4000 }, context: { type: "object", additionalProperties: true } }, required: ["appName", "description"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-    { name: "get_coding_job", title: "Read Athena coding job", description: "Read an Athena coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    { name: "get_coding_job_artifact", title: "Read Athena coding artifact", description: "Read the exact diff, raw validation checks, or Athena response for a coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" }, artifact: { type: "string", enum: ["diff", "checks", "response"] } }, required: ["jobId", "artifact"], additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    { name: "publish_coding_job", title: "Publish validated Athena repair", description: "Create a draft pull request for a completed coding job with changes and passing checks. Requires SPMT admin or owner; never merges or deploys.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
-    { name: "get_spmt_llm_worker_status", title: "Read SPMT LLM worker status", description: "Read sanitized Fly status for the SPMT LLM worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    { name: "get_spmt_embedding_worker_status", title: "Read SPMT embeddings worker status", description: "Read sanitized Fly status and the private base URL for the embeddings worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+    { name: "list_code_references", title: "List authorized code repositories", description: "List repositories the Rotator coder can inspect.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "list_coding_jobs", title: "List coding jobs", description: "List recent isolated coding jobs and their validation state.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "create_coding_job", title: "Create isolated coding job", description: "Create an isolated coding job. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, description: { type: "string", minLength: 1, maxLength: 4000 }, context: { type: "object", additionalProperties: true } }, required: ["appName", "description"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+    { name: "get_coding_job", title: "Read coding job", description: "Read a coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "get_coding_job_artifact", title: "Read coding artifact", description: "Read the exact diff, raw validation checks, or model response for a coding job.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" }, artifact: { type: "string", enum: ["diff", "checks", "response"] } }, required: ["jobId", "artifact"], additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "publish_coding_job", title: "Publish validated repair", description: "Create a draft pull request for a completed coding job with changes and passing checks. Requires SPMT admin or owner; never merges or deploys.", inputSchema: { type: "object", properties: { jobId: { type: "string", pattern: "^[a-zA-Z0-9_-]{8,100}$" } }, required: ["jobId"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
+    { name: "list_fly_app_states", title: "List managed Fly app states", description: "Read sanitized Machine state and health checks for every configured Fly app, or one allowlisted app. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 } }, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "sample_fly_logs", title: "Sample managed Fly logs", description: "Sample the live Fly NATS log stream for all configured apps or one allowlisted app. Messages are redacted and bounded. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, limit: { type: "integer", minimum: 1, maximum: 500 }, durationMs: { type: "integer", minimum: 500, maximum: 10000 }, errorsOnly: { type: "boolean" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "get_fly_observability_snapshot", title: "Get Fly state and log snapshot", description: "Return sanitized Machine states plus a short live log sample for all configured apps or one allowlisted app. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, limit: { type: "integer", minimum: 1, maximum: 500 }, durationMs: { type: "integer", minimum: 500, maximum: 10000 }, errorsOnly: { type: "boolean" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "get_spmt_llm_worker_status", title: "Read SPMT LLM worker status", description: "Read sanitized Fly status for the SPMT LLM worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "get_spmt_embedding_worker_status", title: "Read SPMT embeddings worker status", description: "Read sanitized Fly status and the private base URL for the embeddings worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "provision_spmt_llm_worker", title: "Provision dedicated SPMT LLM worker", description: "Provision the allowlisted SPMT LLM worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
     { name: "provision_spmt_embedding_worker", title: "Provision SPMT embeddings worker", description: "Provision the separate CPU embeddings worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" }, modelRepo: { type: "string", minLength: 1, maxLength: 200 }, modelAlias: { type: "string", minLength: 1, maxLength: 120 }, volumeName: { type: "string", pattern: "^[a-zA-Z0-9_]{3,64}$" }, volumeGb: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   ];
 }
 
 function toolRequiresAdmin(name: string): boolean {
-  return name === "create_coding_job" || name === "publish_coding_job" || name === "provision_spmt_llm_worker" || name === "provision_spmt_embedding_worker";
+  return new Set([
+    "create_coding_job",
+    "publish_coding_job",
+    "list_fly_app_states",
+    "sample_fly_logs",
+    "get_fly_observability_snapshot",
+    "provision_spmt_llm_worker",
+    "provision_spmt_embedding_worker",
+  ]).has(name);
 }
 
 function codingJobId(args: Record<string, unknown>): string | null {
@@ -137,6 +151,12 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
     if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
     return await callInternalCodex(env, dashboardPort, "POST", `/api/codex/jobs/${encodeURIComponent(jobId)}/publish`, {});
   }
+  if (name === "list_fly_app_states") {
+    const appName = String(args.appName || "").trim() || undefined;
+    return { status: 200, payload: await getManagedFlyAppStates(env, appName) };
+  }
+  if (name === "sample_fly_logs") return { status: 200, payload: await sampleManagedFlyLogs(args, env) };
+  if (name === "get_fly_observability_snapshot") return { status: 200, payload: await getFlyObservabilitySnapshot(args, env) };
   if (name === "get_spmt_llm_worker_status") return { status: 200, payload: await getSpmtLlmWorkerStatus(args, env) };
   if (name === "get_spmt_embedding_worker_status") return { status: 200, payload: await getSpmtEmbeddingWorkerStatus(args, env) };
   if (name === "provision_spmt_llm_worker") return { status: 200, payload: await provisionSpmtLlmWorker(args, env) };
@@ -167,7 +187,7 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
   }
 
   if (rpc.method === "initialize") {
-    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.5.0", description: "SPMT-authorized Athena Coder, chat-worker, and embeddings-worker control bridge" } }));
+    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.6.0", description: "SPMT-authorized coding, Fly observability, chat-worker, and embeddings-worker control bridge" } }));
     return true;
   }
   if (rpc.method === "notifications/initialized") {
