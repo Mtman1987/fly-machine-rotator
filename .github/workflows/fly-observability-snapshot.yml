@@ -1,0 +1,91 @@
+name: Fly Observability Snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/fly-observability-snapshot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: Capture Fly states and buffered logs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_ORG: mtman-new
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Install dependencies for existing redactor
+        run: npm ci --no-audit --no-fund
+      - name: Capture sanitized snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "FLY_API_TOKEN is not set"
+            exit 1
+          fi
+
+          mkdir -p snapshot
+          flyctl apps list -q -o "$FLY_ORG" --access-token "$FLY_API_TOKEN" | sed '/^[[:space:]]*$/d' | sort -u > snapshot/apps.txt
+          app_count=$(wc -l < snapshot/apps.txt | tr -d ' ')
+          echo "=== FLY OBSERVABILITY SNAPSHOT ==="
+          echo "organization=$FLY_ORG"
+          echo "captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "app_count=$app_count"
+
+          redact_file() {
+            local file="$1"
+            SNAPSHOT_FILE="$file" node --import tsx -e '
+              import fs from "node:fs";
+              import { redactSensitiveText } from "./src/redaction.ts";
+              const path = process.env.SNAPSHOT_FILE;
+              if (!path) process.exit(2);
+              const raw = fs.readFileSync(path, "utf8");
+              fs.writeFileSync(path, redactSensitiveText(raw).slice(-250000), "utf8");
+            '
+          }
+
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe=$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')
+            status_file="snapshot/${safe}-status.json"
+            logs_file="snapshot/${safe}-logs.jsonl"
+
+            if ! flyctl status -a "$app" --json --access-token "$FLY_API_TOKEN" > "$status_file" 2>&1; then
+              printf '{"app":"%s","status_error":true}\n' "$app" >> "$status_file"
+            fi
+            if ! flyctl logs -a "$app" --json --no-tail --access-token "$FLY_API_TOKEN" > "$logs_file" 2>&1; then
+              printf '{"app":"%s","logs_error":true}\n' "$app" >> "$logs_file"
+            fi
+
+            redact_file "$status_file"
+            redact_file "$logs_file"
+
+            echo
+            echo "===== APP: $app ====="
+            echo "--- STATUS JSON ---"
+            cat "$status_file"
+            echo
+            echo "--- BUFFERED LOGS (last 40 lines) ---"
+            tail -n 40 "$logs_file"
+          done < snapshot/apps.txt
+
+      - name: Upload sanitized snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-observability-snapshot
+          path: snapshot/
+          retention-days: 1
+          if-no-files-found: error
