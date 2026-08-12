@@ -6,6 +6,7 @@ import {
   provisionSpmtLlmWorker,
 } from "./flyLlmProvisioner.js";
 import { getFlyObservabilitySnapshot, getManagedFlyAppStates, sampleManagedFlyLogs } from "./flyObservability.js";
+import { getQuackverseArtInventory, readQuackverseArtAsset } from "./quackverseFlyArt.js";
 import { isSpmtAdmin, requireSpmtIdentity, type SpmtIdentity } from "./spmtAuth.js";
 
 const MCP_PATH = "/mcp";
@@ -100,6 +101,8 @@ export function listMcpTools() {
     { name: "list_fly_app_states", title: "List managed Fly app states", description: "Read sanitized Machine state and health checks for every configured Fly app, or one allowlisted app. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 } }, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "sample_fly_logs", title: "Sample managed Fly logs", description: "Sample the live Fly NATS log stream for all configured apps or one allowlisted app. Messages are redacted and bounded. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, limit: { type: "integer", minimum: 1, maximum: 500 }, durationMs: { type: "integer", minimum: 500, maximum: 10000 }, errorsOnly: { type: "boolean" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "get_fly_observability_snapshot", title: "Get Fly state and log snapshot", description: "Return sanitized Machine states plus a short live log sample for all configured apps or one allowlisted app. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, limit: { type: "integer", minimum: 1, maximum: 500 }, durationMs: { type: "integer", minimum: 500, maximum: 10000 }, errorsOnly: { type: "boolean" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "get_quackverse_art_inventory", title: "Inventory Quackverse Fly volume art", description: "Read image metadata and hashes from the hard-allowlisted ChatTag /data/quackverse-card-art volume. Requires SPMT admin or owner; no arbitrary app, path, or shell input is accepted.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnlyAnnotations },
+    { name: "read_quackverse_art_asset", title: "Read one Quackverse Fly volume asset", description: "Read one allowlisted image from the hard-allowlisted ChatTag /data/quackverse-card-art volume as base64. Requires SPMT admin or owner; paths are traversal-checked and image-only.", inputSchema: { type: "object", properties: { fileName: { type: "string", minLength: 1, maxLength: 240, pattern: "^[A-Za-z0-9._/-]+$" } }, required: ["fileName"], additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "get_spmt_llm_worker_status", title: "Read SPMT LLM worker status", description: "Read sanitized Fly status for the SPMT LLM worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "get_spmt_embedding_worker_status", title: "Read SPMT embeddings worker status", description: "Read sanitized Fly status and the private base URL for the embeddings worker.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" } }, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "provision_spmt_llm_worker", title: "Provision dedicated SPMT LLM worker", description: "Provision the allowlisted SPMT LLM worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
@@ -114,6 +117,8 @@ function toolRequiresAdmin(name: string): boolean {
     "list_fly_app_states",
     "sample_fly_logs",
     "get_fly_observability_snapshot",
+    "get_quackverse_art_inventory",
+    "read_quackverse_art_asset",
     "provision_spmt_llm_worker",
     "provision_spmt_embedding_worker",
   ]).has(name);
@@ -136,8 +141,7 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
   }
   if (name === "get_coding_job") {
     const jobId = codingJobId(args);
-    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" } };
-    return await callInternalCodex(env, dashboardPort, "GET", `/api/codex/jobs/${encodeURIComponent(jobId)}`);
+    if (!jobId) return { status: 400, payload: { error: "Invalid jobId" };
   }
   if (name === "get_coding_job_artifact") {
     const jobId = codingJobId(args);
@@ -157,6 +161,8 @@ async function executeTool(name: string, args: Record<string, unknown>, identity
   }
   if (name === "sample_fly_logs") return { status: 200, payload: await sampleManagedFlyLogs(args, env) };
   if (name === "get_fly_observability_snapshot") return { status: 200, payload: await getFlyObservabilitySnapshot(args, env) };
+  if (name === "get_quackverse_art_inventory") return { status: 200, payload: await getQuackverseArtInventory(env) };
+  if (name === "read_quackverse_art_asset") return { status: 200, payload: await readQuackverseArtAsset(args, env) };
   if (name === "get_spmt_llm_worker_status") return { status: 200, payload: await getSpmtLlmWorkerStatus(args, env) };
   if (name === "get_spmt_embedding_worker_status") return { status: 200, payload: await getSpmtEmbeddingWorkerStatus(args, env) };
   if (name === "provision_spmt_llm_worker") return { status: 200, payload: await provisionSpmtLlmWorker(args, env) };
@@ -187,7 +193,7 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
   }
 
   if (rpc.method === "initialize") {
-    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.6.0", description: "SPMT-authorized coding, Fly observability, chat-worker, and embeddings-worker control bridge" } }));
+    sendJson(response, 200, rpcResult(rpc.id, { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "spmt-rotator-control", version: "0.6.0", description: "SPMT-authorized coding, Fly observability, bounded Quackverse volume reads, chat-worker, and embeddings-worker control bridge" } }));
     return true;
   }
   if (rpc.method === "notifications/initialized") {
