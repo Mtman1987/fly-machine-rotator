@@ -87,6 +87,7 @@ export type QuackverseArtAsset = {
 
 type ExecResult = { stdout: string; stderr: string };
 export type FlyctlRunner = (args: string[], env: NodeJS.ProcessEnv) => Promise<ExecResult>;
+export type MachineResolver = (env: NodeJS.ProcessEnv) => Promise<string>;
 
 function defaultFlyctlRunner(args: string[], env: NodeJS.ProcessEnv): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
@@ -189,8 +190,9 @@ async function runReadOnlyScript(
 export async function getQuackverseArtInventory(
   env: NodeJS.ProcessEnv = process.env,
   runner: FlyctlRunner = defaultFlyctlRunner,
+  machineResolver: MachineResolver = activeChatTagMachine,
 ): Promise<QuackverseArtInventory> {
-  const machineId = await activeChatTagMachine(env);
+  const machineId = await machineResolver(env);
   const stdout = await runReadOnlyScript(machineId, INVENTORY_SCRIPT, [], env, runner);
   const payload = parseMarkedJson<{ root?: unknown; assets?: unknown }>(stdout);
   const assets = Array.isArray(payload.assets)
@@ -198,6 +200,7 @@ export async function getQuackverseArtInventory(
         if (!entry || typeof entry !== "object") return false;
         const candidate = entry as Record<string, unknown>;
         return typeof candidate.fileName === "string"
+          && typeof candidate.size === "number"
           && Number.isFinite(candidate.size)
           && typeof candidate.sha256 === "string"
           && typeof candidate.modifiedAt === "string";
@@ -216,9 +219,10 @@ export async function readQuackverseArtAsset(
   args: Record<string, unknown>,
   env: NodeJS.ProcessEnv = process.env,
   runner: FlyctlRunner = defaultFlyctlRunner,
+  machineResolver: MachineResolver = activeChatTagMachine,
 ): Promise<QuackverseArtAsset> {
   const fileName = safeAssetName(args.fileName);
-  const machineId = await activeChatTagMachine(env);
+  const machineId = await machineResolver(env);
   const stdout = await runReadOnlyScript(machineId, READ_SCRIPT, [fileName], env, runner);
   const payload = parseMarkedJson<Omit<QuackverseArtAsset, "appName" | "machineId">>(stdout);
   if (payload.fileName !== fileName || !Number.isFinite(payload.size) || payload.size < 0 || payload.size > MAX_ASSET_BYTES) {
