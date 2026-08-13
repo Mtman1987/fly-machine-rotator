@@ -39,10 +39,10 @@ export async function handleAthenaSettingsRequest(request: IncomingMessage, resp
   }
 
   if (request.method === "PATCH" && url.pathname === "/athena/api/settings/shared") {
-    const body = await readJson(request) as { revision?: number; profile?: unknown };
-    if (!Number.isInteger(body.revision) || !body.profile) return send(response, 400, { error: "revision and profile are required" });
-    const result = await patchShared(request, env, body.revision!, body.profile);
-    return send(response, result.status, result.payload);
+    return send(response, 410, {
+      error: "Shared workspace settings are edited only through the canonical SPMT surface.",
+      surface: "settings",
+    });
   }
 
   return send(response, 404, { error: "Not found" });
@@ -72,38 +72,54 @@ function normalizeLocal(value: any): LocalSettings {
 }
 function number(value: unknown, fallback: number, min: number, max: number) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
 
+function surfaceList(payload: any) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.surfaces)) return payload.surfaces;
+  return [];
+}
+
 async function fetchShared(request: IncomingMessage, env: NodeJS.ProcessEnv) {
   const token = readSpmtAccessToken(request); if (!token) throw new Error("SPMT access token missing");
   const base = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
   const headers = { authorization: `Bearer ${token}`, accept: "application/json" };
-  const [profileResponse, overlayResponse] = await Promise.all([
+  const [profileResponse, surfacesResponse, personalResponse, publicResponse] = await Promise.all([
     fetch(`${base}/api/workspace-profile`, { headers, signal: AbortSignal.timeout(12_000) }),
-    fetch(`${base}/api/overlay-workspace`, { headers, signal: AbortSignal.timeout(12_000) }),
+    fetch(`${base}/api/platform/surfaces`, { headers, signal: AbortSignal.timeout(12_000) }),
+    fetch(`${base}/api/personal-overlay-launch`, { headers, signal: AbortSignal.timeout(12_000) }),
+    fetch(`${base}/api/tenant-scene?output=public`, { headers, signal: AbortSignal.timeout(12_000) }),
   ]);
-  const [payload, overlayPayload] = await Promise.all([
+  const [payload, surfacesPayload, personalPayload, publicPayload] = await Promise.all([
     profileResponse.json().catch(() => ({})),
-    overlayResponse.json().catch(() => ({})),
+    surfacesResponse.json().catch(() => ({})),
+    personalResponse.json().catch(() => ({})),
+    publicResponse.json().catch(() => ({})),
   ]);
   if (!profileResponse.ok) throw new Error((payload as any)?.error || `SPMT shared settings load failed (${profileResponse.status})`);
+
+  const personalOverlayUrl = personalResponse.ok ? String((personalPayload as any)?.url || "") : "";
+  const publicOverlayUrl = publicResponse.ok ? String((publicPayload as any)?.urls?.public || "") : "";
+  const surfaces = surfacesResponse.ok ? surfaceList(surfacesPayload) : [];
+
   return {
     ok: true,
     ...(payload as object),
-    overlayWorkspace: overlayResponse.ok
-      ? ((overlayPayload as any)?.layout || (overlayPayload as any)?.overlayWorkspace || null)
-      : null,
+    canonical: {
+      origin: base,
+      surfaces,
+      outputs: {
+        public: publicOverlayUrl,
+        personal: personalOverlayUrl,
+      },
+    },
+    surfaces,
+    tenantOutputs: {
+      public: publicOverlayUrl,
+      personal: personalOverlayUrl,
+    },
+    personalOverlayUrl,
   };
 }
-async function patchShared(request: IncomingMessage, env: NodeJS.ProcessEnv, revision: number, profile: unknown) {
-  const token = readSpmtAccessToken(request); if (!token) return { status: 401, payload: { error: "SPMT access token missing" } };
-  const base = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
-  const upstream = await fetch(`${base}/api/workspace-profile`, {
-    method: "PATCH",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "if-match": `"workspace-${revision}"` },
-    body: JSON.stringify({ profile }), signal: AbortSignal.timeout(12_000),
-  });
-  const payload = await upstream.json().catch(() => ({}));
-  return { status: upstream.status, payload };
-}
+
 async function readJson(request: IncomingMessage) { const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk)); const raw = Buffer.concat(chunks).toString("utf8"); return raw ? JSON.parse(raw) : {}; }
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
 function send(response: ServerResponse, status: number, value: unknown): true { response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store", "x-content-type-options": "nosniff" }); response.end(JSON.stringify(value)); return true; }
