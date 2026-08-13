@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { spmtSharedUiHead, spmtSharedUiScript } from "../src/spmtSharedUi.js";
 
 describe("SPMT shared runtime shell", () => {
-  it("renders a persistent three-slot Worktray instead of embedded editor surfaces", () => {
+  it("renders a persistent three-slot Worktray and canonical shared-surface gate", () => {
     const head = spmtSharedUiHead("rotator-home");
     const script = spmtSharedUiScript("rotator-home");
 
@@ -11,19 +11,31 @@ describe("SPMT shared runtime shell", () => {
     expect(script).toContain("aria-label','SPMT workspace tray");
     expect(script).toContain("[1,2,3].map");
     expect(script).toContain("profile.dockSlots");
-    expect(script).toContain("/auth/spmt/login?next=");
-    expect(script).not.toContain("/embed/worktray");
-    expect(script).not.toContain("/embed/settings");
-    expect(script).not.toContain("/embed/overlays");
+    expect(script).toContain("surfaceUrl(state.activeId)");
+    expect(script).toContain("['Workspace','worktray']");
+    expect(script).toContain("['Overlay Bay','overlays']");
+    expect(script).toContain("['Settings','settings']");
+    expect(script).not.toContain("https://spacemountain.live");
+    expect(script).not.toContain("/?surface=workspace");
+    expect(script).not.toContain("/?surface=overlay");
   });
 
-  it("renders the saved SPMT overlay read-only with percentage coordinates", () => {
+  it("mounts one canonical Personal renderer instead of rebuilding overlay widgets", () => {
     const script = spmtSharedUiScript("athena");
 
-    expect(script).toContain("overlayWorkspace");
-    expect(script).toContain("f.style.left=Number(w.x||0)+'%'");
-    expect(script).toContain("f.style.top=Number(w.y||0)+'%'");
-    expect(script).toContain("w.interactive?'auto':'none'");
+    expect(script).toContain("personalOverlayUrl");
+    expect(script).toContain("data-canonical-personal-overlay");
+    expect(script).toContain("f.src=state.personalOverlayUrl");
+    expect(script).toContain("inset:0;width:100%;height:100%");
+    expect(script).not.toContain("overlayWorkspace");
+    expect(script).not.toContain("overlay.widgets");
+    expect(script).not.toContain("f.style.left=Number(w.x||0)+'%'");
+  });
+
+  it("suppresses the shared shell when the app is embedded by another suite host", () => {
+    const script = spmtSharedUiScript("athena");
+    expect(script).toContain("const EMBEDDED=window.self!==window.top");
+    expect(script).toContain("if(EMBEDDED)return");
   });
 
   it("uses scattered stars and SpaceMountain-compatible radii", () => {
@@ -46,12 +58,25 @@ describe("SPMT shared runtime shell", () => {
     expect(patchSource).toContain('var(--spmt-suite-bg-image)');
   });
 
-  it("loads both the canonical workspace profile and saved overlay layout", () => {
+  it("loads the canonical workspace profile, surface registry, and output URLs", () => {
     const settingsSource = readFileSync(new URL("../src/athenaSettings.ts", import.meta.url), "utf8");
 
     expect(settingsSource).toContain("/api/workspace-profile");
-    expect(settingsSource).toContain("/api/overlay-workspace");
-    expect(settingsSource).toContain("overlayWorkspace:");
+    expect(settingsSource).toContain("/api/platform/surfaces");
+    expect(settingsSource).toContain("/api/personal-overlay-launch");
+    expect(settingsSource).toContain("/api/tenant-scene?output=public");
+    expect(settingsSource).toContain("personalOverlayUrl");
+    expect(settingsSource).toContain("tenantOutputs");
+    expect(settingsSource).not.toContain("/api/overlay-workspace");
+  });
+
+  it("does not expose an alternate shared-settings write path", () => {
+    const settingsSource = readFileSync(new URL("../src/athenaSettings.ts", import.meta.url), "utf8");
+
+    expect(settingsSource).toContain('url.pathname === "/athena/api/settings/shared"');
+    expect(settingsSource).toContain("return send(response, 410");
+    expect(settingsSource).toContain("edited only through the canonical SPMT surface");
+    expect(settingsSource).not.toContain("async function patchShared");
   });
 
   it("allows the web-only Docker build to skip the optional MountainView mobile patch", () => {
