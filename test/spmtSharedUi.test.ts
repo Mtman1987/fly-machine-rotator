@@ -79,6 +79,17 @@ describe("SPMT shared runtime shell", () => {
     expect(settingsSource).not.toContain("async function patchShared");
   });
 
+  it("resolves MountainView mobile Worktray from the SPMT registry", () => {
+    const patchSource = readFileSync(new URL("../scripts/patch-ecosystem-workspace-parity.mjs", import.meta.url), "utf8");
+
+    expect(patchSource).toContain("/api/platform/surfaces");
+    expect(patchSource).toContain("/api/personal-overlay-launch");
+    expect(patchSource).toContain("surfaceUrls:");
+    expect(patchSource).toContain("workspace.canonical.surfaceUrls.worktray");
+    expect(patchSource).not.toContain("https://spmt.live/embed/worktray?mode=full&app=mountainview-mobile");
+    expect(patchSource).not.toContain("/api/overlay-workspace");
+  });
+
   it("allows the web-only Docker build to skip the optional MountainView mobile patch", () => {
     const patchSource = readFileSync(new URL("../scripts/patch-ecosystem-workspace-parity.mjs", import.meta.url), "utf8");
 
