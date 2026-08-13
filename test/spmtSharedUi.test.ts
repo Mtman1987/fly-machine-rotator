@@ -21,12 +21,13 @@ describe("SPMT shared runtime shell", () => {
   });
 
   it("mounts one canonical Personal renderer instead of rebuilding overlay widgets", () => {
+    const head = spmtSharedUiHead("athena");
     const script = spmtSharedUiScript("athena");
 
     expect(script).toContain("personalOverlayUrl");
     expect(script).toContain("data-canonical-personal-overlay");
     expect(script).toContain("f.src=state.personalOverlayUrl");
-    expect(script).toContain("inset:0;width:100%;height:100%");
+    expect(head).toContain(".spmt-runtime-overlay iframe{position:absolute;inset:0;width:100%;height:100%");
     expect(script).not.toContain("overlayWorkspace");
     expect(script).not.toContain("overlay.widgets");
     expect(script).not.toContain("f.style.left=Number(w.x||0)+'%'");
