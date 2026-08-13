@@ -1,0 +1,30 @@
+name: Footer regression fix
+on:
+  push:
+    branches: [fix/footer-regression]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/footer-regression
+      - run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/spmtSharedUi.ts')
+          s=p.read_text()
+          s=s.replace("  const EMBEDDED=window.self!==window.top;\n  if(EMBEDDED)return;", "  const EMBEDDED=window.self!==window.top;")
+          s=s.replace("function renderOverlay(){if(!overlayLayer)return;overlayLayer.innerHTML='';if(!state.connected||!state.personalVisible||!state.personalOverlayUrl)return;", "function renderOverlay(){if(!overlayLayer)return;overlayLayer.innerHTML='';if(EMBEDDED||!state.connected||!state.personalVisible||!state.personalOverlayUrl)return;")
+          if 'if(EMBEDDED)return;' in s:
+              raise SystemExit('broad iframe shell suppression still present')
+          p.write_text(s)
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/spmtSharedUi.ts
+          git commit -m "Restore workspace footer in framed app views"
+          git push
