@@ -33,10 +33,12 @@ describe("SPMT shared runtime shell", () => {
     expect(script).not.toContain("f.style.left=Number(w.x||0)+'%'");
   });
 
-  it("suppresses the shared shell when the app is embedded by another suite host", () => {
+  it("keeps the shared tray in framed app views while suppressing only the duplicate Personal renderer", () => {
     const script = spmtSharedUiScript("athena");
     expect(script).toContain("const EMBEDDED=window.self!==window.top");
-    expect(script).toContain("if(EMBEDDED)return");
+    expect(script).not.toContain("if(EMBEDDED)return");
+    expect(script).toContain("if(EMBEDDED||!state.connected||!state.personalVisible||!state.personalOverlayUrl)return");
+    expect(script).toContain("spmt-workspace-tray");
   });
 
   it("uses scattered stars and SpaceMountain-compatible radii", () => {
