@@ -2,13 +2,31 @@ name: Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/android-debug-apk.yml"
+      - "mobile/**"
+      - "src/mountainView.ts"
+      - "scripts/patch-ecosystem-workspace-parity.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/android-debug-apk.yml"
+      - "mobile/**"
+      - "src/mountainView.ts"
+      - "scripts/patch-ecosystem-workspace-parity.mjs"
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
   debug:
-    name: Build MountainView Android debug APK
+    name: Build SpaceMountain Companion Android debug APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,6 +44,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
+      - name: Apply current SPMT Companion parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -35,13 +55,14 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug
         working-directory: mobile/android
-      - name: Upload APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: mountainview-ai-debug-apk
+          name: spacemountain-companion-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
   release:
-    name: Build MountainView Android release APK
+    name: Build SpaceMountain Companion Android release APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -59,6 +80,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
+      - name: Apply current SPMT Companion parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -68,16 +91,24 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease
         working-directory: mobile/android
-      - name: Upload APK
+      - name: Stage public APK names
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/MountainView-Android.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: mountainview-ai-release-apk
-          path: mobile/android/app/build/outputs/apk/release/*.apk
+          name: spacemountain-companion-release-apk
+          path: mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
       - name: Publish latest APK release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mountainview-latest
-          name: MountainView AI Latest Android APK
-          body: Latest installable MountainView AI Android APK for development testing.
+          name: SpaceMountain Companion Latest Android APK
+          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, and tenant-scoped Personal HUD controls. Legacy MountainView APK filenames remain available for existing testers.
           prerelease: true
-          files: mobile/android/app/build/outputs/apk/release/app-release.apk
+          files: |
+            mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
+            mobile/android/app/build/outputs/apk/release/MountainView-Android.apk
+            mobile/android/app/build/outputs/apk/release/app-release.apk
