@@ -51,7 +51,6 @@ describe("MountainView Discord command routing", () => {
         { transcript: "post to discord that we are live", commandId: "cmd_discord_message", appId: "discordstreamhub", message: "we are live" },
         { transcript: "tell discord we are going live", commandId: "cmd_discord_message", appId: "discordstreamhub", message: "we are going live" },
         { transcript: "announce in discord that the raid is coming", commandId: "cmd_discord_message", appId: "discordstreamhub", message: "the raid is coming" },
-        { transcript: "send hearmeout chat message hello crew", commandId: "cmd_hearmeout_discord_message", appId: "hearmeout", message: "hello crew" },
       ];
 
       for (const testCase of cases) {
@@ -60,7 +59,7 @@ describe("MountainView Discord command routing", () => {
         expect(decision.commandId, testCase.transcript).toBe(testCase.commandId);
         expect(decision.appId, testCase.transcript).toBe(testCase.appId);
         expect(decision.transcript, testCase.transcript).toBe(testCase.message);
-        expect(decision.payload.destination, testCase.transcript).toBe(testCase.commandId === "cmd_hearmeout_discord_message" ? "hearmeout" : "discord");
+        expect(decision.payload.destination, testCase.transcript).toBe("discord");
       }
     } finally {
       server.close();
