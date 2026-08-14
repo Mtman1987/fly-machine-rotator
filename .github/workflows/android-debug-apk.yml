@@ -8,6 +8,7 @@ on:
       - "mobile/**"
       - "src/mountainView.ts"
       - "scripts/patch-ecosystem-workspace-parity.mjs"
+      - "scripts/patch-mountainview-command-parity.mjs"
   push:
     branches:
       - main
@@ -16,6 +17,7 @@ on:
       - "mobile/**"
       - "src/mountainView.ts"
       - "scripts/patch-ecosystem-workspace-parity.mjs"
+      - "scripts/patch-mountainview-command-parity.mjs"
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -44,8 +46,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
+      - name: Apply current SPMT Companion and command parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -80,8 +82,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs
+      - name: Apply current SPMT Companion and command parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -106,7 +108,7 @@ jobs:
         with:
           tag_name: mountainview-latest
           name: SpaceMountain Companion Latest Android APK
-          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, and tenant-scoped Personal HUD controls. Legacy MountainView APK filenames remain available for existing testers.
+          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, and paired-PC Companion command routing. Legacy MountainView APK filenames remain available for existing testers.
           prerelease: true
           files: |
             mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
