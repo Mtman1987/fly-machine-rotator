@@ -1,7 +1,16 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-async function patch(path, transform) {
-  const before = await readFile(path, 'utf8');
+async function patch(path, transform, optional = false) {
+  let before;
+  try {
+    before = await readFile(path, 'utf8');
+  } catch (error) {
+    if (optional && error?.code === 'ENOENT') {
+      console.log(`skipped optional ${path} command parity patch`);
+      return;
+    }
+    throw error;
+  }
   const after = transform(before);
   if (after === before) return;
   await writeFile(path, after);
@@ -270,5 +279,21 @@ await patch('mobile/App.tsx', (source) => {
       '                <Text style={styles.note}>While this listener is active in the foreground, both “Hey Athena” and “Hey {wakeName || "Athena"}” are accepted.</Text>',
     ]), 'wake name UI');
   }
+
+  const voicePreview = '        setPreviewFromResult("Athena visual result", routeData);';
+  if (source.includes(voicePreview) && !source.includes('HearMeOut room opened from song request')) {
+    source = insertAfter(source, voicePreview, block([
+      '        if (routeData.decision?.commandId === "cmd_hearmeout_song_request") {',
+      '          const roomUrl = routeData.result?.response?.externalResponse?.session?.roomUrl',
+      '            ?? routeData.result?.externalResponse?.session?.roomUrl',
+      '            ?? routeData.response?.externalResponse?.session?.roomUrl',
+      '            ?? "";',
+      '          if (typeof roomUrl === "string" && roomUrl.trim()) {',
+      '            openWebPreview("HearMeOut room", roomUrl);',
+      '            appendActivityLog("voice", "HearMeOut room opened from song request", "success", roomUrl);',
+      '          }',
+      '        }',
+    ]), 'HearMeOut room auto-open');
+  }
   return source;
-});
+}, true);
