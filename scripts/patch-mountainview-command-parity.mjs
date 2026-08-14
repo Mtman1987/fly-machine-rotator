@@ -148,9 +148,9 @@ await patch('src/mountainView.ts', (source) => {
     ].join('\n'), 'Companion routing profiles');
   }
 
-  const tagBranch = '    if (/\\b(chat[-\\s]?tag|battle\\s?arena|quackverse|booster\\s+pack|pack|currently\\s+it|who\'?s\\s+it|what\'?s\\s+my\\s+rank|rank|who is live|who\'?s live|partners?\\s+live|crew\\s+group|join chat tag|tag\\s+(?:player|game))\\b/.test(lower)) {';
-  if (source.includes(tagBranch) && !source.includes('Explicit PC Companion / OBS intents')) {
-    source = insertBefore(source, tagBranch, block([
+  const streamweaverBuiltinBranch = '    if (\n      /\\b(be right back|brb|back from break|stop brb|shout\\s*out|shoutout)\\b/.test(lower) ||';
+  if (source.includes(streamweaverBuiltinBranch) && !source.includes('Explicit PC Companion / OBS intents')) {
+    source = insertBefore(source, streamweaverBuiltinBranch, block([
       '    // Explicit PC Companion / OBS intents win before fuzzy catalog or AI routing.',
       '    const obsSceneMatch = transcript.match(/\\b(?:switch|change|set|go)(?:\\s+obs)?(?:\\s+scene)?(?:\\s+to)?\\s+(.+)$/i);',
       '    const commonObsScene = /\\b(brb|gameplay|starting soon|ending|intermission|just chatting)\\b/i.test(lower);',
