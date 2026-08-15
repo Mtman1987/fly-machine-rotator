@@ -19,9 +19,24 @@ describe("ecosystem snapshot v1", () => {
 
     expect(snapshot.schemaVersion).toBe(ECOSYSTEM_SCHEMA_VERSION);
     expect(snapshot.apps.streamweaver.lifecycle).toBe("available");
-    expect(snapshot.apps.streamweaver.services["streamweaver-new"].runtime?.status).toBe("stopped");
+    expect(snapshot.apps.streamweaver.services["streamweaver-new"].runtime.status).toBe("stopped");
     expect(snapshot.apps.streamweaver.repository.name).toBe("Mtman1987/streamweaver");
     expect(snapshot.producer.commit).toBe("abc123");
+  });
+
+  it("uses an explicit unobserved runtime instead of null when a declared service is outside the current observation set", () => {
+    const snapshot = buildPublicEcosystemSnapshotFromStates({
+      generatedAt: "2026-08-15T16:45:00.000Z",
+      apps: [],
+    });
+    expect(snapshot.apps.spmt.lifecycle).toBe("available");
+    expect(snapshot.apps.spmt.services["spmt-live"].runtime).toEqual({
+      status: "unobserved",
+      machineCount: null,
+      states: {},
+      failingCheckCount: null,
+      observedAt: "2026-08-15T16:45:00.000Z",
+    });
   });
 
   it("publishes only aggregate runtime data and never machine details", () => {
