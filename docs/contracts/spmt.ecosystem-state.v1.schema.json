@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spmt.live/spec/spmt.ecosystem-state.v1.schema.json",
+  "title": "SPMT Ecosystem State v1",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "producer", "apps"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "spmt.ecosystem-state/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "producer": {
+      "type": "object",
+      "required": ["app", "commit"],
+      "additionalProperties": false,
+      "properties": {
+        "app": { "const": "mtman-machine-rotator" },
+        "commit": { "type": ["string", "null"] }
+      }
+    },
+    "apps": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/app" }
+    }
+  },
+  "$defs": {
+    "runtime": {
+      "type": ["object", "null"],
+      "required": ["status", "machineCount", "states", "failingCheckCount", "observedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string" },
+        "machineCount": { "type": ["integer", "null"], "minimum": 0 },
+        "states": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "failingCheckCount": { "type": ["integer", "null"], "minimum": 0 },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["flyApp", "role", "runtime"],
+      "additionalProperties": false,
+      "properties": {
+        "flyApp": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "runtime": { "$ref": "#/$defs/runtime" }
+      }
+    },
+    "app": {
+      "type": "object",
+      "required": ["id", "name", "lifecycle", "repository", "urls", "interfaces", "services", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "lifecycle": { "enum": ["available", "planned", "internal"] },
+        "repository": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": { "name": { "type": "string", "minLength": 1 } }
+        },
+        "urls": {
+          "type": "object",
+          "required": ["public"],
+          "additionalProperties": false,
+          "properties": {
+            "public": { "type": "string", "format": "uri" },
+            "api": { "type": "string", "format": "uri" },
+            "health": { "type": "string", "format": "uri" }
+          }
+        },
+        "interfaces": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/service" }
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["declaredBy", "observedBy"],
+          "additionalProperties": false,
+          "properties": {
+            "declaredBy": { "const": "rotator-contract" },
+            "observedBy": { "const": "fly-machines-api" }
+          }
+        }
+      }
+    }
+  }
+}

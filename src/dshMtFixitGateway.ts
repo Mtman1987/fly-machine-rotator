@@ -9,6 +9,7 @@ import { handleRotatorHomeUiRequest } from "./rotatorHomeUi.js";
 import { handleStreamWeaverAdminUiRequest } from "./streamweaverAdminUi.js";
 import { handleRotatorSpmtAuthRequest } from "./spmtAuth.js";
 import { auditOwnerMutation, authorizeOwnerMutation, isOwnerMutationPath } from "./dashboardSecurity.js";
+import { handleEcosystemSnapshotRequest } from "./ecosystemSnapshot.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 
@@ -105,6 +106,7 @@ async function guardOwnerMutation(request: IncomingMessage, response: ServerResp
 export function startDshMtFixItOuterGateway(env: NodeJS.ProcessEnv, dashboardPort: number, athenaPort: number, publicPort: number) {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleEcosystemSnapshotRequest(request, response, env)) return;
       if (await handleRotatorSpmtAuthRequest(request, response, env)) return;
       if (await guardOwnerMutation(request, response, env)) return;
       if (await handleRotatorHomeUiRequest(request, response, env)) return;
