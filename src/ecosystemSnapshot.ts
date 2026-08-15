@@ -160,6 +160,7 @@ export async function handleEcosystemSnapshotRequest(
 ): Promise<boolean> {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (url.pathname !== "/ecosystem/v1/public.json") return false;
+  response.setHeader("access-control-allow-origin", "*");
   if ((request.method || "GET").toUpperCase() !== "GET") {
     response.writeHead(405, { allow: "GET", "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({ error: "Method not allowed" }));
