@@ -19,7 +19,7 @@ export type PublicEcosystemApp = {
   repository: { name: string };
   urls: { public: string; api?: string; health?: string };
   interfaces: Record<string, boolean>;
-  services: Record<string, { flyApp: string; role: string; runtime: PublicRuntimeState | null }>;
+  services: Record<string, { flyApp: string; role: string; runtime: PublicRuntimeState }>;
   provenance: { declaredBy: "rotator-contract"; observedBy: "fly-machines-api" };
 };
 
@@ -105,11 +105,22 @@ function publicRuntime(value: any, observedAt: string): PublicRuntimeState {
   };
 }
 
+function unobservedRuntime(observedAt: string): PublicRuntimeState {
+  return {
+    status: "unobserved",
+    machineCount: null,
+    states: {},
+    failingCheckCount: null,
+    observedAt,
+  };
+}
+
 export function buildPublicEcosystemSnapshotFromStates(
   flyStates: any,
   options: { generatedAt?: string; producerCommit?: string | null } = {},
 ): PublicEcosystemSnapshot {
   const generatedAt = options.generatedAt || new Date().toISOString();
+  const observationTime = String(flyStates?.generatedAt || generatedAt);
   const repos = new Map(listRepoConfigs().map((repo) => [repo.id, repo]));
   const observed = new Map<string, any>((Array.isArray(flyStates?.apps) ? flyStates.apps : []).map((app: any) => [String(app.appName || ""), app]));
   const apps: Record<string, PublicEcosystemApp> = {};
@@ -123,7 +134,7 @@ export function buildPublicEcosystemSnapshotFromStates(
       services[flyApp] = {
         flyApp,
         role: declared.serviceRoles?.[flyApp] || "service",
-        runtime: state ? publicRuntime(state, String(flyStates?.generatedAt || generatedAt)) : null,
+        runtime: state ? publicRuntime(state, observationTime) : unobservedRuntime(observationTime),
       };
     }
     apps[declared.id] = {
