@@ -24,7 +24,7 @@
   },
   "$defs": {
     "runtime": {
-      "type": ["object", "null"],
+      "type": "object",
       "required": ["status", "machineCount", "states", "failingCheckCount", "observedAt"],
       "additionalProperties": false,
       "properties": {
