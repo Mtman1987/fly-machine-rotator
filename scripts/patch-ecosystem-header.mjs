@@ -2,18 +2,19 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 const path = 'src/spmtSharedUi.ts';
 let source = await readFile(path, 'utf8');
-if (source.includes('https://spmt.live/shared/ecosystem-header.js')) {
-  console.log('canonical SPMT ecosystem header already installed in shared web UI');
+const headerScript = '<script src="https://spmt.live/shared/ecosystem-header.js" data-app="${safeApp}" defer></script>';
+const workspaceScript = '<script src="https://spmt.live/shared/workspace-controller.js" defer></script>';
+const marker = '</style><meta name="spmt-host-app" content="${safeApp}">`';
+
+if (!source.includes(headerScript)) {
+  if (!source.includes(marker)) throw new Error('shared UI header marker missing');
+  source = source.replace(marker, `</style>${headerScript}${workspaceScript}<meta name="spmt-host-app" content="${safeApp}">\``);
+} else if (!source.includes(workspaceScript)) {
+  source = source.replace(headerScript, `${headerScript}${workspaceScript}`);
+} else {
+  console.log('canonical SPMT ecosystem header and workspace controls already installed in shared web UI');
   process.exit(0);
 }
 
-const marker = '</style><meta name="spmt-host-app" content="${safeApp}">`';
-if (!source.includes(marker)) {
-  throw new Error('shared UI header marker missing');
-}
-source = source.replace(
-  marker,
-  '</style><script src="https://spmt.live/shared/ecosystem-header.js" data-app="${safeApp}" defer></script><meta name="spmt-host-app" content="${safeApp}">`',
-);
 await writeFile(path, source, 'utf8');
-console.log('installed canonical SPMT ecosystem header in shared web UI');
+console.log('installed canonical SPMT ecosystem header and workspace controls in shared web UI');
