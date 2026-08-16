@@ -7,6 +7,7 @@ import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
 import { reclaimCodexStorage } from "./publicCodexFixer.js";
+import { runCompanionDiagnosticsLoop } from "./companionDiagnostics.js";
 
 async function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const stackEnv = withCodexWorkerAuth(env);
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
     const config = loadConfig(process.argv.slice(3));
     await startWebStack(process.env);
     void startAutoRotationLoop(process.argv.slice(3));
-    await runLogMonitor({
+    const logMonitor = runLogMonitor({
       appNames: config.appNames,
       token: process.env.FLY_LOG_TOKEN ?? config.flyApiToken,
       orgSlug: process.env.FLY_ORG ?? process.env.ORG ?? "mtman-new",
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
       pollIntervalMs: Number(process.env.LOG_POLL_INTERVAL_MS ?? 60_000),
       sampleDurationMs: Number(process.env.LOG_SAMPLE_DURATION_MS ?? 15_000)
     });
+    await Promise.all([logMonitor, runCompanionDiagnosticsLoop(process.env)]);
     return;
   }
   if (command !== "run") {

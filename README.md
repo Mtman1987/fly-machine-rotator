@@ -47,6 +47,14 @@ Optional secrets/env:
 - `LEASE_TTL_SECONDS`: default `900`.
 - `REQUIRE_HEALTH_CHECKS`: default `false`. Set `true` if every bot Machine has Fly health checks configured.
 - `API_MIN_INTERVAL_MS`: default `400`, roughly 2.5 requests/sec to stay under Fly's per-action burst guidance.
+- `SPMT_API_KEY` or `SPMT_PLATFORM_API_KEY`: tenant-bound SPMT key with `apps:read`; enables secure delivery of sanitized production diagnostics to the linked SpaceMountain Companion.
+- `ROTATOR_COMPANION_DIAGNOSTICS_ENABLED`: defaults to `true`. Set to `false` to stop Companion snapshot delivery.
+- `COMPANION_DIAGNOSTICS_MODE`: `verbose` by default, or `debug` for the alternate snapshot label.
+- `COMPANION_DIAGNOSTICS_INTERVAL_MS`: defaults to `300000` (five minutes).
+- `COMPANION_DIAGNOSTICS_SAMPLE_MS`: defaults to `5000`; bounded to ten seconds.
+- `COMPANION_DIAGNOSTICS_LOG_LIMIT`: defaults to `200`; bounded to 500 sanitized entries.
+
+The monitor sends Machine state plus a bounded live Fly log sample through SPMT's tenant-scoped Companion relay. SPMT queues only the newest offline snapshot for up to seven days. The Companion writes it beside its own daily logs in its local `diagnostics` folder and keeps 30 dated snapshots. Fly credentials and SPMT credentials are never included in the snapshot body.
 
 ## Local Usage
 
