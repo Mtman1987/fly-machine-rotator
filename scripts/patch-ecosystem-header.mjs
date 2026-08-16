@@ -8,9 +8,10 @@ const marker = '</style><meta name="spmt-host-app" content="${safeApp}">`';
 
 if (!source.includes(headerScript)) {
   if (!source.includes(marker)) throw new Error('shared UI header marker missing');
-  source = source.replace(marker, `</style>${headerScript}${workspaceScript}<meta name="spmt-host-app" content="${safeApp}">\``);
+  const replacement = '</style>' + headerScript + workspaceScript + '<meta name="spmt-host-app" content="${safeApp}">`';
+  source = source.replace(marker, replacement);
 } else if (!source.includes(workspaceScript)) {
-  source = source.replace(headerScript, `${headerScript}${workspaceScript}`);
+  source = source.replace(headerScript, headerScript + workspaceScript);
 } else {
   console.log('canonical SPMT ecosystem header and workspace controls already installed in shared web UI');
   process.exit(0);
