@@ -4,13 +4,13 @@
   "private": true,
   "main": "expo/AppEntry.js",
   "scripts": {
-    "prestart": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs",
+    "prestart": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs && node ../scripts/patch-mobile-presence.mjs",
     "start": "expo start",
-    "preprebuild:android": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs",
+    "preprebuild:android": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs && node ../scripts/patch-mobile-presence.mjs",
     "prebuild:android": "expo prebuild --platform android",
-    "preios": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs",
+    "preios": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs && node ../scripts/patch-mobile-presence.mjs",
     "ios": "expo run:ios",
-    "preandroid": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs",
+    "preandroid": "node ../scripts/patch-ecosystem-workspace-parity.mjs && node ../scripts/patch-session-cache.mjs && node ../scripts/patch-mobile-presence.mjs",
     "android": "expo run:android"
   },
   "dependencies": {

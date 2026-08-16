@@ -10,6 +10,8 @@ on:
       - "scripts/patch-ecosystem-workspace-parity.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
+      - "scripts/patch-session-cache.mjs"
+      - "scripts/patch-mobile-presence.mjs"
   push:
     branches:
       - main
@@ -20,6 +22,8 @@ on:
       - "scripts/patch-ecosystem-workspace-parity.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
+      - "scripts/patch-session-cache.mjs"
+      - "scripts/patch-mobile-presence.mjs"
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -48,8 +52,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion and command parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs
+      - name: Apply current SPMT Companion, cache, command, and presence parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -84,8 +88,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion and command parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs
+      - name: Apply current SPMT Companion, cache, command, and presence parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -110,7 +114,7 @@ jobs:
         with:
           tag_name: mountainview-latest
           name: SpaceMountain Companion Latest Android APK
-          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, deterministic voice intents, and GPT-5.6 Sol fallback for ambiguous natural language. Legacy MountainView APK filenames remain available for existing testers.
+          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, deterministic voice intents, GPT-5.6 Sol fallback for ambiguous natural language, cache-first workspace restore, and canonical ecosystem presence. Legacy MountainView APK filenames remain available for existing testers.
           prerelease: true
           files: |
             mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
