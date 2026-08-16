@@ -1,3 +1,4 @@
+# Branch policy: keep the newest merged branch as one-generation rollback evidence before deployment.
 name: Fly Deploy
 
 on:
