@@ -9,7 +9,17 @@ function replaceRequired(source, from, to, label) {
   return source.replace(from, to);
 }
 
-let source = await readFile(mobilePath, 'utf8');
+let source;
+try {
+  source = await readFile(mobilePath, 'utf8');
+} catch (error) {
+  if (error?.code === 'ENOENT') {
+    console.log(`skipped optional ${mobilePath} session cache patch`);
+    process.exit(0);
+  }
+  throw error;
+}
+
 if (source.includes(`const workspaceCacheKey = "${cacheKey}";`)) {
   console.log(`MountainView session cache patch already applied to ${mobilePath}`);
   process.exit(0);
