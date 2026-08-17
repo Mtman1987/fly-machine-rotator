@@ -21,6 +21,13 @@ test('resolution workflow only learns known fixes after verified deployment and 
   assert.match(source, /action === "deny"/);
 });
 
+test('approved draft repairs use the supported GitHub GraphQL ready-for-review mutation', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /markPullRequestReadyForReview/);
+  assert.match(source, /pull\.node_id/);
+  assert.doesNotMatch(source, /\/ready_for_review/);
+});
+
 test('resolution route stays behind the authenticated DSH mtfixit gateway', () => {
   const gateway = readFileSync(resolve(process.cwd(), 'src/dshMtFixitGateway.ts'), 'utf8');
   const authIndex = gateway.indexOf('if (!isDshMtFixItAuthorized(request, env))');
