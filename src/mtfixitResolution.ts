@@ -23,6 +23,7 @@ type CodexJob = {
 
 type KnownFix = {
   signature: string;
+  patchHash: string;
   repoId: string;
   normalizedReport: string;
   learnedAt: string;
@@ -38,6 +39,7 @@ export type MtFixItResolutionState = {
   status: "awaiting_analysis" | "awaiting_approval" | "deploying" | "deployed" | "failed" | "denied" | "no_change";
   updatedAt: string;
   signature?: string;
+  patchHash?: string;
   knownFix?: boolean;
   message?: string;
   approvedAt?: string;
@@ -55,6 +57,7 @@ const VERIFY_TIMEOUT_MS = 20 * 60_000;
 const WORKFLOW_DISCOVERY_GRACE_MS = 90_000;
 const activeDeployments = new Set<string>();
 
+function fixerRoot(env: NodeJS.ProcessEnv) { return String(env.CODEX_FIXER_DATA_DIR || "/data/codex-fixer").trim(); }
 function resolutionDir(env: NodeJS.ProcessEnv) { return String(env.MTFIXIT_RESOLUTION_DIR || "/data/codex-fixer/mtfixit-resolution").trim(); }
 function knownFixFile(env: NodeJS.ProcessEnv) { return String(env.MTFIXIT_KNOWN_FIXES_FILE || "/data/codex-fixer/known-fixes.json").trim(); }
 function resolutionFile(env: NodeJS.ProcessEnv, jobId: string) { return `${resolutionDir(env)}/${jobId}.json`; }
@@ -68,6 +71,14 @@ function normalizedReport(description: string) {
 export function mtFixItKnownFixSignature(job: Pick<CodexJob, "repoId" | "description">) {
   return createHash("sha256").update(`${String(job.repoId || "unknown").trim().toLowerCase()}\n${normalizedReport(job.description)}`).digest("hex");
 }
+async function jobPatchHash(env: NodeJS.ProcessEnv, jobId: string): Promise<string> {
+  try {
+    const patch = await readFile(`${fixerRoot(env)}/jobs/${jobId}/diff.patch`);
+    return patch.length ? createHash("sha256").update(patch).digest("hex") : "";
+  } catch {
+    return "";
+  }
+}
 async function readJsonFile<T>(file: string, fallback: T): Promise<T> { try { return JSON.parse(await readFile(file, "utf8")) as T; } catch { return fallback; } }
 async function saveResolution(env: NodeJS.ProcessEnv, state: MtFixItResolutionState) {
   const file = resolutionFile(env, state.jobId); await mkdir(dirname(file), { recursive: true }); await writeFile(file, JSON.stringify(state, null, 2), "utf8");
@@ -76,10 +87,21 @@ export async function readMtFixItResolution(env: NodeJS.ProcessEnv, jobId: strin
 async function listKnownFixes(env: NodeJS.ProcessEnv) { const values = await readJsonFile<KnownFix[]>(knownFixFile(env), []); return Array.isArray(values) ? values : []; }
 async function saveKnownFixes(env: NodeJS.ProcessEnv, values: KnownFix[]) { const file = knownFixFile(env); await mkdir(dirname(file), { recursive: true }); await writeFile(file, JSON.stringify(values.slice(-500), null, 2), "utf8"); }
 async function rememberKnownFix(env: NodeJS.ProcessEnv, job: CodexJob, state: MtFixItResolutionState) {
-  if (!state.signature || !state.pullRequest || !state.mergeCommit) return;
-  const values = await listKnownFixes(env); const existing = values.find((item) => item.signature === state.signature);
-  const next: KnownFix = { signature: state.signature, repoId: job.repoId, normalizedReport: normalizedReport(job.description), learnedAt: new Date().toISOString(), sourceJobId: job.id, pullRequestNumber: state.pullRequest.number, mergeCommit: state.mergeCommit, successfulDeploys: (existing?.successfulDeploys || 0) + 1 };
-  await saveKnownFixes(env, [...values.filter((item) => item.signature !== state.signature), next]);
+  if (!state.signature || !state.pullRequest || !state.mergeCommit || !state.patchHash) return;
+  const values = await listKnownFixes(env);
+  const existing = values.find((item) => item.signature === state.signature && item.patchHash === state.patchHash);
+  const next: KnownFix = {
+    signature: state.signature,
+    patchHash: state.patchHash,
+    repoId: job.repoId,
+    normalizedReport: normalizedReport(job.description),
+    learnedAt: new Date().toISOString(),
+    sourceJobId: job.id,
+    pullRequestNumber: state.pullRequest.number,
+    mergeCommit: state.mergeCommit,
+    successfulDeploys: (existing?.successfulDeploys || 0) + 1,
+  };
+  await saveKnownFixes(env, [...values.filter((item) => !(item.signature === state.signature && item.patchHash === state.patchHash)), next]);
 }
 
 async function workerRequest(env: NodeJS.ProcessEnv, dashboardPort: number, path: string, init: RequestInit = {}) {
@@ -159,8 +181,20 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
   const checksPass = job.checks.length > 0 && job.checks.every((check) => check.ok);
   if (!checksPass) { const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "failed", updatedAt: new Date().toISOString(), signature, message: "Athena found a possible fix, but validation did not pass." }; await saveResolution(env, state); return state; }
   const existing = await readMtFixItResolution(env, job.id); if (existing && ["awaiting_approval", "deploying", "deployed", "failed", "denied"].includes(existing.status)) return existing;
-  const known = (await listKnownFixes(env)).some((item) => item.signature === signature && item.repoId === job.repoId);
-  const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: known ? "deploying" : "awaiting_approval", updatedAt: new Date().toISOString(), signature, knownFix: known, message: known ? "This exact report matches a previously approved successful fix. Athena is applying the validated repair automatically." : "Athena found and validated a new fix. mtman approval is required before merge/deployment." };
+  const patchHash = await jobPatchHash(env, job.id);
+  const known = Boolean(patchHash) && (await listKnownFixes(env)).some((item) => item.signature === signature && item.repoId === job.repoId && item.patchHash === patchHash);
+  const state: MtFixItResolutionState = {
+    schemaVersion: "mtfixit.resolution/v1",
+    jobId: job.id,
+    status: known ? "deploying" : "awaiting_approval",
+    updatedAt: new Date().toISOString(),
+    signature,
+    patchHash: patchHash || undefined,
+    knownFix: known,
+    message: known
+      ? "This report regenerated the exact previously approved validated patch. Athena is applying the known fix automatically."
+      : "Athena found and validated a new or changed fix. mtman approval is required before merge/deployment.",
+  };
   await saveResolution(env, state); if (known) void deployInBackground(job, env, dashboardPort, state); return state;
 }
 
