@@ -66,7 +66,7 @@ await patch('src/mountainView.ts', (source) => {
     });
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok) {
-      throw new HttpError(401, `MountainView SPMT refresh failed: \${readText(payload, "error") || response.status}`);
+      throw new HttpError(401, "MountainView SPMT refresh failed: " + (readText(payload, "error") || response.status));
     }
     const accessToken = readText(payload, "access_token") || readText(payload, "token");
     const nextRefreshToken = readText(payload, "refresh_token") || refreshToken;
@@ -83,10 +83,10 @@ await patch('src/mountainView.ts', (source) => {
     if (!accessToken) {
       throw new HttpError(401, "MountainView does not have an SPMT session for this user. Sign in with SPMT again.");
     }
-    const launch = (token: string) => fetch(`\${spmtBase}/api/embed/launch`, {
+    const launch = (token: string) => fetch(spmtBase + "/api/embed/launch", {
       method: "POST",
       headers: {
-        authorization: `Bearer \${token}`,
+        authorization: "Bearer " + token,
         "content-type": "application/json",
         accept: "application/json"
       },
@@ -99,7 +99,7 @@ await patch('src/mountainView.ts', (source) => {
     }
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok) {
-      throw new HttpError(response.status >= 400 && response.status < 500 ? response.status : 502, `SPMT HearMeOut launch failed: \${readText(payload, "error") || response.status}`);
+      throw new HttpError(response.status >= 400 && response.status < 500 ? response.status : 502, "SPMT HearMeOut launch failed: " + (readText(payload, "error") || response.status));
     }
     const code = readText(payload, "code");
     if (!code) throw new HttpError(502, "SPMT HearMeOut launch returned no one-time code.");
@@ -116,14 +116,14 @@ await patch('src/mountainView.ts', (source) => {
 
     const launchCode = await this.createHearMeOutLaunchCode(userId);
     const hearMeOutBase = this.serviceBaseUrl("hearmeout").replace(/\\/$/, "");
-    const response = await fetch(`\${hearMeOutBase}/api/private-assistant`, {
+    const response = await fetch(hearMeOutBase + "/api/private-assistant", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ launchCode, action, text })
     });
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok || payload.ok === false) {
-      const message = readText(payload, "error") || `HearMeOut private assistant returned HTTP \${response.status}`;
+      const message = readText(payload, "error") || "HearMeOut private assistant returned HTTP " + response.status;
       throw new HttpError(response.status >= 400 && response.status < 500 ? response.status : 502, message);
     }
     this.logCommand(
@@ -131,7 +131,7 @@ await patch('src/mountainView.ts', (source) => {
       action === "ensure" ? "private-athena-room-ensure" : "private-athena-room-utterance",
       "hearmeout",
       "POST",
-      `\${hearMeOutBase}/api/private-assistant`,
+      hearMeOutBase + "/api/private-assistant",
       "success",
       response.status,
       0,
