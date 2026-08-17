@@ -21,6 +21,15 @@ test('resolution workflow only learns known fixes after verified deployment and 
   assert.match(source, /action === "deny"/);
 });
 
+test('known fix auto-deploy requires the exact regenerated diff.patch fingerprint', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /jobs\/\$\{jobId\}\/diff\.patch/);
+  assert.match(source, /createHash\("sha256"\)\.update\(patch\)/);
+  assert.match(source, /item\.patchHash === patchHash/);
+  assert.match(source, /Boolean\(patchHash\)/);
+  assert.match(source, /patchHash: state\.patchHash/);
+});
+
 test('approved draft repairs use the supported GitHub GraphQL ready-for-review mutation', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /markPullRequestReadyForReview/);
