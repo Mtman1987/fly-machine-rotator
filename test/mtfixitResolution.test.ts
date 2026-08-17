@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import { mtFixItKnownFixSignature } from '../src/mtfixitResolution.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
