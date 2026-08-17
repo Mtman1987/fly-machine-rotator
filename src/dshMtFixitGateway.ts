@@ -12,6 +12,11 @@ import { auditOwnerMutation, authorizeOwnerMutation, isOwnerMutationPath } from 
 import { handleEcosystemSnapshotRequest } from "./ecosystemSnapshot.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
+const MAX_DSH_JOB_BODY_BYTES = 256 * 1024;
+const MAX_WORKER_JOB_BODY_BYTES = 56 * 1024;
+const MAX_EMBEDDED_SNAPSHOT_CHARS = 28_000;
+
+type JsonRecord = Record<string, any>;
 
 function secretMatches(expected: string, supplied: string): boolean {
   if (!expected || !supplied) return false;
@@ -60,6 +65,117 @@ function sendJson(response: ServerResponse, status: number, value: unknown, extr
   response.end(JSON.stringify(value));
 }
 
+function objectValue(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function compactStates(value: unknown): string {
+  const states = objectValue(value);
+  return Object.entries(states)
+    .slice(0, 8)
+    .map(([key, count]) => `${key}:${String(count)}`)
+    .join(",") || "none";
+}
+
+function ecosystemLines(snapshotJson: unknown): string[] {
+  if (typeof snapshotJson !== "string" || !snapshotJson.trim()) return [];
+  try {
+    const snapshot = JSON.parse(snapshotJson);
+    const apps = objectValue(snapshot?.apps);
+    const lines: string[] = [];
+    for (const [appId, appValue] of Object.entries(apps)) {
+      const app = objectValue(appValue);
+      const services = objectValue(app.services);
+      for (const [serviceId, serviceValue] of Object.entries(services)) {
+        const service = objectValue(serviceValue);
+        const runtime = objectValue(service.runtime);
+        lines.push(
+          `${String(app.name || appId)}/${String(service.flyApp || serviceId)}: status=${String(runtime.status || "unknown")}; machines=${String(runtime.machineCount ?? "?")}; failingChecks=${String(runtime.failingCheckCount ?? "?")}; states=${compactStates(runtime.states)}`,
+        );
+      }
+    }
+    return lines.slice(0, 30);
+  } catch {
+    return [];
+  }
+}
+
+export function prepareDshMtFixItJobPayload(value: unknown): JsonRecord {
+  const source = objectValue(value);
+  const payload: JsonRecord = { ...source };
+  const context = { ...objectValue(source.context) };
+  const evidence = { ...objectValue(context.diagnosticEvidence) };
+  const ecosystemSnapshot = { ...objectValue(evidence.ecosystemSnapshot) };
+  const adapters = objectValue(evidence.adapters);
+  const originalDescription = String(source.description || "").trim().slice(0, 2600);
+
+  const diagnosticLines = ecosystemLines(ecosystemSnapshot.snapshotJson);
+  const adapterLines = Object.entries(adapters).slice(0, 12).map(([name, adapterValue]) => {
+    const adapter = objectValue(adapterValue);
+    return `${name}: ${String(adapter.status || "unknown")}${adapter.note ? ` - ${String(adapter.note).slice(0, 180)}` : ""}`;
+  });
+  const brief = [
+    originalDescription,
+    "",
+    "Athena diagnostic snapshot (tenant-scoped):",
+    `tenant=${String(source.tenantId || evidence?.scope?.tenantId || "unknown")}`,
+    `source=${String(source.source || context.source || "unknown")}`,
+    ...diagnosticLines,
+    ...(adapterLines.length ? ["Evidence adapters:", ...adapterLines] : []),
+  ].filter(Boolean).join("\n").slice(0, 3_950);
+  payload.description = brief || originalDescription;
+
+  if (typeof ecosystemSnapshot.snapshotJson === "string" && ecosystemSnapshot.snapshotJson.length > MAX_EMBEDDED_SNAPSHOT_CHARS) {
+    ecosystemSnapshot.snapshotJson = ecosystemSnapshot.snapshotJson.slice(0, MAX_EMBEDDED_SNAPSHOT_CHARS);
+    ecosystemSnapshot.truncated = true;
+  }
+  if (Object.keys(ecosystemSnapshot).length) evidence.ecosystemSnapshot = ecosystemSnapshot;
+  if (Object.keys(evidence).length) context.diagnosticEvidence = evidence;
+  payload.context = context;
+
+  let serialized = JSON.stringify(payload);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_WORKER_JOB_BODY_BYTES && typeof ecosystemSnapshot.snapshotJson === "string") {
+    ecosystemSnapshot.snapshotJson = "[Snapshot body trimmed by mtfixit gateway; service-state summary is embedded in description.]";
+    ecosystemSnapshot.truncated = true;
+    evidence.ecosystemSnapshot = ecosystemSnapshot;
+    context.diagnosticEvidence = evidence;
+    payload.context = context;
+    serialized = JSON.stringify(payload);
+  }
+  if (Buffer.byteLength(serialized, "utf8") > MAX_WORKER_JOB_BODY_BYTES) {
+    payload.context = {
+      source: context.source || null,
+      channelId: context.channelId || null,
+      channelName: context.channelName || null,
+      guildId: context.guildId || null,
+      messageId: context.messageId || null,
+      diagnosticEvidence: {
+        schemaVersion: evidence.schemaVersion || null,
+        capturedAt: evidence.capturedAt || null,
+        scope: evidence.scope || null,
+        incidentWindow: evidence.incidentWindow || null,
+        ecosystemSnapshot: {
+          status: ecosystemSnapshot.status || "trimmed",
+          endpoint: ecosystemSnapshot.endpoint || null,
+          truncated: true,
+        },
+        adapters,
+      },
+    };
+  }
+  return payload;
+}
+
+async function readJsonBody(incoming: IncomingMessage): Promise<unknown> {
+  let raw = "";
+  for await (const chunk of incoming) {
+    raw += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    if (Buffer.byteLength(raw, "utf8") > MAX_DSH_JOB_BODY_BYTES) throw new Error("DSH mtfixit request body too large");
+  }
+  if (!raw.trim()) return {};
+  return JSON.parse(raw);
+}
+
 async function proxyRequest(incoming: IncomingMessage, outgoing: ServerResponse, port: number, path: string, headers: IncomingHttpHeaders) {
   await new Promise<void>((resolve, reject) => {
     const proxied = httpRequest({ hostname: "127.0.0.1", port, method: incoming.method, path, headers }, (upstream) => {
@@ -72,6 +188,25 @@ async function proxyRequest(incoming: IncomingMessage, outgoing: ServerResponse,
   });
 }
 
+async function proxyJsonRequest(outgoing: ServerResponse, port: number, path: string, headers: IncomingHttpHeaders, value: unknown) {
+  const body = JSON.stringify(value);
+  const forwardedHeaders: IncomingHttpHeaders = {
+    ...headers,
+    "content-type": "application/json",
+    "content-length": String(Buffer.byteLength(body, "utf8")),
+  };
+  delete forwardedHeaders["transfer-encoding"];
+  await new Promise<void>((resolve, reject) => {
+    const proxied = httpRequest({ hostname: "127.0.0.1", port, method: "POST", path, headers: forwardedHeaders }, (upstream) => {
+      outgoing.writeHead(upstream.statusCode || 502, upstream.headers);
+      upstream.pipe(outgoing);
+      upstream.on("end", resolve);
+    });
+    proxied.on("error", reject);
+    proxied.end(body);
+  });
+}
+
 async function proxyToCodexWorker(incoming: IncomingMessage, outgoing: ServerResponse, env: NodeJS.ProcessEnv, dashboardPort: number, workerPath: string) {
   const workerSecret = String(env.CODEX_WORKER_SECRET || "").trim();
   if (!workerSecret) { sendJson(outgoing, 503, { error: "CODEX_WORKER_SECRET is not configured" }); return; }
@@ -79,6 +214,18 @@ async function proxyToCodexWorker(incoming: IncomingMessage, outgoing: ServerRes
   delete headers["x-dsh-mtfixit-key"];
   delete headers["x-cloudflare-bridge-secret"];
   delete headers.connection;
+
+  if (String(incoming.method || "GET").toUpperCase() === "POST" && workerPath.split("?")[0] === "/api/codex/jobs") {
+    try {
+      const parsed = await readJsonBody(incoming);
+      const prepared = prepareDshMtFixItJobPayload(parsed);
+      await proxyJsonRequest(outgoing, dashboardPort, workerPath, headers, prepared);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid DSH mtfixit request";
+      sendJson(outgoing, message.includes("too large") ? 413 : 400, { error: message });
+    }
+    return;
+  }
   await proxyRequest(incoming, outgoing, dashboardPort, workerPath, headers);
 }
 
