@@ -20,14 +20,32 @@ function secretMatches(expected: string, supplied: string): boolean {
   return timingSafeEqual(expectedHash, suppliedHash);
 }
 
+function nonEmptySecrets(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
 export function isDshMtFixItAuthorized(request: Pick<IncomingMessage, "headers">, env: NodeJS.ProcessEnv): boolean {
-  const expected = String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
-  const supplied = String(request.headers["x-dsh-mtfixit-key"] || "").trim();
-  return secretMatches(expected, supplied);
+  // Canonical DSH -> rotator auth uses x-dsh-mtfixit-key with the SPMT platform key.
+  // Keep the former bridge header/env names during rolling deploys so an older DSH
+  // instance can still reach the repaired gateway while both services are updated.
+  const expectedSecrets = nonEmptySecrets([
+    env.SPMT_API_KEY,
+    env.SPMT_PLATFORM_API_KEY,
+    env.DSH_MTFIXIT_KEY,
+    env.CLOUDFLARE_WORKER_BRIDGE_SECRET,
+    env.INTERNAL_BRIDGE_KEY,
+  ]);
+  const suppliedSecrets = nonEmptySecrets([
+    String(request.headers["x-dsh-mtfixit-key"] || ""),
+    String(request.headers["x-cloudflare-bridge-secret"] || ""),
+  ]);
+  return expectedSecrets.some((expected) => suppliedSecrets.some((supplied) => secretMatches(expected, supplied)));
 }
 
 export function mapDshMtFixItWorkerPath(method: string, pathname: string, search = ""): string | null {
-  if (method === "POST" && pathname === `${DSH_PREFIX}/jobs`) return `/api/codex/jobs${search}`;
+  // /api/dsh/mtfixit was the original DSH route. Accept it as an alias for job
+  // creation while DSH migrates to the explicit /jobs contract.
+  if (method === "POST" && (pathname === DSH_PREFIX || pathname === `${DSH_PREFIX}/jobs`)) return `/api/codex/jobs${search}`;
   if (method === "GET" && /^\/api\/dsh\/mtfixit\/jobs\/[a-zA-Z0-9_-]{8,100}$/.test(pathname)) return `${pathname.replace(DSH_PREFIX, "/api/codex")}${search}`;
   return null;
 }
@@ -58,7 +76,9 @@ async function proxyToCodexWorker(incoming: IncomingMessage, outgoing: ServerRes
   const workerSecret = String(env.CODEX_WORKER_SECRET || "").trim();
   if (!workerSecret) { sendJson(outgoing, 503, { error: "CODEX_WORKER_SECRET is not configured" }); return; }
   const headers: IncomingHttpHeaders = { ...incoming.headers, host: `127.0.0.1:${dashboardPort}`, "x-codex-worker-secret": workerSecret };
-  delete headers["x-dsh-mtfixit-key"]; delete headers.connection;
+  delete headers["x-dsh-mtfixit-key"];
+  delete headers["x-cloudflare-bridge-secret"];
+  delete headers.connection;
   await proxyRequest(incoming, outgoing, dashboardPort, workerPath, headers);
 }
 
@@ -70,7 +90,7 @@ async function proxyToAthenaGateway(incoming: IncomingMessage, outgoing: ServerR
 
 export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv, dashboardPort: number): Promise<boolean> {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-  if (!url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
+  if (url.pathname !== DSH_PREFIX && !url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
   const workerPath = mapDshMtFixItWorkerPath(request.method || "GET", url.pathname, url.search);
   if (!workerPath) { sendJson(response, 404, { error: "Unknown DSH mtfixit operation" }); return true; }
   if (!isDshMtFixItAuthorized(request, env)) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
