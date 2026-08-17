@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "patch:spmt-llm": "node scripts/patch-spmt-local-llm.mjs",
-    "patch:workspace-parity": "node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-ecosystem-header.mjs && node scripts/patch-mobile-presence.mjs",
+    "patch:workspace-parity": "node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-ecosystem-header.mjs && node scripts/patch-mobile-presence.mjs",
     "prebuild": "npm run patch:spmt-llm && npm run patch:workspace-parity",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js run",
