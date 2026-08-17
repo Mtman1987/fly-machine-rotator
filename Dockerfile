@@ -10,6 +10,7 @@ COPY package*.json tsconfig.json tsconfig.build.json ./
 COPY scripts ./scripts
 COPY assets ./assets
 COPY src ./src
+COPY mobile ./mobile
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
