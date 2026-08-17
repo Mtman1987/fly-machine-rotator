@@ -10,6 +10,7 @@ import { handleStreamWeaverAdminUiRequest } from "./streamweaverAdminUi.js";
 import { handleRotatorSpmtAuthRequest } from "./spmtAuth.js";
 import { auditOwnerMutation, authorizeOwnerMutation, isOwnerMutationPath } from "./dashboardSecurity.js";
 import { handleEcosystemSnapshotRequest } from "./ecosystemSnapshot.js";
+import { handleMtFixItResolutionRequest } from "./mtfixitResolution.js";
 
 const DSH_PREFIX = "/api/dsh/mtfixit";
 const MAX_DSH_JOB_BODY_BYTES = 256 * 1024;
@@ -279,9 +280,12 @@ async function proxyToAthenaGateway(incoming: IncomingMessage, outgoing: ServerR
 export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv, dashboardPort: number): Promise<boolean> {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (url.pathname !== DSH_PREFIX && !url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
+  if (!isDshMtFixItAuthorized(request, env)) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
+  if (/^\/api\/dsh\/mtfixit\/jobs\/[a-zA-Z0-9_-]{8,100}\/resolution$/.test(url.pathname)) {
+    return handleMtFixItResolutionRequest(request, response, env, dashboardPort);
+  }
   const workerPath = mapDshMtFixItWorkerPath(request.method || "GET", url.pathname, url.search);
   if (!workerPath) { sendJson(response, 404, { error: "Unknown DSH mtfixit operation" }); return true; }
-  if (!isDshMtFixItAuthorized(request, env)) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
   await proxyToCodexWorker(request, response, env, dashboardPort, workerPath);
   return true;
 }
