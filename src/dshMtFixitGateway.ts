@@ -14,7 +14,8 @@ import { handleEcosystemSnapshotRequest } from "./ecosystemSnapshot.js";
 const DSH_PREFIX = "/api/dsh/mtfixit";
 const MAX_DSH_JOB_BODY_BYTES = 256 * 1024;
 const MAX_WORKER_JOB_BODY_BYTES = 56 * 1024;
-const MAX_EMBEDDED_SNAPSHOT_CHARS = 28_000;
+const MAX_EMBEDDED_SNAPSHOT_CHARS = 20_000;
+const MAX_EMBEDDED_COMMLINK_CHARS = 28_000;
 
 type JsonRecord = Record<string, any>;
 
@@ -30,9 +31,6 @@ function nonEmptySecrets(values: Array<string | undefined>): string[] {
 }
 
 export function isDshMtFixItAuthorized(request: Pick<IncomingMessage, "headers">, env: NodeJS.ProcessEnv): boolean {
-  // Canonical DSH -> rotator auth uses x-dsh-mtfixit-key with the SPMT platform key.
-  // Keep the former bridge header/env names during rolling deploys so an older DSH
-  // instance can still reach the repaired gateway while both services are updated.
   const expectedSecrets = nonEmptySecrets([
     env.SPMT_API_KEY,
     env.SPMT_PLATFORM_API_KEY,
@@ -48,8 +46,6 @@ export function isDshMtFixItAuthorized(request: Pick<IncomingMessage, "headers">
 }
 
 export function mapDshMtFixItWorkerPath(method: string, pathname: string, search = ""): string | null {
-  // /api/dsh/mtfixit was the original DSH route. Accept it as an alias for job
-  // creation while DSH migrates to the explicit /jobs contract.
   if (method === "POST" && (pathname === DSH_PREFIX || pathname === `${DSH_PREFIX}/jobs`)) return `/api/codex/jobs${search}`;
   if (method === "GET" && /^\/api\/dsh\/mtfixit\/jobs\/[a-zA-Z0-9_-]{8,100}$/.test(pathname)) return `${pathname.replace(DSH_PREFIX, "/api/codex")}${search}`;
   return null;
@@ -94,7 +90,28 @@ function ecosystemLines(snapshotJson: unknown): string[] {
         );
       }
     }
-    return lines.slice(0, 30);
+    return lines.slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+function commlinkLines(snapshotJson: unknown): string[] {
+  if (typeof snapshotJson !== "string" || !snapshotJson.trim()) return [];
+  try {
+    const snapshot = JSON.parse(snapshotJson);
+    const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    return items.slice(-18).map((itemValue: unknown) => {
+      const item = objectValue(itemValue);
+      const actor = objectValue(item.actor);
+      const timestamp = String(item.timestamp || "time-unknown").replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+      const source = String(item.sourceApp || item.kind || "unknown").slice(0, 60);
+      const eventType = String(item.eventType || item.kind || "event").slice(0, 70);
+      const channel = String(item.channel || "unknown").slice(0, 80);
+      const who = String(actor.displayName || actor.username || actor.id || "system").slice(0, 80);
+      const text = String(item.text || "").replace(/\s+/g, " ").trim().slice(0, 240);
+      return `${timestamp} | ${source}/${eventType} | ${channel} | ${who}: ${text || "(no text)"}`;
+    });
   } catch {
     return [];
   }
@@ -106,21 +123,25 @@ export function prepareDshMtFixItJobPayload(value: unknown): JsonRecord {
   const context = { ...objectValue(source.context) };
   const evidence = { ...objectValue(context.diagnosticEvidence) };
   const ecosystemSnapshot = { ...objectValue(evidence.ecosystemSnapshot) };
+  const commlinkSnapshot = { ...objectValue(evidence.commlinkSnapshot) };
   const adapters = objectValue(evidence.adapters);
   const originalDescription = String(source.description || "").trim().slice(0, 2600);
 
+  const recentCommlink = commlinkLines(commlinkSnapshot.snapshotJson);
   const diagnosticLines = ecosystemLines(ecosystemSnapshot.snapshotJson);
-  const adapterLines = Object.entries(adapters).slice(0, 12).map(([name, adapterValue]) => {
+  const adapterLines = Object.entries(adapters).slice(0, 10).map(([name, adapterValue]) => {
     const adapter = objectValue(adapterValue);
     return `${name}: ${String(adapter.status || "unknown")}${adapter.note ? ` - ${String(adapter.note).slice(0, 180)}` : ""}`;
   });
   const brief = [
     originalDescription,
     "",
-    "Athena diagnostic snapshot (tenant-scoped):",
-    `tenant=${String(source.tenantId || evidence?.scope?.tenantId || "unknown")}`,
+    "Athena diagnostic evidence (ecosystem-wide):",
+    `tenantHint=${String(source.tenantId || evidence?.scope?.tenantId || "none; not required for evidence capture")}`,
     `source=${String(source.source || context.source || "unknown")}`,
-    ...diagnosticLines,
+    `commlinkScope=${String(commlinkSnapshot.scope || "unknown")}; commlinkStatus=${String(commlinkSnapshot.status || "unknown")}; commlinkItems=${String(commlinkSnapshot.itemCount ?? "?")}`,
+    ...(recentCommlink.length ? ["Recent Commlink evidence:", ...recentCommlink] : []),
+    ...(diagnosticLines.length ? ["Service health:", ...diagnosticLines] : []),
     ...(adapterLines.length ? ["Evidence adapters:", ...adapterLines] : []),
   ].filter(Boolean).join("\n").slice(0, 3_950);
   payload.description = brief || originalDescription;
@@ -129,7 +150,12 @@ export function prepareDshMtFixItJobPayload(value: unknown): JsonRecord {
     ecosystemSnapshot.snapshotJson = ecosystemSnapshot.snapshotJson.slice(0, MAX_EMBEDDED_SNAPSHOT_CHARS);
     ecosystemSnapshot.truncated = true;
   }
+  if (typeof commlinkSnapshot.snapshotJson === "string" && commlinkSnapshot.snapshotJson.length > MAX_EMBEDDED_COMMLINK_CHARS) {
+    commlinkSnapshot.snapshotJson = commlinkSnapshot.snapshotJson.slice(0, MAX_EMBEDDED_COMMLINK_CHARS);
+    commlinkSnapshot.truncated = true;
+  }
   if (Object.keys(ecosystemSnapshot).length) evidence.ecosystemSnapshot = ecosystemSnapshot;
+  if (Object.keys(commlinkSnapshot).length) evidence.commlinkSnapshot = commlinkSnapshot;
   if (Object.keys(evidence).length) context.diagnosticEvidence = evidence;
   payload.context = context;
 
@@ -138,6 +164,14 @@ export function prepareDshMtFixItJobPayload(value: unknown): JsonRecord {
     ecosystemSnapshot.snapshotJson = "[Snapshot body trimmed by mtfixit gateway; service-state summary is embedded in description.]";
     ecosystemSnapshot.truncated = true;
     evidence.ecosystemSnapshot = ecosystemSnapshot;
+    context.diagnosticEvidence = evidence;
+    payload.context = context;
+    serialized = JSON.stringify(payload);
+  }
+  if (Buffer.byteLength(serialized, "utf8") > MAX_WORKER_JOB_BODY_BYTES && typeof commlinkSnapshot.snapshotJson === "string") {
+    commlinkSnapshot.snapshotJson = "[Commlink body trimmed by mtfixit gateway; recent ecosystem evidence is embedded in description.]";
+    commlinkSnapshot.truncated = true;
+    evidence.commlinkSnapshot = commlinkSnapshot;
     context.diagnosticEvidence = evidence;
     payload.context = context;
     serialized = JSON.stringify(payload);
@@ -157,6 +191,13 @@ export function prepareDshMtFixItJobPayload(value: unknown): JsonRecord {
         ecosystemSnapshot: {
           status: ecosystemSnapshot.status || "trimmed",
           endpoint: ecosystemSnapshot.endpoint || null,
+          truncated: true,
+        },
+        commlinkSnapshot: {
+          status: commlinkSnapshot.status || "trimmed",
+          endpoint: commlinkSnapshot.endpoint || null,
+          scope: commlinkSnapshot.scope || "ecosystem-global",
+          itemCount: commlinkSnapshot.itemCount ?? null,
           truncated: true,
         },
         adapters,
