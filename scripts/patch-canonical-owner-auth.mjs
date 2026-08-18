@@ -32,6 +32,12 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
     '  const isWrite = incoming.method !== "GET" && incoming.method !== "HEAD";\n',
     '',
   );
+  // Once compatibility-header injection is removed there is no reason to make
+  // a second SPMT userinfo call for every otherwise-unrelated proxy request.
+  next = next.replace(
+    '  const authenticated = await requireSpmtAdmin(incoming, env);\n',
+    '',
+  );
   next = next.replace(
     '    { label: "Rotator action bridge", status: has("ROTATOR_DASHBOARD_ACTION_TOKEN") ? "ready" : "missing", detail: "Server-side compatibility token; browser prompt removed" },\n',
     '    { label: "Rotator owner auth", status: has("MOUNTAINVIEW_CLIENT_SECRET") || has("ROTATOR_SPMT_CLIENT_SECRET") ? "ready" : "missing", detail: "Canonical SPMT OAuth owner/admin session" },\n',
@@ -54,6 +60,7 @@ patchFile('src/dashboardServer.ts', (source) => {
   // Browser actions use the canonical SPMT owner session. Same-process Rotator
   // callers use a loopback-only marker instead of an environment secret.
   next = next.replaceAll('    authorizeAction(request, env);', '    await authorizeAction(request, env);');
+  next = next.replaceAll('/mountainview/auth/login?next=%2F', '/auth/spmt/login?next=%2F');
   next = next.replace(
     /export function authorizeAction\(request: IncomingMessage, env: NodeJS\.ProcessEnv\): void \{[\s\S]*?\n\}/,
     [
@@ -101,17 +108,8 @@ patchFile('src/athenaRepairUi.ts', (source) => {
   return next;
 });
 
-patchFile('src/publicCodexFixer.ts', (source) => {
-  let next = source;
-
-  // Browser owner writes are authorized by the same SPMT session as reads.
-  // Service-to-service Codex worker auth remains separate from browser identity.
-  next = next.replace(
-    '  const ownerWriteAuth = method !== "GET" && await ownerUiAuthorized(request, env);',
-    '  const ownerWriteAuth = method !== "GET" && await requireSpmtAdmin(request, env);',
-  );
-
-  return next;
-});
+// publicCodexFixer already has the right owner boundary: ownerUiAuthorized()
+// combines canonical requireSpmtAdmin() with the same-origin UI marker/origin
+// check, while authorized() remains the separate machine-worker lane.
 
 console.log('Canonical SPMT owner auth and same-process Rotator action normalization applied.');
