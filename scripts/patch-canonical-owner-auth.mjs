@@ -37,6 +37,13 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
     '    { label: "Rotator owner auth", status: has("MOUNTAINVIEW_CLIENT_SECRET") || has("ROTATOR_SPMT_CLIENT_SECRET") ? "ready" : "missing", detail: "Canonical SPMT OAuth owner/admin session" },\n',
   );
 
+  // The public gateway must never allow a browser to forge the local-process
+  // marker used by Rotator components talking to the internal dashboard.
+  const proxyMarker = '  const headers: IncomingHttpHeaders = { ...incoming.headers, host: `127.0.0.1:${internalPort}` };\n';
+  if (next.includes(proxyMarker) && !next.includes('delete headers["x-rotator-internal"]')) {
+    next = next.replace(proxyMarker, proxyMarker + '  delete headers["x-rotator-internal"];\n');
+  }
+
   if (next.includes('hasMountainViewAdminSession')) throw new Error('legacy MountainView session auth remains in Athena gateway');
   return next;
 });
@@ -44,12 +51,21 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
 patchFile('src/dashboardServer.ts', (source) => {
   let next = source;
 
-  // All owner actions use the same SPMT admin identity as the dashboard itself.
+  // Browser actions use the canonical SPMT owner session. Same-process Rotator
+  // callers use a loopback-only marker instead of an environment secret.
   next = next.replaceAll('    authorizeAction(request, env);', '    await authorizeAction(request, env);');
   next = next.replace(
     /export function authorizeAction\(request: IncomingMessage, env: NodeJS\.ProcessEnv\): void \{[\s\S]*?\n\}/,
     [
+      'function isSameProcessAction(request: IncomingMessage): boolean {',
+      '  const remote = String(request.socket?.remoteAddress || "");',
+      '  const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";',
+      '  const marker = String(request.headers["x-rotator-internal"] || "").trim();',
+      '  return loopback && marker === "same-process";',
+      '}',
+      '',
       'export async function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<void> {',
+      '  if (isSameProcessAction(request)) return;',
       '  const identity = await requireSpmtAdmin(request, env);',
       '  if (!identity) throw new HttpError(401, "SPMT owner/admin session required.");',
       '}',
@@ -57,6 +73,31 @@ patchFile('src/dashboardServer.ts', (source) => {
   );
 
   if (next.includes('Invalid rotator dashboard action token.')) throw new Error('legacy rotator action token gate remains');
+  if (next.includes('ROTATOR_DASHBOARD_ACTION_TOKEN is not configured')) throw new Error('legacy rotator action token configuration remains');
+  return next;
+});
+
+patchFile('src/athenaIncidentTrigger.ts', (source) => {
+  let next = source;
+  next = next.replace('  const token = String(env.ROTATOR_DASHBOARD_ACTION_TOKEN ?? "").trim();\n', '');
+  next = next.replace('    if (!token) throw new Error("ROTATOR_DASHBOARD_ACTION_TOKEN is not configured");\n', '');
+  next = next.replace(
+    '      headers: { "x-rotator-action-token": token, "content-type": "application/json" },',
+    '      headers: { "x-rotator-internal": "same-process", "content-type": "application/json" },',
+  );
+  return next;
+});
+
+patchFile('src/athenaRepairUi.ts', (source) => {
+  let next = source;
+  next = next.replace(
+    '  const token = String(env.ROTATOR_DASHBOARD_ACTION_TOKEN || "").trim();\n  if (!token) throw new Error("ROTATOR_DASHBOARD_ACTION_TOKEN is not configured.");\n',
+    '',
+  );
+  next = next.replace(
+    '      "x-rotator-action-token": token,',
+    '      "x-rotator-internal": "same-process",',
+  );
   return next;
 });
 
@@ -64,7 +105,7 @@ patchFile('src/publicCodexFixer.ts', (source) => {
   let next = source;
 
   // Browser owner writes are authorized by the same SPMT session as reads.
-  // The outer gateway already enforces same-origin mutation checks and rate limits.
+  // Service-to-service Codex worker auth remains separate from browser identity.
   next = next.replace(
     '  const ownerWriteAuth = method !== "GET" && await ownerUiAuthorized(request, env);',
     '  const ownerWriteAuth = method !== "GET" && await requireSpmtAdmin(request, env);',
@@ -73,4 +114,4 @@ patchFile('src/publicCodexFixer.ts', (source) => {
   return next;
 });
 
-console.log('Canonical SPMT owner auth normalization applied.');
+console.log('Canonical SPMT owner auth and same-process Rotator action normalization applied.');
