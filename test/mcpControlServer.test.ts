@@ -19,7 +19,7 @@ describe("MCP control server", () => {
     expect(isSpmtAdmin({ id: "1", role: "member" })).toBe(false);
   });
 
-  it("exposes coding, Fly observability, bounded Quackverse volume reads, and allowlisted worker tools without generic shell or secret access", () => {
+  it("exposes coding, repair audit, Fly observability, bounded Quackverse volume reads, and allowlisted worker tools without generic shell or secret access", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
@@ -28,6 +28,7 @@ describe("MCP control server", () => {
       "get_coding_job",
       "get_coding_job_artifact",
       "publish_coding_job",
+      "get_athena_repair_audit",
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
@@ -46,6 +47,7 @@ describe("MCP control server", () => {
       "list_coding_jobs",
       "get_coding_job",
       "get_coding_job_artifact",
+      "get_athena_repair_audit",
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
@@ -54,6 +56,9 @@ describe("MCP control server", () => {
       "get_spmt_llm_worker_status",
       "get_spmt_embedding_worker_status",
     ]);
+    expect(tools.find((tool) => tool.name === "get_athena_repair_audit")?.inputSchema.properties).toMatchObject({
+      format: { type: "string", enum: ["json", "text"] },
+    });
     expect(tools.find((tool) => tool.name === "sample_fly_logs")?.inputSchema.properties).toMatchObject({
       limit: { type: "integer", minimum: 1, maximum: 500 },
       durationMs: { type: "integer", minimum: 500, maximum: 10000 },
