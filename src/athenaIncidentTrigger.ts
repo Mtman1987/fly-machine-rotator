@@ -4,6 +4,7 @@ import { buildFixId } from "./fixStore.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { SUCCESS_INTERVAL_MS } from "./rotationControl.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
+import { prepareIncidentRepairForApproval } from "./incidentRepairPipeline.js";
 
 export interface AthenaIncidentAttempt {
   incidentId: string;
@@ -66,8 +67,10 @@ export async function triggerAthenaForIncident(
     });
     const body = await response.text();
     if (!response.ok) throw new Error(`Athena generate returned ${response.status}: ${body.slice(0, 500)}`);
-    attempt.status = "completed";
-    attempt.summary = body.slice(0, 500);
+
+    const preparation = await prepareIncidentRepairForApproval(event.appName, event.fingerprint, env);
+    attempt.status = preparation.status === "error" ? "failed" : "completed";
+    attempt.summary = `${body.slice(0, 240)} preparation=${preparation.status}: ${preparation.message}`.slice(0, 1000);
   } catch (error) {
     attempt.status = "failed";
     attempt.summary = error instanceof Error ? error.message : String(error);

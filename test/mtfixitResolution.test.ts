@@ -37,11 +37,17 @@ test('approved draft repairs use the supported GitHub GraphQL ready-for-review m
   assert.doesNotMatch(source, /\/ready_for_review/);
 });
 
-test('resolution route stays behind the authenticated DSH mtfixit gateway', () => {
+test('resolution route stays behind scoped SPMT service auth or legacy compatibility auth', () => {
   const gateway = readFileSync(resolve(process.cwd(), 'src/dshMtFixitGateway.ts'), 'utf8');
-  const authIndex = gateway.indexOf('if (!isDshMtFixItAuthorized(request, env))');
-  const resolutionIndex = gateway.indexOf('handleMtFixItResolutionRequest');
-  assert.ok(authIndex >= 0);
+  const serviceAuthIndex = gateway.indexOf('isDshMtFixItServiceAuthorized(request, env)');
+  const legacyAuthIndex = gateway.indexOf('isDshMtFixItAuthorized(request, env)');
+  const denialIndex = gateway.indexOf('if (!serviceAuthorized && !legacyAuthorized)');
+  const resolutionIndex = gateway.lastIndexOf('handleMtFixItResolutionRequest');
+  assert.ok(serviceAuthIndex >= 0);
+  assert.ok(legacyAuthIndex >= 0);
+  assert.ok(denialIndex >= 0);
   assert.ok(resolutionIndex >= 0);
-  assert.ok(authIndex < gateway.lastIndexOf('handleMtFixItResolutionRequest'));
+  assert.ok(serviceAuthIndex < resolutionIndex);
+  assert.ok(legacyAuthIndex < resolutionIndex);
+  assert.ok(denialIndex < resolutionIndex);
 });

@@ -7,6 +7,10 @@ export type FixStatus =
   | "applied"
   | "checked"
   | "pushed"
+  | "awaiting_approval"
+  | "deploying"
+  | "deployed"
+  | "denied"
   | "handled"
   | "error";
 
@@ -55,7 +59,19 @@ export interface FixQualityGate {
 
 export interface FixAttempt {
   attemptedAt: string;
-  action: "generate" | "reconcile" | "apply" | "check" | "push" | "verify" | "handled";
+  action:
+    | "generate"
+    | "reconcile"
+    | "apply"
+    | "check"
+    | "push"
+    | "approval-request"
+    | "approve"
+    | "deny"
+    | "merge"
+    | "deploy"
+    | "verify"
+    | "handled";
   ok: boolean;
   summary: string;
   details?: string;
@@ -69,6 +85,33 @@ export interface FixRepoSnapshot {
   originCommit?: string;
   dirty?: boolean;
   contextPaths: string[];
+}
+
+export interface FixApprovalState {
+  status: "awaiting_approval" | "approved" | "denied" | "deploying" | "deployed" | "failed";
+  requestedAt?: string;
+  decidedAt?: string;
+  decidedBy?: string;
+  message?: string;
+  pullRequest?: {
+    number: number;
+    url: string;
+    branch: string;
+    commit: string;
+  };
+  mergeCommit?: string;
+  workflow?: {
+    id: number;
+    name: string;
+    status: string;
+    conclusion?: string | null;
+    url?: string;
+  };
+  dm?: {
+    channelId?: string;
+    messageId?: string;
+    sentAt?: string;
+  };
 }
 
 export interface FixRecord {
@@ -93,6 +136,7 @@ export interface FixRecord {
   repoSnapshot?: FixRepoSnapshot;
   checkResult?: FixCheckResult;
   pushResult?: FixPushResult;
+  approval?: FixApprovalState;
   verificationResult?: FixVerificationResult;
   lastError?: string;
   handledAt?: string;
@@ -151,7 +195,7 @@ export function appendFixAttempt(
   record: FixRecord,
   attempt: FixAttempt
 ): FixRecord {
-  record.attempts = [...(Array.isArray(record.attempts) ? record.attempts : []), attempt].slice(-20);
+  record.attempts = [...(Array.isArray(record.attempts) ? record.attempts : []), attempt].slice(-30);
   return record;
 }
 
@@ -162,6 +206,7 @@ function normalizeFixRecord(record: FixRecord): FixRecord {
     attempts: Array.isArray(record.attempts) ? record.attempts : [],
     confidenceSignals: Array.isArray(record.confidenceSignals) ? record.confidenceSignals : undefined,
     qualityGate: normalizeQualityGate(record.qualityGate),
+    approval: normalizeApproval(record.approval),
     verificationResult: record.verificationResult && typeof record.verificationResult === "object"
       ? record.verificationResult
       : undefined
@@ -174,4 +219,10 @@ function normalizeQualityGate(value: FixRecord["qualityGate"]): FixRecord["quali
     ...value,
     signals: Array.isArray(value.signals) ? value.signals : []
   };
+}
+
+function normalizeApproval(value: FixRecord["approval"]): FixRecord["approval"] {
+  if (!value || typeof value !== "object") return undefined;
+  const allowed = new Set(["awaiting_approval", "approved", "denied", "deploying", "deployed", "failed"]);
+  return allowed.has(String(value.status)) ? value : undefined;
 }
