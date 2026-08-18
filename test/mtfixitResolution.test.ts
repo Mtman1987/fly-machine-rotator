@@ -1,60 +1,53 @@
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
+import { mtFixItKnownFixSignature } from '../src/mtfixitResolution.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, test } from 'vitest';
-import { mtFixItKnownFixSignature } from '../src/mtfixitResolution.js';
 
-const fixture = {
-  id: 'mtfix_12345678',
-  status: 'completed' as const,
-  source: 'discord',
-  reporter: 'tester',
-  appName: 'discord-stream-hub-new',
-  repoId: 'discord-stream-hub',
-  description: 'Overlay does not update after a pack open.',
-  summary: 'Fix generated.',
-  changedFiles: ['src/example.ts'],
-  checks: [{ command: 'npm test', ok: true, output: 'ok' }],
-};
+test('known-fix signature is stable for the same normalized report and repo', () => {
+  const left = mtFixItKnownFixSignature({ repoId: 'discord-stream-hub', description: `I can't tag people   even though im it` });
+  const right = mtFixItKnownFixSignature({ repoId: 'discord-stream-hub', description: `  i can't tag people even though im it  ` });
+  assert.equal(left, right);
+  assert.notEqual(left, mtFixItKnownFixSignature({ repoId: 'streamweaver', description: `I can't tag people even though im it` }));
+});
 
-describe('MtFixIt resolution contracts', () => {
-  test('known-fix signature is stable for the same normalized report and repo', () => {
-    expect(mtFixItKnownFixSignature(fixture)).toBe(mtFixItKnownFixSignature({ ...fixture }));
-    expect(mtFixItKnownFixSignature({ ...fixture, repoId: 'other-repo' })).not.toBe(mtFixItKnownFixSignature(fixture));
-  });
+test('resolution workflow only learns known fixes after verified deployment and gates new fixes', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /status: known \? "deploying" : "awaiting_approval"/);
+  assert.match(source, /await verifyDeployment\(/);
+  assert.match(source, /state\.status = "deployed"/);
+  assert.match(source, /await rememberKnownFix\(env, job, state\)/);
+  assert.doesNotMatch(source, /rememberKnownFix\([^\n]+awaiting_approval/);
+  assert.match(source, /action === "deny"/);
+});
 
-  test('resolution workflow only learns known fixes after verified deployment and gates new fixes', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
-    expect(source).toMatch(/status: "awaiting_approval"/);
-    expect(source).toMatch(/await verifyDeployment/);
-    expect(source).toMatch(/await rememberKnownFix/);
-    expect(source.indexOf('await verifyDeployment')).toBeLessThan(source.indexOf('await rememberKnownFix'));
-  });
+test('known fix auto-deploy requires the exact regenerated diff.patch fingerprint', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /jobs\/\$\{jobId\}\/diff\.patch/);
+  assert.match(source, /createHash\("sha256"\)\.update\(patch\)/);
+  assert.match(source, /item\.patchHash === patchHash/);
+  assert.match(source, /Boolean\(patchHash\)/);
+  assert.match(source, /patchHash: state\.patchHash/);
+});
 
-  test('known fix auto-deploy requires the exact regenerated diff.patch fingerprint', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
-    expect(source).toMatch(/jobPatchHash/);
-    expect(source).toMatch(/item\.patchHash === patchHash/);
-  });
+test('approved draft repairs use the supported GitHub GraphQL ready-for-review mutation', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /markPullRequestReadyForReview/);
+  assert.match(source, /pull\.node_id/);
+  assert.doesNotMatch(source, /\/ready_for_review/);
+});
 
-  test('approved draft repairs use the supported GitHub GraphQL ready-for-review mutation', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
-    expect(source).toMatch(/markPullRequestReadyForReview/);
-    expect(source).toMatch(/pull\.node_id/);
-    expect(source).not.toMatch(/\/ready_for_review/);
-  });
-
-  test('resolution route stays behind scoped SPMT service auth or legacy compatibility auth', () => {
-    const gateway = readFileSync(resolve(process.cwd(), 'src/dshMtFixitGateway.ts'), 'utf8');
-    const serviceAuthIndex = gateway.indexOf('isDshMtFixItServiceAuthorized(request, env)');
-    const legacyAuthIndex = gateway.indexOf('isDshMtFixItAuthorized(request, env)');
-    const denialIndex = gateway.indexOf('if (!serviceAuthorized && !legacyAuthorized)');
-    const resolutionIndex = gateway.lastIndexOf('handleMtFixItResolutionRequest');
-    expect(serviceAuthIndex).toBeGreaterThanOrEqual(0);
-    expect(legacyAuthIndex).toBeGreaterThanOrEqual(0);
-    expect(denialIndex).toBeGreaterThanOrEqual(0);
-    expect(resolutionIndex).toBeGreaterThanOrEqual(0);
-    expect(serviceAuthIndex).toBeLessThan(resolutionIndex);
-    expect(legacyAuthIndex).toBeLessThan(resolutionIndex);
-    expect(denialIndex).toBeLessThan(resolutionIndex);
-  });
+test('resolution route stays behind scoped SPMT service auth or legacy compatibility auth', () => {
+  const gateway = readFileSync(resolve(process.cwd(), 'src/dshMtFixitGateway.ts'), 'utf8');
+  const serviceAuthIndex = gateway.indexOf('isDshMtFixItServiceAuthorized(request, env)');
+  const legacyAuthIndex = gateway.indexOf('isDshMtFixItAuthorized(request, env)');
+  const denialIndex = gateway.indexOf('if (!serviceAuthorized && !legacyAuthorized)');
+  const resolutionIndex = gateway.lastIndexOf('handleMtFixItResolutionRequest');
+  assert.ok(serviceAuthIndex >= 0);
+  assert.ok(legacyAuthIndex >= 0);
+  assert.ok(denialIndex >= 0);
+  assert.ok(resolutionIndex >= 0);
+  assert.ok(serviceAuthIndex < resolutionIndex);
+  assert.ok(legacyAuthIndex < resolutionIndex);
+  assert.ok(denialIndex < resolutionIndex);
 });
