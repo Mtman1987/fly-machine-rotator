@@ -32,6 +32,7 @@ describe("rotator protected error baseline", () => {
 
     const server = startDashboardServer({
       NODE_ENV: "test", PORT: "0",
+      FLY_API_TOKEN: "placeholder-for-test-config",
       LOG_ERROR_HISTORY_FILE: historyFile, LOG_ERROR_DEDUPE_FILE: dedupeFile,
       ROTATOR_FIXES_FILE: fixesFile, ROTATOR_IGNORE_RULES_FILE: ignoreFile,
       ROTATOR_ERROR_ARCHIVE_DIR: archives, ROTATOR_ERROR_BASELINE_FILE: baselineFile,
