@@ -46,6 +46,25 @@ patchFile('src/dashboardServer.ts', (source) => {
     next = next.replace(marker, marker + 'import { requestRepairApproval } from "./repairApproval.js";\n');
   }
 
+  const countsMarker = [
+    '    checked: 0,',
+    '    pushed: 0,',
+    '    handled: 0,',
+    '    error: 0',
+  ].join('\n');
+  if (next.includes(countsMarker) && !next.includes('    awaiting_approval: 0,')) {
+    next = next.replace(countsMarker, [
+      '    checked: 0,',
+      '    pushed: 0,',
+      '    awaiting_approval: 0,',
+      '    deploying: 0,',
+      '    deployed: 0,',
+      '    denied: 0,',
+      '    handled: 0,',
+      '    error: 0',
+    ].join('\n'));
+  }
+
   const autoMarker = [
     '      if (record.checkResult.ok && await maybePushCheckedFixBranch(record, config, repoPath, env)) {',
     '        pushed += 1;',
@@ -97,6 +116,11 @@ patchFile('src/dashboardServer.ts', (source) => {
 
 patchFile('src/athenaSpmtGateway.ts', (source) => {
   let next = source;
+  if (!next.includes('hasMountainViewAdminSession')) {
+    const marker = 'import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";\n';
+    if (!next.includes(marker)) throw new Error('athenaSpmtGateway MountainView auth import marker missing');
+    next = next.replace(marker, marker + 'import { hasMountainViewAdminSession } from "./mountainView.js";\n');
+  }
   if (!next.includes('from "./repairApproval.js"')) {
     const marker = 'import { listCodeReferences, listCodexJobs, type PublicCodexJob } from "./publicCodexFixer.js";\n';
     if (!next.includes(marker)) throw new Error('athenaSpmtGateway import marker missing');
