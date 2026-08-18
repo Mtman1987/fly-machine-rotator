@@ -116,11 +116,6 @@ patchFile('src/dashboardServer.ts', (source) => {
 
 patchFile('src/athenaSpmtGateway.ts', (source) => {
   let next = source;
-  if (!next.includes('hasMountainViewAdminSession')) {
-    const marker = 'import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";\n';
-    if (!next.includes(marker)) throw new Error('athenaSpmtGateway MountainView auth import marker missing');
-    next = next.replace(marker, marker + 'import { hasMountainViewAdminSession } from "./mountainView.js";\n');
-  }
   if (!next.includes('from "./repairApproval.js"')) {
     const marker = 'import { listCodeReferences, listCodexJobs, type PublicCodexJob } from "./publicCodexFixer.js";\n';
     if (!next.includes(marker)) throw new Error('athenaSpmtGateway import marker missing');
@@ -132,7 +127,7 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
     if (!next.includes(marker)) throw new Error('athenaSpmtGateway decision route marker missing');
     const block = [
       '      if ((request.method === "GET" || request.method === "POST") && url.pathname === "/athena/repair-decision") {',
-      '        if (!(await hasMountainViewAdminSession(request, env))) return redirectToLogin(response, url);',
+      '        if (!(await requireSpmtAdmin(request, env))) return redirectToLogin(response, url);',
       '        if (request.method === "GET") {',
       '          const fixId = String(url.searchParams.get("fix") || "").trim();',
       '          const action = normalizeRepairAction(url.searchParams.get("action"));',
