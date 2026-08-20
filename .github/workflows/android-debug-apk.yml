@@ -7,8 +7,12 @@ on:
       - ".github/workflows/android-debug-apk.yml"
       - "mobile/**"
       - "src/mountainView.ts"
+      - "src/publicCodexFixer.ts"
       - "scripts/patch-ecosystem-workspace-parity.mjs"
       - "scripts/patch-private-athena-room.mjs"
+      - "scripts/patch-athena-room-coder-control.mjs"
+      - "scripts/patch-native-athena-foreground-wake.mjs"
+      - "scripts/patch-native-athena-wake-regex.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
       - "scripts/patch-session-cache.mjs"
@@ -20,8 +24,12 @@ on:
       - ".github/workflows/android-debug-apk.yml"
       - "mobile/**"
       - "src/mountainView.ts"
+      - "src/publicCodexFixer.ts"
       - "scripts/patch-ecosystem-workspace-parity.mjs"
       - "scripts/patch-private-athena-room.mjs"
+      - "scripts/patch-athena-room-coder-control.mjs"
+      - "scripts/patch-native-athena-foreground-wake.mjs"
+      - "scripts/patch-native-athena-wake-regex.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
       - "scripts/patch-session-cache.mjs"
@@ -54,8 +62,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion, private Athena room, cache, command, and presence parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs
+      - name: Apply current SPMT Companion, private Athena room, Coder control, native wake, cache, command, and presence parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs && node scripts/patch-native-athena-wake-regex.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -90,8 +98,8 @@ jobs:
           java-version: 17
       - name: Install dependencies
         run: npm ci
-      - name: Apply current SPMT Companion, private Athena room, cache, command, and presence parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs
+      - name: Apply current SPMT Companion, private Athena room, Coder control, native wake, cache, command, and presence parity
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs && node scripts/patch-native-athena-wake-regex.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -116,7 +124,7 @@ jobs:
         with:
           tag_name: mountainview-latest
           name: SpaceMountain Companion Latest Android APK
-          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, persistent private HearMeOut Athena rooms for authenticated glasses wake/reconnect, deterministic voice intents, GPT-5.6 Sol fallback for ambiguous natural language, cache-first workspace restore, and canonical ecosystem presence. Legacy MountainView APK filenames remain available for existing testers.
+          body: Latest installable SpaceMountain Companion Android APK for testing. Uses the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, persistent private HearMeOut Athena rooms for authenticated glasses wake/reconnect, native foreground Hey Athena/Annie listening, private-room Athena Coder controls with explicit draft-PR confirmation, deterministic voice intents, GPT-5.6 Sol fallback for ambiguous natural language, cache-first workspace restore, and canonical ecosystem presence. Legacy MountainView APK filenames remain available for existing testers.
           prerelease: true
           files: |
             mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk
