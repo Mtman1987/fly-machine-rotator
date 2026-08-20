@@ -3,7 +3,7 @@
     "name": "SpaceMountain Companion",
     "slug": "mountainview-ai",
     "scheme": "mountainviewai",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "orientation": "portrait",
     "ios": {
       "bundleIdentifier": "live.spacemountain.mountainviewai",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "live.spacemountain.mountainviewai",
-      "versionCode": 32,
+      "versionCode": 33,
       "permissions": ["CAMERA", "RECORD_AUDIO"],
       "config": {
         "metaWearablesAndroidAppId": "${MOUNTAINVIEW_META_APP_ID}"
