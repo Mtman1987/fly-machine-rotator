@@ -12,6 +12,7 @@ on:
       - "scripts/patch-private-athena-room.mjs"
       - "scripts/patch-athena-room-coder-control.mjs"
       - "scripts/patch-native-athena-foreground-wake.mjs"
+      - "scripts/patch-native-athena-wake-regex.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
       - "scripts/patch-session-cache.mjs"
@@ -28,6 +29,7 @@ on:
       - "scripts/patch-private-athena-room.mjs"
       - "scripts/patch-athena-room-coder-control.mjs"
       - "scripts/patch-native-athena-foreground-wake.mjs"
+      - "scripts/patch-native-athena-wake-regex.mjs"
       - "scripts/patch-mountainview-command-parity.mjs"
       - "scripts/patch-mountainview-ai-router.mjs"
       - "scripts/patch-session-cache.mjs"
@@ -61,7 +63,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Apply current SPMT Companion, private Athena room, Coder control, native wake, cache, command, and presence parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs && node scripts/patch-native-athena-wake-regex.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
@@ -97,7 +99,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Apply current SPMT Companion, private Athena room, Coder control, native wake, cache, command, and presence parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs
+        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs && node scripts/patch-native-athena-wake-regex.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Generate Android project
