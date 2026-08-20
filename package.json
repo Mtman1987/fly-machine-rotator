@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "patch:spmt-llm": "node scripts/patch-spmt-local-llm.mjs",
-    "patch:workspace-parity": "node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-ecosystem-header.mjs && node scripts/patch-mobile-presence.mjs",
+    "patch:workspace-parity": "node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-ecosystem-header.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs",
     "patch:athena-repair": "node scripts/patch-athena-repair-gates.mjs && node scripts/patch-mtfixit-service-auth.mjs && node scripts/patch-athena-repair-audit.mjs && node scripts/patch-canonical-owner-auth.mjs && node scripts/patch-athena-provider-escalation.mjs",
     "prebuild": "npm run patch:spmt-llm && npm run patch:workspace-parity && npm run patch:athena-repair",
     "build": "tsc -p tsconfig.build.json",
@@ -29,7 +29,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.18",
-    "@types/qrcode": "^1.5.4",
+    "@types/qrcode": "^7.6.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.3"
