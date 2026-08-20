@@ -12,7 +12,8 @@ describe('MountainView mobile SPMT browser auth', () => {
     expect(patch).toContain('Linking.addEventListener("url"');
     expect(patch).toContain('mountainviewai://auth?code=');
     expect(patch).toContain('Finish sign-in in your browser');
-    expect(patch).not.toContain('window.ReactNativeWebView?.postMessage(${JSON.stringify(payload)})');
+    expect(patch).toContain('window.location.replace');
+    expect(patch).toContain('source = required(source, webViewBlock, browserBlock');
   });
 
   it('keeps the real MountainView session token out of the deep-link URL', () => {
