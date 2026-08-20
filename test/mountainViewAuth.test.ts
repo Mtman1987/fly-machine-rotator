@@ -27,10 +27,11 @@ describe("MountainView SPMT authentication", () => {
     expect(page).not.toContain("localStorage.mvToken");
   });
 
-  it("hands a mobile session directly to the native WebView bridge", () => {
-    const page = renderMobileAuthHandoff("token-with-<unsafe>");
-    expect(page).toContain("ReactNativeWebView");
-    expect(page).not.toContain("token-with-<unsafe>");
-    expect(page).toContain("\\u003cunsafe>");
+  it("returns mobile auth through the app scheme without the retired WebView bridge", () => {
+    const page = renderMobileAuthHandoff("code-with-<unsafe>");
+    expect(page).toContain("mountainviewai://auth?code=code-with-%3Cunsafe%3E");
+    expect(page).toContain("window.location.replace");
+    expect(page).not.toContain("ReactNativeWebView");
+    expect(page).not.toContain("code-with-<unsafe>");
   });
 });
