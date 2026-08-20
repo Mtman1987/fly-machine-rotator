@@ -54,7 +54,7 @@ await patch('mobile/App.tsx', (source) => {
     'Linking import',
   );
 
-  const tokenEffect = `  useEffect(() => {\n    tokenRef.current = token;\n  }, [token]);`;
+  const tokenEffect = `  useEffect(() => {\n    tokenRef.current = token;\n    if (token) void ensurePrivateAssistant("authenticated-session");\n  }, [token]);`;
   const deepLinkEffect = `${tokenEffect}\n\n  // MOUNTAINVIEW_BROWSER_AUTH_V1\n  useEffect(() => {\n    const receive = ({ url }: { url: string }) => {\n      if (/^mountainviewai:\\/\\/auth(?:[/?#]|$)/i.test(url)) void handleAuthUrl(url);\n    };\n    const subscription = Linking.addEventListener("url", receive);\n    void Linking.getInitialURL().then((url) => { if (url) receive({ url }); });\n    return () => subscription.remove();\n  }, []);`;
   source = required(source, tokenEffect, deepLinkEffect, 'deep link listener');
 
