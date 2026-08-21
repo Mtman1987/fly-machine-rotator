@@ -42,9 +42,12 @@ describe("Athena Coder v2", () => {
     expect(context).toContain("Repository inventory:");
   });
 
-  it("patches the repair executor with baseline validation and failed Fly sandbox retention", async () => {
+  it("patches the public repair executor with escalation, baseline validation, and Fly sandbox retention", async () => {
     const source = await readFile(join(process.cwd(), "src", "publicCodexFixer.ts"), "utf8");
     expect(source).toContain('buildRepositoryContext(description, workspace)');
+    expect(source).toContain('runCodexWorkspaceCoder(');
+    expect(source).toContain('Qwen produced no code changes.');
+    expect(source).toContain('Codex fallback:');
     expect(source).toContain('job.baselineChecks = []');
     expect(source).toContain('BASELINE FAILURE ACCEPTED');
     expect(source).toContain('Keep failed sandboxes with code changes on the Fly machine');
