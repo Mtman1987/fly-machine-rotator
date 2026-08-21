@@ -31,6 +31,10 @@ function boundedLimit(value) {
   return Math.min(100, Math.max(1, Math.floor(n)));
 }
 
+function boundedOutcome(value) {
+  return String(value || '').toLowerCase() === 'failed' ? 'failed' : 'success';
+}
+
 function redact(value) {
   return String(value ?? '')
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1[REDACTED]')
@@ -67,9 +71,24 @@ if(p.command==='chatqueue'){
   const r=read(file);
   if(!r) throw new Error('ChatGPT handoff was not found.');
   const now=new Date().toISOString();
-  r.status='resolved';r.updatedAt=now;r.resolvedAt=now;r.resolution=clip(p.resolution||'Resolved by ChatGPT conversation.',4000);
+  const outcome=p.outcome==='failed'?'failed':'success';
+  r.status='resolved';r.updatedAt=now;r.resolvedAt=now;r.resultStatus=outcome;r.resolution=clip(p.resolution||'Resolved by ChatGPT conversation.',4000);
   fs.writeFileSync(file,JSON.stringify(r,null,2));
-  result={ok:true,id:r.id,status:r.status,resolvedAt:r.resolvedAt,resolution:r.resolution};
+  let mtfixit=null;
+  if(r.userContext&&r.userContext.mtfixit&&safe(r.jobId)){
+    const resolutionFile=path.join(root,'mtfixit-resolution',r.jobId+'.json');
+    const state=read(resolutionFile);
+    if(state){
+      state.status=outcome==='success'?'deployed':'failed';
+      state.updatedAt=now;
+      state.message=clip(r.resolution,1200);
+      state.chatgptHandoffId=r.id;
+      state.chatgptOutcome=outcome;
+      fs.writeFileSync(resolutionFile,JSON.stringify(state,null,2));
+      mtfixit={jobId:r.jobId,status:state.status};
+    }
+  }
+  result={ok:true,id:r.id,status:r.status,outcome,resolvedAt:r.resolvedAt,resolution:r.resolution,mtfixit};
 }else{throw new Error('Unsupported ChatGPT handoff command.');}
 process.stdout.write('__CHATGPT_BEGIN__'+JSON.stringify(result)+'__CHATGPT_END__');
 `;
@@ -98,7 +117,10 @@ async function main() {
     const request = { command };
     if (command === 'chatqueue') request.limit = boundedLimit(payload.limit);
     if (command === 'chatjob' || command === 'chatdone') request.id = safeId(payload.id);
-    if (command === 'chatdone') request.resolution = boundedText(payload.resolution || 'Resolved by ChatGPT conversation.', 4000);
+    if (command === 'chatdone') {
+      request.outcome = boundedOutcome(payload.outcome);
+      request.resolution = boundedText(payload.resolution || 'Resolved by ChatGPT conversation.', 4000);
+    }
     const result = await flyRemote(request);
     process.stdout.write(JSON.stringify(result, null, 2));
   } catch (error) {

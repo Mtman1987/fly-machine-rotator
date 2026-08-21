@@ -11,26 +11,28 @@ test('known-fix signature is stable for the same normalized report and repo', ()
   assert.notEqual(left, mtFixItKnownFixSignature({ repoId: 'streamweaver', description: `I can't tag people even though im it` }));
 });
 
-test('resolution workflow only learns known fixes after verified deployment and gates new fixes', () => {
+test('resolution workflow learns known fixes only after verified deployment while all validated repairs enter ChatGPT review', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
-  assert.match(source, /status: known \? "deploying" : "awaiting_approval"/);
+  assert.match(source, /status: 'awaiting_chatgpt'/);
+  assert.match(source, /return queueMtFixItForChatGpt\(job, env, dashboardPort, signature\)/);
+  assert.match(source, /approveChatGptHandoff\(env, handoff\.id, 'mtfixit-standing-policy'\)/);
   assert.match(source, /await verifyDeployment\(/);
   assert.match(source, /state\.status = "deployed"/);
   assert.match(source, /await rememberKnownFix\(env, job, state\)/);
-  assert.doesNotMatch(source, /rememberKnownFix\([^\n]+awaiting_approval/);
-  assert.match(source, /action === "deny"/);
+  assert.doesNotMatch(source, /status: known \? "deploying" : "awaiting_approval"/);
 });
 
-test('known fix auto-deploy requires the exact regenerated diff.patch fingerprint', () => {
+test('known-fix history remains evidence for learning but cannot bypass ChatGPT review', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /jobs\/\$\{jobId\}\/diff\.patch/);
   assert.match(source, /createHash\("sha256"\)\.update\(patch\)/);
-  assert.match(source, /item\.patchHash === patchHash/);
-  assert.match(source, /Boolean\(patchHash\)/);
+  assert.match(source, /existing = values\.find\(\(item\) => item\.signature === state\.signature && item\.patchHash === state\.patchHash\)/);
   assert.match(source, /patchHash: state\.patchHash/);
+  assert.doesNotMatch(source, /item\.patchHash === patchHash/);
+  assert.doesNotMatch(source, /Boolean\(patchHash\).*known/s);
 });
 
-test('approved draft repairs use the supported GitHub GraphQL ready-for-review mutation', () => {
+test('legacy deployment helper still uses the supported GitHub GraphQL ready-for-review mutation', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /markPullRequestReadyForReview/);
   assert.match(source, /pull\.node_id/);
