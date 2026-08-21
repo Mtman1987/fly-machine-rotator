@@ -22,6 +22,8 @@ jobs:
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Parse bounded owner command
         id: parse
         uses: actions/github-script@v7
@@ -58,48 +60,31 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@v1
 
-      - name: Execute bounded command inside Rotator
+      - name: Execute bounded command through Fly
         id: execute
         continue-on-error: true
         env:
           CONTROL_PAYLOAD: ${{ steps.parse.outputs.payload }}
         run: |
           set +e
-          flyctl ssh console \
-            --app mtman-machine-rotator \
-            --command "node dist/githubControlCli.js '$CONTROL_PAYLOAD'" \
-            --access-token "$FLY_API_TOKEN" > raw-control-output.txt 2>&1
+          node scripts/github-control-direct.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Extract sanitized Rotator response
+      - name: Normalize failure result
         if: always()
         env:
-          COMMAND_NAME: ${{ steps.parse.outputs.command }}
           EXEC_EXIT_CODE: ${{ steps.execute.outputs.exit_code }}
         run: |
           node <<'NODE'
           const fs = require('fs');
-          const raw = fs.existsSync('raw-control-output.txt') ? fs.readFileSync('raw-control-output.txt', 'utf8') : '';
-          const startMarker = '__ROTATOR_CONTROL_BEGIN__';
-          const endMarker = '__ROTATOR_CONTROL_END__';
-          const start = raw.indexOf(startMarker);
-          const end = raw.indexOf(endMarker, start + startMarker.length);
+          const file = 'control-result.txt';
+          const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';
           let payload;
-          if (start >= 0 && end > start) {
-            const text = raw.slice(start + startMarker.length, end);
-            try { payload = JSON.parse(text); }
-            catch { payload = { ok: false, error: 'Rotator returned malformed sanitized output.' }; }
-          } else {
-            payload = {
-              ok: false,
-              error: 'Rotator command did not return a sanitized response. Inspect the GitHub Actions run for infrastructure-level failure.',
-              exitCode: Number(process.env.EXEC_EXIT_CODE || 1),
-            };
-          }
-          const output = JSON.stringify(payload, null, 2);
-          fs.writeFileSync('control-result.txt', output.slice(0, 55000));
+          try { payload = JSON.parse(raw || '{}'); }
+          catch { payload = { ok: false, error: 'Control runner returned malformed output.', exitCode: Number(process.env.EXEC_EXIT_CODE || 1) }; }
+          fs.writeFileSync(file, JSON.stringify(payload, null, 2).slice(0, 55000));
           NODE
 
       - name: Post result to control issue
