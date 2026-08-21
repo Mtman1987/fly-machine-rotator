@@ -6,7 +6,7 @@ Fly Machine Rotator exposes an authenticated Model Context Protocol endpoint at:
 https://<rotator-app>.fly.dev/mcp
 ```
 
-The endpoint is a narrow owner control bridge into the existing Rotator coding workflow and sanitized Fly observability. It does not expose a shell, Fly tokens, GitHub tokens, secret values, merge, deployment, or Machine mutation.
+The endpoint is a narrow owner control bridge into the existing Rotator coding workflow, sanitized Fly observability, and named runtime operations. It does not expose a generic shell, Fly tokens, GitHub tokens, secret values, merge, or deployment.
 
 ## Tools
 
@@ -18,6 +18,12 @@ Coding workflow:
 - `get_coding_job`: read job status, summary, changed files, and checks.
 - `get_coding_job_artifact`: read the exact diff, raw checks, or model response.
 - `publish_coding_job`: create a draft PR for a completed job with changes and passing checks. This requires an SPMT admin or owner and never merges or deploys.
+- `get_athena_repair_audit`: read persisted Athena repair activity and outcomes.
+
+Owner/admin runtime operations:
+
+- `run_rotation`: run one real tracked Rotator cycle across the configured managed Fly apps. It returns each app's handoff/restart result plus the persisted Rotator runtime state.
+- `get_signal_history`: read StreamWeaver's persisted Signal hint history and scheduler state. The caller may specify only a history limit from 1 to 100. The app, files, and executed read operation are hard-coded and cannot be supplied by the caller.
 
 Fly observability, admin/owner only:
 
@@ -48,15 +54,18 @@ The Rotator's authenticated browser session cookies are also accepted by the sam
 
 The MCP bridge calls the internal coding dashboard through the Rotator's loopback-only worker credential. At startup the Rotator generates that internal process credential when one is not explicitly configured; clients do not need to know or copy it.
 
+Runtime mutation and private operational reads require an SPMT admin or owner identity. Ordinary SPMT members cannot invoke them.
+
 ## Fly observability boundary
 
 The Rotator already owns its Fly credentials and direct TypeScript connections inside the Fly runtime:
 
 - Machine state comes from the Fly Machines API through `FlyApiClient`.
 - Logs come from a short-lived TypeScript NATS subscription to Fly's `logs.>` stream.
-- Only apps listed in `FLY_ROTATOR_APPS` / `MANAGED_FLY_APPS` can be queried.
+- Signal history is read from the active `streamweaver-new` Machine with a fixed read-only Fly Machine command; no caller-provided app, path, or command is accepted.
+- Only apps listed in `FLY_ROTATOR_APPS` / `MANAGED_FLY_APPS` can be queried or rotated.
 - Machine config, private IPs, environment variables, and token values are never returned.
-- Log messages and health-check output are passed through the Rotator's redaction layer before MCP returns them.
+- Log messages, health-check output, and rotation error text are passed through the Rotator's redaction layer before MCP returns them.
 - State/log tools require an SPMT admin or owner even though they are read-only.
 
 ## Safety boundary
@@ -64,11 +73,15 @@ The Rotator already owns its Fly credentials and direct TypeScript connections i
 The MCP boundary intentionally cannot:
 
 - execute arbitrary commands;
-- read environment variables or secret values;
+- read arbitrary files, environment variables, or secret values;
 - push arbitrary branches;
 - merge changes;
 - deploy applications;
-- create, stop, restart, or delete Fly Machines.
+- select arbitrary Machines for create/stop/restart/delete operations.
+
+`run_rotation` is the one named Machine-mutating operation. It delegates to the Rotator's existing tracked rotation policy, operates only on the configured managed-app allowlist, uses the existing lease/health/volume safeguards, persists the normal runtime record, and accepts no app or Machine ID from the caller.
+
+`get_signal_history` is a fixed read-only operation. It can read only StreamWeaver's two Signal runtime files and exposes only bounded scheduler/history fields.
 
 Draft-PR publication is the only GitHub write: it is a named admin-only tool behind the coding workflow's validation gate. Merge and deployment remain outside MCP.
 
@@ -87,6 +100,8 @@ After deployment, verify authentication and tool discovery with an MCP-compatibl
 Useful smoke calls after connecting ChatGPT to the MCP endpoint:
 
 ```text
+run_rotation {}
+get_signal_history {"limit":25}
 list_fly_app_states {}
 get_fly_observability_snapshot {"errorsOnly":true,"limit":100,"durationMs":2000}
 sample_fly_logs {"appName":"streamweaver-new","limit":50,"durationMs":2000}
@@ -94,4 +109,4 @@ sample_fly_logs {"appName":"streamweaver-new","limit":50,"durationMs":2000}
 
 ## Rollback
 
-MCP uses the same SPMT identity boundary as the rest of Rotator. Emergency shutdown should disable or remove the public `/mcp` route in the outer gateway. The Fly state/log tools are read-only and can also be removed independently without affecting the Rotator's existing monitor or rotation loop.
+MCP uses the same SPMT identity boundary as the rest of Rotator. Emergency shutdown should disable or remove the public `/mcp` route in the outer gateway. The owner runtime tools are isolated from the existing monitor/auto-rotation loop, so they can also be removed independently without disabling scheduled rotation.
