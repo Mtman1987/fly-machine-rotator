@@ -2,11 +2,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { listChatGptHandoffs, readChatGptHandoff, resolveChatGptHandoff, writeChatGptHandoff } from "../src/chatgptHandoff.js";
+import { approveChatGptHandoff, listChatGptHandoffs, readChatGptHandoff, resolveChatGptHandoff, writeChatGptHandoff } from "../src/chatgptHandoff.js";
 import { ecosystemOperatorContextSource } from "../src/ecosystemContext.js";
 
 describe("ChatGPT repair handoffs", () => {
-  it("persists an awaiting handoff and can resolve it without exposing secrets", async () => {
+  it("persists an owner-gated handoff, preserves redaction, and resolves only after approval", async () => {
     const root = await mkdtemp(join(tmpdir(), "chatgpt-handoff-"));
     const env = { ...process.env, CODEX_FIXER_DATA_DIR: root };
 
@@ -25,13 +25,18 @@ describe("ChatGPT repair handoffs", () => {
       validationCommands: ["npm run typecheck", "npm run test:isolation"],
     });
 
-    expect(created.status).toBe("awaiting-chatgpt");
+    expect(created.status).toBe("awaiting-owner-approval");
     expect(created.operatorContextSource).toBe(ecosystemOperatorContextSource());
     expect(created.qwenFailure).toContain("Bearer [redacted]");
     expect(created.baselineChecks[0].output).toContain("[redacted]");
 
-    const queue = await listChatGptHandoffs(env, 10);
-    expect(queue.map((row) => row.id)).toContain(created.id);
+    const stored = await listChatGptHandoffs(env, 10);
+    expect(stored.map((row) => row.id)).toContain(created.id);
+    await expect(resolveChatGptHandoff(env, created.id, "should not resolve before approval")).rejects.toThrow(/not owner-approved/i);
+
+    const approved = await approveChatGptHandoff(env, created.id, "mtman-discord");
+    expect(approved.status).toBe("awaiting-chatgpt");
+    expect(approved.approvedAt).toBeTruthy();
 
     const loaded = await readChatGptHandoff(env, created.id);
     expect(loaded?.description).toBe("Fix tenant routing regression");
