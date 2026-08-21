@@ -1,0 +1,138 @@
+name: Live Rotator Diagnostic
+
+on:
+  push:
+    branches:
+      - ops/live-rotation-diagnostic
+    paths:
+      - ".github/workflows/live-rotation-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-rotator-diagnostic
+  cancel-in-progress: false
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  ROTATOR_APP: mtman-machine-rotator
+  STREAMWEAVER_APP: streamweaver-new
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/live-rotation-diagnostic
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Run real rotation and capture state
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p diagnostics
+          report="diagnostics/live-rotation-latest.md"
+          {
+            echo "# Live Rotator Diagnostic"
+            echo
+            echo "Run UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo
+            echo "## Rotator pre-state"
+            echo '```text'
+            flyctl machine list --app "$ROTATOR_APP" || true
+            echo '```'
+            echo
+            echo "## Real rotation output"
+            echo '```text'
+          } > "$report"
+
+          set +e
+          flyctl ssh console --app "$ROTATOR_APP" --command "node dist/index.js run" 2>&1 | tee /tmp/rotation.out
+          rotation_rc=${PIPESTATUS[0]}
+          set -e
+          cat /tmp/rotation.out >> "$report"
+          {
+            echo '```'
+            echo
+            echo "Rotation exit code: $rotation_rc"
+            echo
+            echo "## Rotator persisted runtime state"
+            echo '```json'
+            flyctl ssh console --app "$ROTATOR_APP" --command "cat /data/runtime-state.json" 2>&1 || true
+            echo '```'
+          } >> "$report"
+
+          apps="$(flyctl ssh console --app "$ROTATOR_APP" --command 'node -e "console.log(process.env.FLY_ROTATOR_APPS || process.env.MANAGED_FLY_APPS || \"\")"' 2>/dev/null | tail -n 1 | tr -d '\r')"
+          echo "$apps" > /tmp/apps.raw
+          node - <<'NODE' > /tmp/apps.txt
+          const fs=require('fs');
+          const raw=fs.readFileSync('/tmp/apps.raw','utf8').trim();
+          let a=[];
+          try { const v=JSON.parse(raw); if(Array.isArray(v)) a=v; } catch {}
+          if(!a.length) a=raw.split(',');
+          for(const x of [...new Set(a.map(x=>String(x).trim()).filter(Boolean))]) console.log(x);
+          NODE
+
+          {
+            echo
+            echo "## Managed Fly apps after rotation"
+          } >> "$report"
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            {
+              echo
+              echo "### $app"
+              echo '```text'
+              flyctl machine list --app "$app" 2>&1 || true
+              echo '```'
+            } >> "$report"
+          done < /tmp/apps.txt
+
+          echo "$rotation_rc" > /tmp/rotation_rc
+
+      - name: Capture StreamWeaver signal scheduler history
+        shell: bash
+        run: |
+          report="diagnostics/live-rotation-latest.md"
+          {
+            echo
+            echo "## Signal hint persistence"
+            echo
+            echo "The following is read from StreamWeaver's live mounted persistence, not from repository source."
+            echo
+            echo "### Scheduler state"
+            echo '```json'
+            flyctl ssh console --app "$STREAMWEAVER_APP" --command 'node -e "const fs=require(\"fs\"),p=require(\"path\"); const root=process.env.PERSIST_ROOT||p.resolve(process.cwd(),\"data\",\"runtime\"); const f=p.join(root,\"global\",\"signal-scheduler.json\"); try{console.log(fs.readFileSync(f,\"utf8\"))}catch(e){console.log(JSON.stringify({missing:true,path:f,error:e.code||e.message}))}"' 2>&1 || true
+            echo '```'
+            echo
+            echo "### Hint history"
+            echo '```json'
+            flyctl ssh console --app "$STREAMWEAVER_APP" --command 'node -e "const fs=require(\"fs\"),p=require(\"path\"); const root=process.env.PERSIST_ROOT||p.resolve(process.cwd(),\"data\",\"runtime\"); const f=p.join(root,\"global\",\"signal-hint-history.json\"); try{const j=JSON.parse(fs.readFileSync(f,\"utf8\")); j.history=Array.isArray(j.history)?j.history.slice(-25):[]; console.log(JSON.stringify(j,null,2))}catch(e){console.log(JSON.stringify({missing:true,path:f,error:e.code||e.message},null,2))}"' 2>&1 || true
+            echo '```'
+          } >> "$report"
+
+      - name: Save sanitized diagnostic result to branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add diagnostics/live-rotation-latest.md
+          if git diff --cached --quiet; then
+            echo "No diagnostic change to commit"
+          else
+            git commit -m "diagnostics: capture live rotation and signal state"
+            git push origin HEAD:ops/live-rotation-diagnostic
+          fi
+
+      - name: Fail if real rotation failed
+        shell: bash
+        run: |
+          rc="$(cat /tmp/rotation_rc)"
+          if [ "$rc" != "0" ]; then
+            echo "Rotation failed with exit code $rc"
+            exit "$rc"
+          fi
