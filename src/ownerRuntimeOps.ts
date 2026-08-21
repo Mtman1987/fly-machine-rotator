@@ -52,6 +52,25 @@ process.stdout.write('${OUTPUT_START}'+JSON.stringify(payload)+'${OUTPUT_END}');
 `;
 
 type ExecResult = { stdout: string; stderr: string };
+type SignalHistoryEntry = { at: string; guildId: string; channelId: string; channelName: string };
+type SignalSchedulerSnapshot = {
+  guildId: string;
+  lastChannelId: string;
+  bagRemaining: number;
+  nextAt: number | null;
+  nextAtIso: string | null;
+  dueInMs: number | null;
+};
+type SignalHistoryPayload = {
+  schedulerEnabled: boolean;
+  totalPosts: number;
+  uniqueChannelCount: number;
+  lastPostAt: string | null;
+  latestPosts: SignalHistoryEntry[];
+  scheduler: SignalSchedulerSnapshot | null;
+  historyFilePresent: boolean;
+  schedulerFilePresent: boolean;
+};
 export type OwnerFlyctlRunner = (args: string[], env: NodeJS.ProcessEnv) => Promise<ExecResult>;
 export type OwnerMachineResolver = (env: NodeJS.ProcessEnv) => Promise<string>;
 export type OwnerRotationExecutor = (
@@ -140,6 +159,7 @@ export async function runOwnerRotation(
   const results = (await executor([], env, "mcp-owner")).map(sanitizeRotationResult);
   const finishedAt = new Date().toISOString();
   const state = await RotatorRuntimeStateStore.load(getRuntimeStateFile(env));
+  const runtimeState = state.snapshot();
   const succeeded = results.filter((result) => result.success).length;
   return {
     ok: results.every((result) => result.success),
@@ -150,7 +170,11 @@ export async function runOwnerRotation(
     succeeded,
     failed: results.length - succeeded,
     results,
-    runtimeState: state.snapshot(),
+    runtimeState: {
+      ...runtimeState,
+      lastError: runtimeState.lastError ? redactSensitiveText(runtimeState.lastError).slice(0, 2_000) : undefined,
+      lastRunLines: runtimeState.lastRunLines.map((line) => redactSensitiveText(line).slice(0, 1_000)),
+    },
   };
 }
 
@@ -181,7 +205,7 @@ export async function getSignalHintHistory(
     SIGNAL_HISTORY_SCRIPT,
     String(limit),
   ], childEnv);
-  const payload = parseMarkedJson<Record<string, unknown>>(result.stdout);
+  const payload = parseMarkedJson<SignalHistoryPayload>(result.stdout);
   return {
     source: "fixed-readonly-fly-machine-exec",
     appName: STREAMWEAVER_APP,
