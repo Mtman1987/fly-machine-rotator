@@ -19,7 +19,7 @@ describe("MCP control server", () => {
     expect(isSpmtAdmin({ id: "1", role: "member" })).toBe(false);
   });
 
-  it("exposes coding, repair audit, Fly observability, bounded Quackverse volume reads, and allowlisted worker tools without generic shell or secret access", () => {
+  it("exposes owner runtime controls without generic shell or secret access", () => {
     const tools = listMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_code_references",
@@ -29,6 +29,8 @@ describe("MCP control server", () => {
       "get_coding_job_artifact",
       "publish_coding_job",
       "get_athena_repair_audit",
+      "run_rotation",
+      "get_signal_history",
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
@@ -39,7 +41,17 @@ describe("MCP control server", () => {
       "provision_spmt_llm_worker",
       "provision_spmt_embedding_worker",
     ]);
-    expect(tools.some((tool) => /merge|shell|secret-value|delete|restart|stop-machine/i.test(tool.name))).toBe(false);
+    expect(tools.some((tool) => /shell|secret-value|delete|stop-machine/i.test(tool.name))).toBe(false);
+    expect(tools.find((tool) => tool.name === "run_rotation")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    });
+    expect(tools.find((tool) => tool.name === "get_signal_history")?.annotations.readOnlyHint).toBe(true);
+    expect(tools.find((tool) => tool.name === "get_signal_history")?.inputSchema).toMatchObject({
+      properties: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+      additionalProperties: false,
+    });
     expect(tools.find((tool) => tool.name === "provision_spmt_llm_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.find((tool) => tool.name === "provision_spmt_embedding_worker")?.annotations.idempotentHint).toBe(true);
     expect(tools.filter((tool) => tool.annotations.readOnlyHint).map((tool) => tool.name)).toEqual([
@@ -48,6 +60,7 @@ describe("MCP control server", () => {
       "get_coding_job",
       "get_coding_job_artifact",
       "get_athena_repair_audit",
+      "get_signal_history",
       "list_fly_app_states",
       "sample_fly_logs",
       "get_fly_observability_snapshot",
