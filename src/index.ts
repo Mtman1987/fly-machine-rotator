@@ -8,6 +8,7 @@ import { executeTrackedRotation } from "./rotationControl.js";
 import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
 import { reclaimCodexStorage } from "./publicCodexFixer.js";
 import { runCompanionDiagnosticsLoop } from "./companionDiagnostics.js";
+import { startHourlyAthenaDiagnosticLoop } from "./hourlyAthenaDiagnostic.js";
 
 async function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const stackEnv = withCodexWorkerAuth(env);
@@ -52,7 +53,11 @@ async function main(): Promise<void> {
       pollIntervalMs: Number(process.env.LOG_POLL_INTERVAL_MS ?? 60_000),
       sampleDurationMs: Number(process.env.LOG_SAMPLE_DURATION_MS ?? 15_000)
     });
-    await Promise.all([logMonitor, runCompanionDiagnosticsLoop(process.env)]);
+    await Promise.all([
+      logMonitor,
+      runCompanionDiagnosticsLoop(process.env),
+      startHourlyAthenaDiagnosticLoop(process.env),
+    ]);
     return;
   }
   if (command !== "run") {
