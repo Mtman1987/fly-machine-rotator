@@ -20,7 +20,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: manual-rotator-smoke
@@ -29,10 +29,12 @@ concurrency:
 env:
   FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
   ROTATOR_APP: mtman-machine-rotator
+  STREAMWEAVER_APP: streamweaver-new
+  DIAGNOSTIC_BRANCH: diagnostics/live-rotation-latest
 
 jobs:
   smoke:
-    name: Verify Qwen and exercise Rotator/Coder
+    name: Verify live Rotator and signal persistence
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -92,28 +94,98 @@ jobs:
           exit 1
 
       - name: Verify Athena Coder CLI is shipped
-        if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
+        if: ${{ inputs.run_coder_smoke }}
         run: |
-          for attempt in $(seq 1 5); do
-            if flyctl ssh console --app "$ROTATOR_APP" --command \
-              'node scripts/athena-code.mjs --help'; then
-              exit 0
-            fi
-            echo "CLI SSH preflight failed on attempt $attempt; retrying"
-            sleep 5
-          done
-          exit 1
+          flyctl ssh console --app "$ROTATOR_APP" --command 'node scripts/athena-code.mjs --help'
 
       - name: Run StreamWeaver issue through Athena Coder
-        if: ${{ github.event_name == 'push' || inputs.run_coder_smoke }}
+        if: ${{ inputs.run_coder_smoke }}
         run: |
           flyctl ssh console --app "$ROTATOR_APP" --command \
-          'node scripts/athena-code.mjs submit streamweaver-new "Inspect current main and verify the private chat Adult Mode toggle changes only policy while built-in SPMT Qwen remains the default LLM both on and off. No Qwen URL or model flags may be required. Reject custom remote HTTP providers. Change code only if current main does not already satisfy this behavior. The Fly executor will run the focused runtime tests and an issue-scoped TypeScript check; the full production build is validated separately by normal CI." --wait --timeout 1800'
+          'node scripts/athena-code.mjs submit streamweaver-new "Inspect current main and verify the private chat Adult Mode toggle changes only policy while built-in SPMT Qwen remains the default LLM both on and off. No Qwen URL or model flags may be required. Reject custom remote HTTP providers. Change code only if current main does not already satisfy this behavior." --wait --timeout 1800'
 
       - name: Run one real rotation
+        id: rotate
         if: ${{ github.event_name == 'push' || inputs.run_rotation }}
+        shell: bash
         run: |
-          flyctl ssh console --app "$ROTATOR_APP" --command "node dist/index.js run"
+          set -o pipefail
+          set +e
+          flyctl ssh console --app "$ROTATOR_APP" --command "node dist/index.js run" 2>&1 | tee /tmp/rotation.out
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "$rc" > /tmp/rotation_rc
+          exit 0
+
+      - name: Capture live rotation and signal report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+          report="diagnostics/live-rotation-latest.md"
+          {
+            echo "# Live Rotator Diagnostic"
+            echo
+            echo "Run UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo
+            echo "## Real rotation output"
+            echo '```text'
+            cat /tmp/rotation.out 2>/dev/null || echo "Rotation step did not produce output."
+            echo '```'
+            echo
+            echo "## Rotator persisted runtime state"
+            echo '```json'
+            flyctl ssh console --app "$ROTATOR_APP" --command "cat /data/runtime-state.json" 2>&1 || true
+            echo '```'
+          } > "$report"
+
+          apps="$(flyctl ssh console --app "$ROTATOR_APP" --command 'node -e "console.log(process.env.FLY_ROTATOR_APPS || process.env.MANAGED_FLY_APPS || \"\")"' 2>/dev/null | tail -n 1 | tr -d '\r')"
+          printf '%s\n' "$apps" > /tmp/apps.raw
+          node - <<'NODE' > /tmp/apps.txt
+          const fs=require('fs');
+          const raw=fs.readFileSync('/tmp/apps.raw','utf8').trim();
+          let apps=[];
+          try { const parsed=JSON.parse(raw); if(Array.isArray(parsed)) apps=parsed; } catch {}
+          if(!apps.length) apps=raw.split(',');
+          for(const app of [...new Set(apps.map(v=>String(v).trim()).filter(Boolean))]) console.log(app);
+          NODE
+
+          echo >> "$report"
+          echo "## Managed Fly apps after rotation" >> "$report"
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            {
+              echo
+              echo "### $app"
+              echo '```text'
+              flyctl machine list --app "$app" 2>&1 || true
+              echo '```'
+            } >> "$report"
+          done < /tmp/apps.txt
+
+          {
+            echo
+            echo "## StreamWeaver signal scheduler"
+            echo '```json'
+            flyctl ssh console --app "$STREAMWEAVER_APP" --command 'node -e "const fs=require(\"fs\"),p=require(\"path\");const root=process.env.PERSIST_ROOT||p.resolve(process.cwd(),\"data\",\"runtime\");const f=p.join(root,\"global\",\"signal-scheduler.json\");try{console.log(fs.readFileSync(f,\"utf8\"))}catch(e){console.log(JSON.stringify({missing:true,path:f,error:e.code||e.message},null,2))}"' 2>&1 || true
+            echo '```'
+            echo
+            echo "## StreamWeaver signal hint history (latest 25)"
+            echo '```json'
+            flyctl ssh console --app "$STREAMWEAVER_APP" --command 'node -e "const fs=require(\"fs\"),p=require(\"path\");const root=process.env.PERSIST_ROOT||p.resolve(process.cwd(),\"data\",\"runtime\");const f=p.join(root,\"global\",\"signal-hint-history.json\");try{const j=JSON.parse(fs.readFileSync(f,\"utf8\"));j.history=Array.isArray(j.history)?j.history.slice(-25):[];console.log(JSON.stringify(j,null,2))}catch(e){console.log(JSON.stringify({missing:true,path:f,error:e.code||e.message},null,2))}"' 2>&1 || true
+            echo '```'
+          } >> "$report"
+
+      - name: Publish latest diagnostic report branch
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$DIAGNOSTIC_BRANCH"
+          git add diagnostics/live-rotation-latest.md
+          git commit -m "diagnostics: capture live rotator state" || true
+          git push --force origin "$DIAGNOSTIC_BRANCH"
 
       - name: Capture post-run status
         if: always()
@@ -122,3 +194,15 @@ jobs:
           flyctl status --app "$ROTATOR_APP" --all || true
           echo "=== ROTATOR LOGS ==="
           flyctl logs --app "$ROTATOR_APP" --no-tail || true
+
+      - name: Fail if real rotation failed
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/rotation_rc ]; then
+            rc="$(cat /tmp/rotation_rc)"
+            if [ "$rc" != "0" ]; then
+              echo "Rotation failed with exit code $rc"
+              exit "$rc"
+            fi
+          fi
