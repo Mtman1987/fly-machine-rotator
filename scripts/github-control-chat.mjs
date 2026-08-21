@@ -74,7 +74,7 @@ if(p.command==='chatqueue'){
 process.stdout.write('__CHATGPT_BEGIN__'+JSON.stringify(result)+'__CHATGPT_END__');
 `;
   const encodedScript = Buffer.from(remoteScript, 'utf8').toString('base64');
-  const remote = `node -e "const s=process.argv[1];const p=process.argv[2];process.argv.splice(1,2);eval(Buffer.from(s,'base64').toString('utf8'))" '${encodedScript}' '${encodedPayload}'`;
+  const remote = `node -e "const s=process.argv[1];process.argv.splice(1,1);eval(Buffer.from(s,'base64').toString('utf8'))" '${encodedScript}' '${encodedPayload}'`;
   const { stdout } = await execFileAsync('flyctl', ['ssh', 'console', '--app', APP, '--command', remote], {
     env: { ...process.env, FLY_API_TOKEN: String(process.env.FLY_API_TOKEN || '') },
     encoding: 'utf8',
