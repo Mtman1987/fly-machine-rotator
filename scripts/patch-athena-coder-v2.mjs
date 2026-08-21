@@ -31,6 +31,89 @@ if (!source.includes('const context = await buildRepositoryContext(description, 
   source = source.slice(0, start) + '  const context = await buildRepositoryContext(description, workspace);\n' + source.slice(end + endMarker.length);
 }
 
+if (!source.includes('async function runCodexWorkspaceCoder(')) {
+  const marker = 'function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {\n';
+  requireMarker(marker, 'Codex workspace helper');
+  const helper = [
+    'async function runCodexWorkspaceCoder(',
+    '  description: string,',
+    '  inputContext: unknown,',
+    '  workspace: string,',
+    '  repo: RepoConfig,',
+    '  env: NodeJS.ProcessEnv,',
+    '  dataDir: string',
+    '): Promise<{ summary: string; threadId?: string }> {',
+    '  const codex = new Codex({',
+    '    apiKey: String(env.OPENAI_API_KEY || ""),',
+    '    env: minimalCodexEnv(env, dataDir),',
+    '    config: { sandbox_workspace_write: { network_access: false } },',
+    '  });',
+    '  const thread = codex.startThread({',
+    '    workingDirectory: workspace,',
+    '    model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),',
+    '    modelReasoningEffort: "high",',
+    '    sandboxMode: "workspace-write",',
+    '    networkAccessEnabled: false,',
+    '    webSearchMode: "disabled",',
+    '    approvalPolicy: "never",',
+    '  });',
+    '  const prompt = `${ATHENA_CODE_PROMPT}\\n\\nAssigned repository: ${repo.label}\\nPublic report: ${description.slice(0, 4000)}\\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;',
+    '  const turn = await thread.run(prompt);',
+    '  return {',
+    '    threadId: thread.id || undefined,',
+    '    summary: redact(turn.finalResponse || "Codex completed without a final response."),',
+    '  };',
+    '}',
+    '',
+  ].join('\n');
+  source = source.replace(marker, helper + marker);
+}
+
+if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());')) {
+  const startMarker = '    if (String(env.SPMT_LLM_BASE_URL || "").trim()) {\n';
+  const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  if (start < 0 || end < 0) throw new Error('Athena Coder v2 provider block markers missing');
+  const providerBlock = [
+    '    const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());',
+    '    let qwenChanged = false;',
+    '    let qwenFailure = "";',
+    '    if (qwenConfigured) {',
+    '      try {',
+    '        job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);',
+    '        const qwenStatus = await runCommand("git status --short", workspace);',
+    '        qwenChanged = qwenStatus.ok && Boolean(qwenStatus.output.trim());',
+    '        if (!qwenChanged) qwenFailure = "Qwen produced no code changes.";',
+    '      } catch (error) {',
+    '        qwenFailure = redact(error instanceof Error ? error.message : String(error));',
+    '        job.summary = undefined;',
+    '        await runCommand("git reset --hard HEAD && git clean -fd", workspace);',
+    '      }',
+    '    }',
+    '',
+    '    if (!qwenConfigured || !qwenChanged) {',
+    '      if (!String(env.OPENAI_API_KEY || "").trim()) {',
+    '        if (qwenFailure) throw new Error(`Qwen repair attempt did not produce a patch and Codex fallback is unavailable: ${qwenFailure}`);',
+    '        throw new Error("No Athena Coder provider is configured.");',
+    '      }',
+    '      const codexResult = await runCodexWorkspaceCoder(',
+    '        String(input.description || "").slice(0, 4000),',
+    '        input.context,',
+    '        workspace,',
+    '        repo,',
+    '        env,',
+    '        dataDir',
+    '      );',
+    '      job.threadId = codexResult.threadId;',
+    '      job.summary = qwenFailure',
+    '        ? redact(`Qwen attempt: ${qwenFailure}\\n\\nCodex fallback:\\n${codexResult.summary}`)',
+    '        : codexResult.summary;',
+    '    }',
+  ].join('\n');
+  source = source.slice(0, start) + providerBlock + source.slice(end);
+}
+
 if (!source.includes('job.baselineChecks = [];')) {
   const marker = [
     '    await cloneWorkspace(target, workspace);',
@@ -105,4 +188,4 @@ if (source.includes(cleanupMarker)) {
 }
 
 fs.writeFileSync(fixerPath, source, 'utf8');
-console.log('Athena Coder v2 repository context, baseline validation, and Fly sandbox retention patched.');
+console.log('Athena Coder v2 repository context, provider escalation, baseline validation, and Fly sandbox retention patched.');
