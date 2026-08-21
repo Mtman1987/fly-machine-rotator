@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ecosystemOperatorContextSource } from "./ecosystemContext.js";
 
-export type ChatGptHandoffStatus = "awaiting-owner-approval" | "owner-approved" | "denied" | "resolved";
+export type ChatGptHandoffStatus = "awaiting-owner-approval" | "awaiting-chatgpt" | "denied" | "resolved";
 
 export interface ChatGptHandoff {
   id: string;
@@ -93,7 +93,7 @@ export async function writeChatGptHandoff(env: NodeJS.ProcessEnv, input: CreateH
       "Read the canonical operator context and the target repository's AGENTS.md/current main.",
       "Reproduce the reported failure and add a regression test before or with the fix.",
       "Make the smallest justified change and run the repository validation commands.",
-      "Open and merge a PR only when validation passes and this handoff remains owner-approved.",
+      "Open and merge a PR only when validation passes and the handoff was owner-approved.",
       "Verify the deploy workflow and live runtime after merge; do not call a repair successful without live evidence when live checks are available.",
       "Mark this handoff resolved through the bounded Rotator GitHub control bridge after completion.",
     ],
@@ -132,11 +132,11 @@ export async function approveChatGptHandoff(env: NodeJS.ProcessEnv, id: string, 
   if (!current) throw new Error("ChatGPT handoff was not found.");
   if (current.status === "resolved") throw new Error("ChatGPT handoff is already resolved.");
   if (current.status === "denied") throw new Error("ChatGPT handoff was denied and cannot be approved without a new repair packet.");
-  if (current.status === "owner-approved") return current;
+  if (current.status === "awaiting-chatgpt") return current;
   const now = new Date().toISOString();
   return writeHandoff(env, {
     ...current,
-    status: "owner-approved",
+    status: "awaiting-chatgpt",
     approvedAt: now,
     decisionBy: String(decisionBy || "mtman-discord").slice(0, 120),
     updatedAt: now,
@@ -161,7 +161,7 @@ export async function denyChatGptHandoff(env: NodeJS.ProcessEnv, id: string, dec
 export async function resolveChatGptHandoff(env: NodeJS.ProcessEnv, id: string, resolution: string): Promise<ChatGptHandoff> {
   const current = await readChatGptHandoff(env, id);
   if (!current) throw new Error("ChatGPT handoff was not found.");
-  if (current.status !== "owner-approved" && current.status !== "resolved") {
+  if (current.status !== "awaiting-chatgpt" && current.status !== "resolved") {
     throw new Error("ChatGPT handoff is not owner-approved.");
   }
   if (current.status === "resolved") return current;
