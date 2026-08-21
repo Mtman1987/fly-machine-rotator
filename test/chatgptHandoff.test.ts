@@ -1,0 +1,43 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { listChatGptHandoffs, readChatGptHandoff, resolveChatGptHandoff, writeChatGptHandoff } from "../src/chatgptHandoff.js";
+import { ecosystemOperatorContextSource } from "../src/ecosystemContext.js";
+
+describe("ChatGPT repair handoffs", () => {
+  it("persists an awaiting handoff and can resolve it without exposing secrets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "chatgpt-handoff-"));
+    const env = { ...process.env, CODEX_FIXER_DATA_DIR: root };
+
+    const created = await writeChatGptHandoff(env, {
+      jobId: "12345678-abcd",
+      appName: "streamweaver-new",
+      repoId: "streamweaver",
+      repoLabel: "StreamWeaver",
+      repoUrl: "https://github.com/Mtman1987/streamweaver.git",
+      description: "Fix tenant routing regression",
+      userContext: { source: "test" },
+      qwenFailure: "Bearer secret-token-should-not-leak",
+      baselineChecks: [{ command: "npm test", ok: false, output: "sk-test-secret should not leak" }],
+      operatorContext: "canonical ecosystem rules",
+      repositoryContext: "selected repository files",
+      validationCommands: ["npm run typecheck", "npm run test:isolation"],
+    });
+
+    expect(created.status).toBe("awaiting-chatgpt");
+    expect(created.operatorContextSource).toBe(ecosystemOperatorContextSource());
+    expect(created.qwenFailure).toContain("Bearer [redacted]");
+    expect(created.baselineChecks[0].output).toContain("[redacted]");
+
+    const queue = await listChatGptHandoffs(env, 10);
+    expect(queue.map((row) => row.id)).toContain(created.id);
+
+    const loaded = await readChatGptHandoff(env, created.id);
+    expect(loaded?.description).toBe("Fix tenant routing regression");
+
+    const resolved = await resolveChatGptHandoff(env, created.id, "Merged PR #999 and live verified.");
+    expect(resolved.status).toBe("resolved");
+    expect(resolved.resolution).toContain("PR #999");
+  });
+});
