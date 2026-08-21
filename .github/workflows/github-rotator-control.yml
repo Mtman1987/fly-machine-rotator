@@ -1,0 +1,122 @@
+name: GitHub Rotator Control
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: github-rotator-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    if: >-
+      github.event.issue.number == 72 &&
+      github.event.comment.user.login == 'Mtman1987' &&
+      startsWith(github.event.comment.body, '/rotator ')
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Parse bounded owner command
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = String(context.payload.comment.body || '').trim();
+            const match = body.match(/^\/rotator\s+(rotate|states|signal|logs|repair)(?:\s+([\s\S]*))?$/i);
+            if (!match) core.setFailed('Unsupported Rotator command syntax.');
+            const command = String(match?.[1] || '').toLowerCase();
+            const rest = String(match?.[2] || '').trim();
+            const payload = { command };
+
+            if (command === 'states') {
+              if (rest) payload.appName = rest.split(/\s+/)[0].slice(0, 120);
+            } else if (command === 'signal') {
+              if (rest) payload.limit = Number(rest.split(/\s+/)[0]);
+            } else if (command === 'logs') {
+              const parts = rest ? rest.split(/\s+/) : [];
+              if (parts[0] && !/^\d+$/.test(parts[0]) && parts[0].toLowerCase() !== 'errors') payload.appName = parts.shift().slice(0, 120);
+              const numeric = parts.find((part) => /^\d+$/.test(part));
+              if (numeric) payload.limit = Number(numeric);
+              payload.errorsOnly = parts.some((part) => part.toLowerCase() === 'errors');
+            } else if (command === 'repair') {
+              const firstSpace = rest.indexOf(' ');
+              if (firstSpace <= 0) core.setFailed('repair requires: /rotator repair <app> <problem>');
+              payload.appName = rest.slice(0, firstSpace).trim().slice(0, 120);
+              payload.description = rest.slice(firstSpace + 1).trim().slice(0, 4000);
+              if (!payload.description) core.setFailed('repair requires a problem description.');
+            }
+
+            const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+            core.setOutput('payload', encoded);
+            core.setOutput('command', command);
+
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Execute bounded command inside Rotator
+        id: execute
+        continue-on-error: true
+        env:
+          CONTROL_PAYLOAD: ${{ steps.parse.outputs.payload }}
+        run: |
+          set +e
+          flyctl ssh console \
+            --app mtman-machine-rotator \
+            --command "node dist/githubControlCli.js '$CONTROL_PAYLOAD'" \
+            --access-token "$FLY_API_TOKEN" > raw-control-output.txt 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Extract sanitized Rotator response
+        if: always()
+        env:
+          COMMAND_NAME: ${{ steps.parse.outputs.command }}
+          EXEC_EXIT_CODE: ${{ steps.execute.outputs.exit_code }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const raw = fs.existsSync('raw-control-output.txt') ? fs.readFileSync('raw-control-output.txt', 'utf8') : '';
+          const startMarker = '__ROTATOR_CONTROL_BEGIN__';
+          const endMarker = '__ROTATOR_CONTROL_END__';
+          const start = raw.indexOf(startMarker);
+          const end = raw.indexOf(endMarker, start + startMarker.length);
+          let payload;
+          if (start >= 0 && end > start) {
+            const text = raw.slice(start + startMarker.length, end);
+            try { payload = JSON.parse(text); }
+            catch { payload = { ok: false, error: 'Rotator returned malformed sanitized output.' }; }
+          } else {
+            payload = {
+              ok: false,
+              error: 'Rotator command did not return a sanitized response. Inspect the GitHub Actions run for infrastructure-level failure.',
+              exitCode: Number(process.env.EXEC_EXIT_CODE || 1),
+            };
+          }
+          const output = JSON.stringify(payload, null, 2);
+          fs.writeFileSync('control-result.txt', output.slice(0, 55000));
+          NODE
+
+      - name: Post result to control issue
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          COMMAND_NAME: ${{ steps.parse.outputs.command }}
+        with:
+          script: |
+            const fs = require('fs');
+            const result = fs.existsSync('control-result.txt')
+              ? fs.readFileSync('control-result.txt', 'utf8')
+              : JSON.stringify({ ok: false, error: 'No result file was produced.' }, null, 2);
+            const command = String(process.env.COMMAND_NAME || 'unknown');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 72,
+              body: `### Rotator result: ${command}\n\n\`\`\`json\n${result}\n\`\`\``,
+            });
