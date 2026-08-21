@@ -65,9 +65,14 @@ jobs:
         continue-on-error: true
         env:
           CONTROL_PAYLOAD: ${{ steps.parse.outputs.payload }}
+          COMMAND_NAME: ${{ steps.parse.outputs.command }}
         run: |
           set +e
-          node scripts/github-control-direct.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          if [ "$COMMAND_NAME" = "signal" ]; then
+            node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          else
+            node scripts/github-control-direct.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          fi
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
