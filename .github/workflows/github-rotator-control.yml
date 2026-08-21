@@ -58,10 +58,12 @@ jobs:
               if (!rest) core.setFailed('chatjob requires: /rotator chatjob <handoff-id>');
               payload.id = rest.split(/\s+/)[0].slice(0, 120);
             } else if (command === 'chatdone') {
-              if (!rest) core.setFailed('chatdone requires: /rotator chatdone <handoff-id> [resolution]');
-              const firstSpace = rest.indexOf(' ');
-              payload.id = (firstSpace < 0 ? rest : rest.slice(0, firstSpace)).trim().slice(0, 120);
-              payload.resolution = (firstSpace < 0 ? 'Resolved by ChatGPT conversation.' : rest.slice(firstSpace + 1)).trim().slice(0, 4000);
+              if (!rest) core.setFailed('chatdone requires: /rotator chatdone <handoff-id> [success|failed] [resolution]');
+              const parts = rest.split(/\s+/);
+              payload.id = String(parts.shift() || '').slice(0, 120);
+              const maybeOutcome = String(parts[0] || '').toLowerCase();
+              payload.outcome = maybeOutcome === 'failed' || maybeOutcome === 'success' ? String(parts.shift()).toLowerCase() : 'success';
+              payload.resolution = parts.join(' ').trim().slice(0, 4000) || 'Resolved by ChatGPT conversation.';
             }
 
             const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
