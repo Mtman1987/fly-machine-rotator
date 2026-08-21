@@ -19,7 +19,7 @@ describe("ChatGPT repair handoffs", () => {
       description: "Fix tenant routing regression",
       userContext: { source: "test" },
       qwenFailure: "Bearer secret-token-should-not-leak",
-      baselineChecks: [{ command: "npm test", ok: false, output: "sk-test-secret should not leak" }],
+      baselineChecks: [{ command: "npm test", ok: false, output: "sk-test-secret-abcdef should not leak" }],
       operatorContext: "canonical ecosystem rules",
       repositoryContext: "selected repository files",
       validationCommands: ["npm run typecheck", "npm run test:isolation"],
