@@ -30,7 +30,7 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|signal|logs|repair)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|signal|logs|repair|chatqueue|chatjob|chatdone)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
@@ -52,6 +52,16 @@ jobs:
               payload.appName = rest.slice(0, firstSpace).trim().slice(0, 120);
               payload.description = rest.slice(firstSpace + 1).trim().slice(0, 4000);
               if (!payload.description) core.setFailed('repair requires a problem description.');
+            } else if (command === 'chatqueue') {
+              if (rest) payload.limit = Number(rest.split(/\s+/)[0]);
+            } else if (command === 'chatjob') {
+              if (!rest) core.setFailed('chatjob requires: /rotator chatjob <handoff-id>');
+              payload.id = rest.split(/\s+/)[0].slice(0, 120);
+            } else if (command === 'chatdone') {
+              if (!rest) core.setFailed('chatdone requires: /rotator chatdone <handoff-id> [resolution]');
+              const firstSpace = rest.indexOf(' ');
+              payload.id = (firstSpace < 0 ? rest : rest.slice(0, firstSpace)).trim().slice(0, 120);
+              payload.resolution = (firstSpace < 0 ? 'Resolved by ChatGPT conversation.' : rest.slice(firstSpace + 1)).trim().slice(0, 4000);
             }
 
             const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -70,6 +80,8 @@ jobs:
           set +e
           if [ "$COMMAND_NAME" = "signal" ]; then
             node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          elif [ "$COMMAND_NAME" = "chatqueue" ] || [ "$COMMAND_NAME" = "chatjob" ] || [ "$COMMAND_NAME" = "chatdone" ]; then
+            node scripts/github-control-chat.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           else
             node scripts/github-control-direct.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           fi
