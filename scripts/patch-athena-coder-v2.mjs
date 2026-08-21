@@ -172,6 +172,14 @@ if (source.includes('    if (job.status === "failed") job.error = "One or more v
   );
 }
 
+const responseWriteMarker = '    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary);';
+if (source.includes(responseWriteMarker)) {
+  source = source.replace(
+    responseWriteMarker,
+    '    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary || "Athena Coder completed without a summary.");'
+  );
+}
+
 const cleanupMarker = [
   '  if (job.status === "failed" || job.changedFiles.length === 0) {',
   '    await rm(join(workDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);',
