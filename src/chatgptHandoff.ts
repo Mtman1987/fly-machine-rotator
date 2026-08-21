@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ecosystemOperatorContextSource } from "./ecosystemContext.js";
 
-export type ChatGptHandoffStatus = "awaiting-chatgpt" | "resolved";
+export type ChatGptHandoffStatus = "awaiting-owner-approval" | "awaiting-chatgpt" | "denied" | "resolved";
 
 export interface ChatGptHandoff {
   id: string;
@@ -10,7 +10,10 @@ export interface ChatGptHandoff {
   status: ChatGptHandoffStatus;
   createdAt: string;
   updatedAt: string;
+  approvedAt?: string;
+  deniedAt?: string;
   resolvedAt?: string;
+  decisionBy?: string;
   appName: string;
   repoId: string;
   repoLabel: string;
@@ -28,7 +31,7 @@ export interface ChatGptHandoff {
 }
 
 type CreateHandoffInput = Omit<ChatGptHandoff,
-  "id" | "status" | "createdAt" | "updatedAt" | "operatorContextSource" | "instructions"
+  "id" | "status" | "createdAt" | "updatedAt" | "approvedAt" | "deniedAt" | "resolvedAt" | "decisionBy" | "operatorContextSource" | "instructions"
 >;
 
 function rootDir(env: NodeJS.ProcessEnv): string {
@@ -60,6 +63,12 @@ function sanitizeChecks(checks: Array<{ command: string; ok: boolean; output: st
   }));
 }
 
+async function writeHandoff(env: NodeJS.ProcessEnv, handoff: ChatGptHandoff): Promise<ChatGptHandoff> {
+  await mkdir(handoffDir(env), { recursive: true });
+  await writeFile(join(handoffDir(env), `${handoff.id}.json`), JSON.stringify(handoff, null, 2));
+  return handoff;
+}
+
 export async function writeChatGptHandoff(env: NodeJS.ProcessEnv, input: CreateHandoffInput): Promise<ChatGptHandoff> {
   const now = new Date().toISOString();
   const id = `chatgpt-${input.jobId}`;
@@ -68,7 +77,7 @@ export async function writeChatGptHandoff(env: NodeJS.ProcessEnv, input: CreateH
   const handoff: ChatGptHandoff = {
     ...input,
     id,
-    status: "awaiting-chatgpt",
+    status: "awaiting-owner-approval",
     createdAt: now,
     updatedAt: now,
     description: String(input.description || "").slice(0, 4000),
@@ -79,18 +88,18 @@ export async function writeChatGptHandoff(env: NodeJS.ProcessEnv, input: CreateH
     repositoryContext: redact(input.repositoryContext).slice(0, 86_000),
     validationCommands: (input.validationCommands || []).map((value) => String(value).slice(0, 1000)).slice(0, 20),
     instructions: [
-      "Open a normal ChatGPT Business conversation with the GitHub connector.",
+      "Wait for explicit mtman Discord approval before a normal ChatGPT conversation may claim this repair.",
+      "After approval, use a normal ChatGPT Business conversation with the connected GitHub tools.",
       "Read the canonical operator context and the target repository's AGENTS.md/current main.",
       "Reproduce the reported failure and add a regression test before or with the fix.",
       "Make the smallest justified change and run the repository validation commands.",
-      "Open/merge a PR only through the normal approval boundary, verify deploy, then verify live behavior when applicable.",
+      "Open and merge a PR only when validation passes and the handoff was owner-approved.",
+      "Verify the deploy workflow and live runtime after merge; do not call a repair successful without live evidence when live checks are available.",
       "Mark this handoff resolved through the bounded Rotator GitHub control bridge after completion.",
     ],
   };
 
-  await mkdir(handoffDir(env), { recursive: true });
-  await writeFile(join(handoffDir(env), `${id}.json`), JSON.stringify(handoff, null, 2));
-  return handoff;
+  return writeHandoff(env, handoff);
 }
 
 export async function readChatGptHandoff(env: NodeJS.ProcessEnv, id: string): Promise<ChatGptHandoff | null> {
@@ -118,9 +127,44 @@ export async function listChatGptHandoffs(env: NodeJS.ProcessEnv, limit = 25): P
   }
 }
 
+export async function approveChatGptHandoff(env: NodeJS.ProcessEnv, id: string, decisionBy = "mtman-discord"): Promise<ChatGptHandoff> {
+  const current = await readChatGptHandoff(env, id);
+  if (!current) throw new Error("ChatGPT handoff was not found.");
+  if (current.status === "resolved") throw new Error("ChatGPT handoff is already resolved.");
+  if (current.status === "denied") throw new Error("ChatGPT handoff was denied and cannot be approved without a new repair packet.");
+  if (current.status === "awaiting-chatgpt") return current;
+  const now = new Date().toISOString();
+  return writeHandoff(env, {
+    ...current,
+    status: "awaiting-chatgpt",
+    approvedAt: now,
+    decisionBy: String(decisionBy || "mtman-discord").slice(0, 120),
+    updatedAt: now,
+  });
+}
+
+export async function denyChatGptHandoff(env: NodeJS.ProcessEnv, id: string, decisionBy = "mtman-discord"): Promise<ChatGptHandoff> {
+  const current = await readChatGptHandoff(env, id);
+  if (!current) throw new Error("ChatGPT handoff was not found.");
+  if (current.status === "resolved") throw new Error("ChatGPT handoff is already resolved.");
+  if (current.status === "denied") return current;
+  const now = new Date().toISOString();
+  return writeHandoff(env, {
+    ...current,
+    status: "denied",
+    deniedAt: now,
+    decisionBy: String(decisionBy || "mtman-discord").slice(0, 120),
+    updatedAt: now,
+  });
+}
+
 export async function resolveChatGptHandoff(env: NodeJS.ProcessEnv, id: string, resolution: string): Promise<ChatGptHandoff> {
   const current = await readChatGptHandoff(env, id);
   if (!current) throw new Error("ChatGPT handoff was not found.");
+  if (current.status !== "awaiting-chatgpt" && current.status !== "resolved") {
+    throw new Error("ChatGPT handoff is not owner-approved.");
+  }
+  if (current.status === "resolved") return current;
   const now = new Date().toISOString();
   const next: ChatGptHandoff = {
     ...current,
@@ -129,6 +173,5 @@ export async function resolveChatGptHandoff(env: NodeJS.ProcessEnv, id: string, 
     resolvedAt: now,
     resolution: redact(resolution).slice(0, 4000),
   };
-  await writeFile(join(handoffDir(env), `${id}.json`), JSON.stringify(next, null, 2));
-  return next;
+  return writeHandoff(env, next);
 }
