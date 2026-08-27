@@ -1,12 +1,9 @@
 name: Deploy SPMT LLM Worker
 
+# Cost safety: this expensive worker is manual-only. Do not auto-deploy it on
+# ordinary pushes to main. The worker can be started/deployed intentionally
+# after its lifecycle is converted to on-demand start + idle stop.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "llm-worker/**"
-      - ".github/workflows/deploy-llm-worker.yml"
   workflow_dispatch:
 
 permissions:
@@ -28,7 +25,6 @@ env:
 jobs:
   branch-housekeeping:
     name: Retain newest merged branch backup
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Delete older branches already contained in main
@@ -102,8 +98,6 @@ jobs:
 
       - name: Remove obsolete model-worker keys
         run: |
-          # SPMT authenticates the app/user before any model request. Qwen is an
-          # internal implementation service and must not require a second key.
           flyctl secrets unset --app "$LLM_APP" LLAMA_API_KEY || true
           flyctl secrets unset --app "$LLM_APP" LLAMA_ARG_API_KEY_FILE || true
           flyctl secrets unset --app "$ROTATOR_APP" SPMT_LLM_API_KEY || true
@@ -129,9 +123,6 @@ jobs:
 
       - name: Wait for worker model readiness over Fly private network
         run: |
-          # llama.cpp can enter started state before the GGUF is fully loaded;
-          # /health correctly returns 503 during that window. Retry instead of
-          # treating normal model startup as a failed deployment.
           for attempt in $(seq 1 40); do
             if flyctl ssh console --app "$ROTATOR_APP" --command \
               "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/health',{signal:AbortSignal.timeout(10000)}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('health '+r.status+' '+t);console.log(t)}).catch(e=>{console.error(e);process.exit(1)})\""; then
@@ -146,9 +137,6 @@ jobs:
 
       - name: Verify Qwen chat over the exact keyless private path
         run: |
-          # Exercise the exact endpoint used by Athena Coder and Discord DMs.
-          # Retry briefly because the first inference after model load can still
-          # be slower than later requests on the CPU worker.
           for attempt in $(seq 1 8); do
             if flyctl ssh console --app "$ROTATOR_APP" --command \
               "node -e \"fetch('http://$LLM_APP.internal:$LLM_PORT/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'spmt-qwen3-8b',messages:[{role:'user',content:'Reply with exactly OK.\\n\\n/no_think'}],thinking_budget_tokens:0,max_tokens:32,temperature:0,stream:false}),signal:AbortSignal.timeout(120000)}).then(async r=>{const t=await r.text();if(!r.ok)throw new Error('chat '+r.status+' '+t);const j=JSON.parse(t);const c=String(j?.choices?.[0]?.message?.content||'').trim();if(!c)throw new Error('chat returned no visible content: '+t);console.log('Qwen chat verified:',c.slice(0,80))}).catch(e=>{console.error(e);process.exit(1)})\""; then
