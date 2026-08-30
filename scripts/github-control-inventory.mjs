@@ -68,9 +68,15 @@ function parseJson(raw, label) {
   catch {
     const objectStart = text.indexOf('{');
     const arrayStart = text.indexOf('[');
-    const starts = [objectStart, arrayStart].filter((index) => index >= 0);
-    const start = starts.length ? Math.min(...starts) : -1;
-    const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+    let start = -1;
+    let end = -1;
+    if (objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart)) {
+      start = objectStart;
+      end = text.lastIndexOf('}');
+    } else if (arrayStart >= 0) {
+      start = arrayStart;
+      end = text.lastIndexOf(']');
+    }
     if (start >= 0 && end > start) {
       try { return JSON.parse(text.slice(start, end + 1)); } catch {}
     }
