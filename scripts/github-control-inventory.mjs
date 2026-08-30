@@ -4,7 +4,6 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const PROBE_SENTINEL = 'SPMT_INVENTORY_JSON=';
 
 const INVENTORY_PROFILES = Object.freeze({
   'hearmeout-main': { healthUrl: 'https://hearmeout-main.fly.dev/api/health', kind: 'hearmeout-main' },
@@ -161,7 +160,7 @@ async function inventory(appName) {
   if (active?.id) {
     const fixedCommand = `node -e ${JSON.stringify(probeFor(profile.kind))}`;
     const probe = await fly(['machine', 'exec', active.id, fixedCommand, '--app', appName], { timeout: 120000 });
-    if (probe.ok) data = { ok: true, ...parseFixedProbe(probe.stdout) };
+    if (probe.ok) data = { ok: true, ...parseFixedProbe(`${probe.stdout}\n${probe.stderr}`) };
     else data = { ok: false, error: probe.stderr || 'fixed data probe failed' };
   }
 
