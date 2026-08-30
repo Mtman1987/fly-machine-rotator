@@ -80,9 +80,17 @@ function parseFixedProbe(raw) {
   }
 }
 
+function machineMounts(machine) {
+  return Array.isArray(machine?.config?.mounts) ? machine.config.mounts : [];
+}
+
+function hasDataMount(machine) {
+  return machineMounts(machine).some((mount) => (mount?.path ?? mount?.destination ?? null) === '/data');
+}
+
 function safeMachine(machine) {
   const guest = machine?.config?.guest || machine?.guest || {};
-  const mounts = Array.isArray(machine?.config?.mounts) ? machine.config.mounts : [];
+  const mounts = machineMounts(machine);
   return {
     id: machine?.id ?? null,
     name: machine?.name ?? null,
@@ -180,7 +188,10 @@ async function inventory(appName) {
   if (!machinesRead.ok) throw new Error(machinesRead.stderr || 'Unable to list Machines.');
   const machinesRaw = parseJson(machinesRead.stdout, 'Fly Machines list');
   const machines = Array.isArray(machinesRaw) ? machinesRaw : [];
-  const active = machines.find((m) => m?.state === 'started') || machines.find((m) => m?.state === 'starting');
+  const active = machines.find((m) => m?.state === 'started' && hasDataMount(m))
+    || machines.find((m) => m?.state === 'starting' && hasDataMount(m))
+    || machines.find((m) => m?.state === 'started')
+    || machines.find((m) => m?.state === 'starting');
 
   const volumesRead = await fly(['volumes', 'list', '--app', appName, '--json']);
   const volumesRaw = volumesRead.ok ? parseJson(volumesRead.stdout, 'Fly volumes list') : [];
