@@ -210,7 +210,7 @@ async function main() {
     if (!volumeId) throw new Error('HearMeOut active Machine has no identifiable /data volume.');
 
     const snapshotRequestedAt = new Date().toISOString();
-    const snapshotCreate = await fly(['volumes', 'snapshots', 'create', volumeId]);
+    const snapshotCreate = await fly(['volumes', 'snapshots', 'create', volumeId, '--app', APP]);
     if (!snapshotCreate.ok) throw new Error(snapshotCreate.stderr || 'Unable to request fresh HearMeOut volume snapshot.');
     const snapshot = await waitForSnapshot(volumeId, snapshotRequestedAt);
 
