@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const PROBE_SENTINEL = 'SPMT_INVENTORY_JSON=';
 
 const INVENTORY_PROFILES = Object.freeze({
   'hearmeout-main': { healthUrl: 'https://hearmeout-main.fly.dev/api/health', kind: 'hearmeout-main' },
@@ -69,16 +70,15 @@ function parseJson(raw, label) {
 }
 
 function parseFixedProbe(raw) {
-  const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (!line.startsWith('{') || !line.endsWith('}')) continue;
-    try {
-      const value = JSON.parse(line);
-      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-    } catch {}
+  const match = String(raw || '').match(/SPMT_INVENTORY_JSON=([A-Za-z0-9+/=]+)/);
+  if (!match) throw new Error('fixed data probe did not return its inventory sentinel.');
+  try {
+    const value = JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not an object');
+    return value;
+  } catch {
+    throw new Error('fixed data probe returned malformed sentinel JSON.');
   }
-  throw new Error('fixed data probe returned malformed JSON.');
 }
 
 function safeMachine(machine) {
@@ -111,21 +111,22 @@ function safeVolume(volume) {
 
 const COMMON_FS = String.raw`
 const fs=require('fs'),path=require('path');
+const emit=(value)=>process.stdout.write('SPMT_INVENTORY_JSON='+Buffer.from(JSON.stringify(value),'utf8').toString('base64'));
 function file(p){try{const s=fs.statSync(p);return {present:s.isFile(),bytes:s.isFile()?s.size:null}}catch{return {present:false,bytes:null}}}
 function tree(root,limit=20000){let files=0,bytes=0,truncated=false;const stack=[root];while(stack.length){const cur=stack.pop();let entries;try{entries=fs.readdirSync(cur,{withFileTypes:true})}catch{continue}for(const e of entries){const full=path.join(cur,e.name);if(e.isDirectory())stack.push(full);else if(e.isFile()){files++;try{bytes+=fs.statSync(full).size}catch{}if(files>=limit){truncated=true;return {present:true,files,bytes,truncated}}}}}return {present:fs.existsSync(root),files,bytes,truncated}}
 function disk(root='/data'){try{const s=fs.statfsSync(root);return {present:true,totalBytes:Number(s.blocks)*Number(s.bsize),freeBytes:Number(s.bavail)*Number(s.bsize),usedBytes:(Number(s.blocks)-Number(s.bfree))*Number(s.bsize)}}catch{return {present:false}}}
 `;
 
 const HMO_MAIN_PROBE = COMMON_FS + String.raw`
-(async()=>{const out={disk:disk(),files:{appDb:file('/data/app.db'),appDbBackup:file('/data/app.db.bak'),watchState:file('/data/watch-state.json'),watchStateBackup:file('/data/watch-state.backup.json')},directories:{watchCache:tree('/data/watch-cache'),watchHls:tree('/data/watch-hls'),music:tree('/data/music')}};try{const init=(await import('sql.js')).default;const SQL=await init();if(out.files.appDb.present){const db=new SQL.Database(fs.readFileSync('/data/app.db'));let q=db.exec('PRAGMA quick_check;');out.sqlite={integrity:q?.[0]?.values?.[0]?.[0]??'unknown'};q=db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");const tables=(q?.[0]?.values||[]).map(r=>String(r[0]));out.sqlite.tableCount=tables.length;out.sqlite.tables=tables.slice(0,100);out.sqlite.collectionRows={};if(tables.includes('docs')){const c=db.exec('SELECT COUNT(*) FROM docs');out.sqlite.collectionRows.docs=Number(c?.[0]?.values?.[0]?.[0]||0)}db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}process.stdout.write(JSON.stringify(out))})().catch(e=>{process.stdout.write(JSON.stringify({error:String(e?.message||e).slice(0,500)}));process.exitCode=1});
+(async()=>{const out={disk:disk(),files:{appDb:file('/data/app.db'),appDbBackup:file('/data/app.db.bak'),watchState:file('/data/watch-state.json'),watchStateBackup:file('/data/watch-state.backup.json')},directories:{watchCache:tree('/data/watch-cache'),watchHls:tree('/data/watch-hls'),music:tree('/data/music')}};try{const init=(await import('sql.js')).default;const SQL=await init();if(out.files.appDb.present){const db=new SQL.Database(fs.readFileSync('/data/app.db'));let q=db.exec('PRAGMA quick_check;');out.sqlite={integrity:q?.[0]?.values?.[0]?.[0]??'unknown'};q=db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");const tables=(q?.[0]?.values||[]).map(r=>String(r[0]));out.sqlite.tableCount=tables.length;out.sqlite.tables=tables.slice(0,100);out.sqlite.collectionRows={};if(tables.includes('docs')){const c=db.exec('SELECT COUNT(*) FROM docs');out.sqlite.collectionRows.docs=Number(c?.[0]?.values?.[0]?.[0]||0)}db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}emit(out)})().catch(e=>{emit({error:String(e?.message||e).slice(0,500)});process.exitCode=1});
 `;
 
 const HMO_WORKER_PROBE = COMMON_FS + String.raw`
-const out={disk:disk(),directories:{music:tree('/data/music'),watchHls:tree('/data/watch-hls'),watchCache:tree('/data/watch-cache')},files:{youtubeCookies:file('/data/youtube-cookies.txt')}};process.stdout.write(JSON.stringify(out));
+const out={disk:disk(),directories:{music:tree('/data/music'),watchHls:tree('/data/watch-hls'),watchCache:tree('/data/watch-cache')},files:{youtubeCookies:file('/data/youtube-cookies.txt')}};emit(out);
 `;
 
 const SPMT_PROBE = COMMON_FS + String.raw`
-(async()=>{const out={disk:disk(),files:{spmtDb:file('/data/spmt.db'),spmtDbWal:file('/data/spmt.db-wal'),spmtDbShm:file('/data/spmt.db-shm')}};try{const mod=await import('better-sqlite3');const Database=mod.default;if(out.files.spmtDb.present){const db=new Database('/data/spmt.db',{readonly:true,fileMustExist:true});const integrity=String(db.pragma('quick_check',{simple:true})||'unknown');const tables=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(r=>String(r.name));const selectedCounts={};for(const name of ['users','messages','notifications']){if(tables.includes(name))selectedCounts[name]=Number(db.prepare('SELECT COUNT(*) AS count FROM '+name).get().count||0)}out.sqlite={integrity,tableCount:tables.length,tables:tables.slice(0,100),selectedCounts};db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}process.stdout.write(JSON.stringify(out))})().catch(e=>{process.stdout.write(JSON.stringify({error:String(e?.message||e).slice(0,500)}));process.exitCode=1});
+(async()=>{const out={disk:disk(),files:{spmtDb:file('/data/spmt.db'),spmtDbWal:file('/data/spmt.db-wal'),spmtDbShm:file('/data/spmt.db-shm')}};try{const mod=await import('better-sqlite3');const Database=mod.default;if(out.files.spmtDb.present){const db=new Database('/data/spmt.db',{readonly:true,fileMustExist:true});const integrity=String(db.pragma('quick_check',{simple:true})||'unknown');const tables=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(r=>String(r.name));const selectedCounts={};for(const name of ['users','messages','notifications']){if(tables.includes(name))selectedCounts[name]=Number(db.prepare('SELECT COUNT(*) AS count FROM '+name).get().count||0)}out.sqlite={integrity,tableCount:tables.length,tables:tables.slice(0,100),selectedCounts};db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}emit(out)})().catch(e=>{emit({error:String(e?.message||e).slice(0,500)});process.exitCode=1});
 `;
 
 function probeFor(kind) {
