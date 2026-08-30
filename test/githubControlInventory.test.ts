@@ -45,7 +45,8 @@ describe("github-control-inventory runner", () => {
     expect(inventory).toContain("'hmo-dj-worker'");
     expect(inventory).toContain("'spmt-live'");
     expect(inventory).toContain("readOnly: true");
-    expect(inventory).toContain("const fixedCommand = `node -e ${JSON.stringify(probeFor(profile.kind))}`");
+    expect(inventory).toContain("const encodedProbe = Buffer.from(probeFor(profile.kind), 'utf8').toString('base64')");
+    expect(inventory).toContain("eval(Buffer.from('${encodedProbe}','base64').toString('utf8'))");
     expect(inventory).toContain("['ssh', 'console', '--app', appName, '--machine', active.id, '--command', fixedCommand, '--quiet']");
     expect(inventory).not.toContain("['machine', 'exec'");
     expect(inventory).not.toContain("process.env[");
