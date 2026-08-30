@@ -162,7 +162,8 @@ async function inventory(appName) {
 
   let data = { ok: false, error: 'No active Machine is available for the fixed read-only data probe.' };
   if (active?.id) {
-    const probe = await fly(['machine', 'exec', '--app', appName, active.id, 'node', '-e', probeFor(profile.kind)], { timeout: 120000 });
+    const fixedCommand = `node -e ${JSON.stringify(probeFor(profile.kind))}`;
+    const probe = await fly(['machine', 'exec', active.id, fixedCommand, '--app', appName], { timeout: 120000 });
     if (probe.ok) data = { ok: true, ...parseJson(probe.stdout, 'fixed data probe') };
     else data = { ok: false, error: probe.stderr || 'fixed data probe failed' };
   }
