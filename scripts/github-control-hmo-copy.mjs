@@ -12,6 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 const execFileAsync = promisify(execFile);
 const APP = 'hearmeout-main';
 const APOLLO_ROOT = resolve('apollo');
+const RECENT_SNAPSHOT_MS = 30 * 60 * 1000;
 
 function redact(value) {
   return String(value ?? '')
@@ -73,24 +74,45 @@ function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-async function waitForSnapshot(volumeId, requestedAt) {
-  const requestedMs = Date.parse(requestedAt) - 5000;
-  for (let attempt = 0; attempt < 18; attempt += 1) {
-    const read = await fly(['volumes', 'snapshots', 'list', volumeId, '--app', APP, '--json']);
-    if (!read.ok) throw new Error(read.stderr || 'Unable to list HearMeOut snapshots.');
-    const parsed = parseJson(read.stdout, 'snapshot list');
-    const rows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.snapshots) ? parsed.snapshots : []);
+function safeSnapshot(row, reused) {
+  return {
+    id: row?.id ?? null,
+    status: String(row?.status ?? row?.state ?? ''),
+    createdAt: row?.created_at ?? row?.createdAt ?? null,
+    storedSizeBytes: row?.stored_size_bytes ?? row?.storedSizeBytes ?? row?.size ?? null,
+    reusedFreshSnapshot: reused,
+  };
+}
+
+async function listSnapshots(volumeId) {
+  const read = await fly(['volumes', 'snapshots', 'list', volumeId, '--app', APP, '--json']);
+  if (!read.ok) throw new Error(read.stderr || 'Unable to list HearMeOut snapshots.');
+  const parsed = parseJson(read.stdout, 'snapshot list');
+  return Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.snapshots) ? parsed.snapshots : []);
+}
+
+function newestCreatedSnapshot(rows, minimumCreatedMs) {
+  return rows
+    .filter((row) => String(row?.status ?? row?.state ?? '').toLowerCase() === 'created')
+    .filter((row) => Date.parse(String(row?.created_at ?? row?.createdAt ?? '')) >= minimumCreatedMs)
+    .sort((a, b) => Date.parse(String(b?.created_at ?? b?.createdAt ?? '')) - Date.parse(String(a?.created_at ?? a?.createdAt ?? '')))[0];
+}
+
+async function obtainFreshSnapshot(volumeId) {
+  const recentCutoff = Date.now() - RECENT_SNAPSHOT_MS;
+  const existing = newestCreatedSnapshot(await listSnapshots(volumeId), recentCutoff);
+  if (existing) return safeSnapshot(existing, true);
+
+  const beforeIds = new Set((await listSnapshots(volumeId)).map((row) => String(row?.id || '')).filter(Boolean));
+  const create = await fly(['volumes', 'snapshots', 'create', volumeId, '--app', APP]);
+  if (!create.ok) throw new Error(create.stderr || 'Unable to request fresh HearMeOut volume snapshot.');
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const rows = await listSnapshots(volumeId);
     const candidate = rows
-      .filter((row) => Date.parse(String(row?.created_at ?? row?.createdAt ?? '')) >= requestedMs)
+      .filter((row) => !beforeIds.has(String(row?.id || '')))
+      .filter((row) => String(row?.status ?? row?.state ?? '').toLowerCase() === 'created')
       .sort((a, b) => Date.parse(String(b?.created_at ?? b?.createdAt ?? '')) - Date.parse(String(a?.created_at ?? a?.createdAt ?? '')))[0];
-    if (candidate && String(candidate?.status ?? candidate?.state ?? '') === 'created') {
-      return {
-        id: candidate?.id ?? null,
-        status: 'created',
-        createdAt: candidate?.created_at ?? candidate?.createdAt ?? null,
-        storedSizeBytes: candidate?.stored_size_bytes ?? candidate?.storedSizeBytes ?? candidate?.size ?? null,
-      };
-    }
+    if (candidate) return safeSnapshot(candidate, false);
     await new Promise((resolveWait) => setTimeout(resolveWait, 5000));
   }
   throw new Error('Fresh HearMeOut volume snapshot did not reach created state in time.');
@@ -209,10 +231,8 @@ async function main() {
     const volumeId = String(dataMount?.volume || '');
     if (!volumeId) throw new Error('HearMeOut active Machine has no identifiable /data volume.');
 
-    const snapshotRequestedAt = new Date().toISOString();
-    const snapshotCreate = await fly(['volumes', 'snapshots', 'create', volumeId, '--app', APP]);
-    if (!snapshotCreate.ok) throw new Error(snapshotCreate.stderr || 'Unable to request fresh HearMeOut volume snapshot.');
-    const snapshot = await waitForSnapshot(volumeId, snapshotRequestedAt);
+    const snapshot = await obtainFreshSnapshot(volumeId);
+    if (!snapshot.id || snapshot.status.toLowerCase() !== 'created') throw new Error('HearMeOut recovery snapshot is not verified as created.');
 
     const copy = await makeApplicationCopy(String(machine.id));
     const localDb = join(root, 'blue-app.db');
