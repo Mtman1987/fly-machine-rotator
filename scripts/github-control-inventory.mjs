@@ -6,18 +6,9 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const INVENTORY_PROFILES = Object.freeze({
-  'hearmeout-main': {
-    healthUrl: 'https://hearmeout-main.fly.dev/api/health',
-    kind: 'hearmeout-main',
-  },
-  'hmo-dj-worker': {
-    healthUrl: 'https://hmo-dj-worker.fly.dev/health',
-    kind: 'hmo-dj-worker',
-  },
-  'spmt-live': {
-    healthUrl: 'https://spmt-live.fly.dev/api/health/ready',
-    kind: 'spmt-live',
-  },
+  'hearmeout-main': { healthUrl: 'https://hearmeout-main.fly.dev/api/health', kind: 'hearmeout-main' },
+  'hmo-dj-worker': { healthUrl: 'https://hmo-dj-worker.fly.dev/health', kind: 'hmo-dj-worker' },
+  'spmt-live': { healthUrl: 'https://spmt-live.fly.dev/api/health/ready', kind: 'spmt-live' },
 });
 
 function redact(value) {
@@ -72,8 +63,19 @@ async function fly(args, options = {}) {
 }
 
 function parseJson(raw, label) {
-  try { return JSON.parse(String(raw || '').trim() || 'null'); }
-  catch { throw new Error(`${label} returned malformed JSON.`); }
+  const text = String(raw || '').trim();
+  try { return JSON.parse(text || 'null'); }
+  catch {
+    const objectStart = text.indexOf('{');
+    const arrayStart = text.indexOf('[');
+    const starts = [objectStart, arrayStart].filter((index) => index >= 0);
+    const start = starts.length ? Math.min(...starts) : -1;
+    const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+    if (start >= 0 && end > start) {
+      try { return JSON.parse(text.slice(start, end + 1)); } catch {}
+    }
+    throw new Error(`${label} returned malformed JSON.`);
+  }
 }
 
 function safeMachine(machine) {
@@ -86,16 +88,8 @@ function safeMachine(machine) {
     region: machine?.region ?? null,
     createdAt: machine?.created_at ?? null,
     updatedAt: machine?.updated_at ?? null,
-    resources: {
-      cpuKind: guest?.cpu_kind ?? null,
-      cpus: guest?.cpus ?? null,
-      memoryMb: guest?.memory_mb ?? null,
-    },
-    mounts: mounts.map((mount) => ({
-      volume: mount?.volume ?? null,
-      path: mount?.path ?? mount?.destination ?? null,
-      name: mount?.name ?? null,
-    })),
+    resources: { cpuKind: guest?.cpu_kind ?? null, cpus: guest?.cpus ?? null, memoryMb: guest?.memory_mb ?? null },
+    mounts: mounts.map((mount) => ({ volume: mount?.volume ?? null, path: mount?.path ?? mount?.destination ?? null, name: mount?.name ?? null })),
   };
 }
 
@@ -120,7 +114,7 @@ function disk(root='/data'){try{const s=fs.statfsSync(root);return {present:true
 `;
 
 const HMO_MAIN_PROBE = COMMON_FS + String.raw`
-(async()=>{const out={disk:disk(),files:{appDb:file('/data/app.db'),appDbBackup:file('/data/app.db.bak'),watchState:file('/data/watch-state.json'),watchStateBackup:file('/data/watch-state.backup.json')},directories:{watchCache:tree('/data/watch-cache'),watchHls:tree('/data/watch-hls'),music:tree('/data/music')}};try{const init=(await import('sql.js')).default;const SQL=await init();if(out.files.appDb.present){const db=new SQL.Database(fs.readFileSync('/data/app.db'));let q=db.exec('PRAGMA quick_check;');out.sqlite={integrity:q?.[0]?.values?.[0]?.[0]??'unknown'};q=db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");const tables=(q?.[0]?.values||[]).map(r=>String(r[0]));out.sqlite.tableCount=tables.length;out.sqlite.tables=tables.slice(0,100);out.sqlite.collectionRows={};for(const name of ['docs']){if(tables.includes(name)){const c=db.exec('SELECT COUNT(*) FROM '+name);out.sqlite.collectionRows[name]=Number(c?.[0]?.values?.[0]?.[0]||0)}}db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}process.stdout.write(JSON.stringify(out))})().catch(e=>{process.stdout.write(JSON.stringify({error:String(e?.message||e).slice(0,500)}));process.exitCode=1});
+(async()=>{const out={disk:disk(),files:{appDb:file('/data/app.db'),appDbBackup:file('/data/app.db.bak'),watchState:file('/data/watch-state.json'),watchStateBackup:file('/data/watch-state.backup.json')},directories:{watchCache:tree('/data/watch-cache'),watchHls:tree('/data/watch-hls'),music:tree('/data/music')}};try{const init=(await import('sql.js')).default;const SQL=await init();if(out.files.appDb.present){const db=new SQL.Database(fs.readFileSync('/data/app.db'));let q=db.exec('PRAGMA quick_check;');out.sqlite={integrity:q?.[0]?.values?.[0]?.[0]??'unknown'};q=db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");const tables=(q?.[0]?.values||[]).map(r=>String(r[0]));out.sqlite.tableCount=tables.length;out.sqlite.tables=tables.slice(0,100);out.sqlite.collectionRows={};if(tables.includes('docs')){const c=db.exec('SELECT COUNT(*) FROM docs');out.sqlite.collectionRows.docs=Number(c?.[0]?.values?.[0]?.[0]||0)}db.close()}}catch(e){out.sqlite={error:String(e?.message||e).slice(0,500)}}process.stdout.write(JSON.stringify(out))})().catch(e=>{process.stdout.write(JSON.stringify({error:String(e?.message||e).slice(0,500)}));process.exitCode=1});
 `;
 
 const HMO_WORKER_PROBE = COMMON_FS + String.raw`
@@ -143,8 +137,7 @@ async function readHealth(url) {
   if (!response.ok) return { ok: false, error: response.stderr || 'health request failed' };
   const text = response.stdout.trim();
   let body;
-  try { body = JSON.parse(text); }
-  catch { body = text.slice(0, 1000); }
+  try { body = JSON.parse(text); } catch { body = text.slice(0, 1000); }
   return { ok: true, body };
 }
 
