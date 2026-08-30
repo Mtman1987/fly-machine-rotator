@@ -65,23 +65,20 @@ async function fly(args, options = {}) {
 function parseJson(raw, label) {
   const text = String(raw || '').trim();
   try { return JSON.parse(text || 'null'); }
-  catch {
-    const objectStart = text.indexOf('{');
-    const arrayStart = text.indexOf('[');
-    let start = -1;
-    let end = -1;
-    if (objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart)) {
-      start = objectStart;
-      end = text.lastIndexOf('}');
-    } else if (arrayStart >= 0) {
-      start = arrayStart;
-      end = text.lastIndexOf(']');
-    }
-    if (start >= 0 && end > start) {
-      try { return JSON.parse(text.slice(start, end + 1)); } catch {}
-    }
-    throw new Error(`${label} returned malformed JSON.`);
+  catch { throw new Error(`${label} returned malformed JSON.`); }
+}
+
+function parseFixedProbe(raw) {
+  const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      const value = JSON.parse(line);
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
   }
+  throw new Error('fixed data probe returned malformed JSON.');
 }
 
 function safeMachine(machine) {
@@ -163,7 +160,7 @@ async function inventory(appName) {
   if (active?.id) {
     const fixedCommand = `node -e ${JSON.stringify(probeFor(profile.kind))}`;
     const probe = await fly(['machine', 'exec', active.id, fixedCommand, '--app', appName], { timeout: 120000 });
-    if (probe.ok) data = { ok: true, ...parseJson(probe.stdout, 'fixed data probe') };
+    if (probe.ok) data = { ok: true, ...parseFixedProbe(probe.stdout) };
     else data = { ok: false, error: probe.stderr || 'fixed data probe failed' };
   }
 
