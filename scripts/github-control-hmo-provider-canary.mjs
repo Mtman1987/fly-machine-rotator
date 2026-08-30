@@ -60,12 +60,17 @@ const REMOTE_CANARY = String.raw`
   const secret=String(process.env.HMO_WORKER_SHARED_SECRET||'').trim();
   if(secret.length<16)throw new Error('worker shared secret unavailable');
   const auth={Authorization:'Bearer '+secret,Accept:'application/json'};
-  const appUrl='http://hearmeout-main.internal:3001';
   const step=async(name,fn)=>{try{return await fn()}catch(e){throw new Error(name+': '+String(e?.message||e))}};
-  const tokenResponse=await step('token-broker',()=>fetch(appUrl+'/api/discord/bot-token',{headers:auth,signal:AbortSignal.timeout(15000)}));
-  if(!tokenResponse.ok)throw new Error('token-broker: unavailable ('+tokenResponse.status+')');
-  const token=String((await tokenResponse.json()).token||'');
-  if(!token)throw new Error('token-broker: returned no token');
+  let token=String(process.env.DISCORD_BOT_TOKEN||'').trim();
+  let tokenSource='worker-env';
+  if(!token){
+    tokenSource='broker';
+    const appUrl=String(process.env.APP_URL||'https://hearmeout-main.fly.dev').replace(/\/+$/,'');
+    const tokenResponse=await step('token-broker',()=>fetch(appUrl+'/api/discord/bot-token',{headers:auth,signal:AbortSignal.timeout(15000)}));
+    if(!tokenResponse.ok)throw new Error('token-broker: unavailable ('+tokenResponse.status+')');
+    token=String((await tokenResponse.json()).token||'');
+    if(!token)throw new Error('token-broker: returned no token');
+  }
 
   const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildVoiceStates]});
   let roomId='';let startAttempted=false;let started=false;let stopped=false;let running=false;let candidateKind='';let listenOnly=false;let failure='';
@@ -109,7 +114,7 @@ const REMOTE_CANARY = String.raw`
     if(startAttempted&&roomId){try{await post('/voice-bridge',{action:'stop',roomId},30000);stopped=true}catch(e){failure=(failure?failure+'; ':'')+'cleanup-stop: '+String(e?.message||e)}}
     try{client.destroy()}catch{}
   }
-  const out={ok:started&&running&&listenOnly&&stopped&&!failure,blueRemainsAuthoritative:true,dnsChanged:false,providerCanary:true,candidateKind,selectedChannelWasEmpty:Boolean(candidateKind),productionChannelReused:false,startAttempted,bridgeStarted:started,listenOnly,runningObserved:running,bridgeStopped:stopped,canaryRoomEphemeral:true,...(failure?{error:failure.replace(/((?:token|authorization|secret|password))\s*[:=]\s*\S+/gi,'$1=[REDACTED]').slice(0,500)}:{})};
+  const out={ok:started&&running&&listenOnly&&stopped&&!failure,blueRemainsAuthoritative:true,dnsChanged:false,providerCanary:true,tokenSource,candidateKind,selectedChannelWasEmpty:Boolean(candidateKind),productionChannelReused:false,startAttempted,bridgeStarted:started,listenOnly,runningObserved:running,bridgeStopped:stopped,canaryRoomEphemeral:true,...(failure?{error:failure.replace(/((?:token|authorization|secret|password))\s*[:=]\s*\S+/gi,'$1=[REDACTED]').slice(0,500)}:{})};
   process.stdout.write('HMO_PROVIDER_CANARY_JSON='+Buffer.from(JSON.stringify(out),'utf8').toString('base64'));
   if(!out.ok)process.exitCode=1;
 })().catch(e=>{const out={ok:false,blueRemainsAuthoritative:true,dnsChanged:false,providerCanary:true,error:String(e?.message||e).replace(/((?:token|authorization|secret|password))\s*[:=]\s*\S+/gi,'$1=[REDACTED]').slice(0,500)};process.stdout.write('HMO_PROVIDER_CANARY_JSON='+Buffer.from(JSON.stringify(out),'utf8').toString('base64'));process.exitCode=1});
