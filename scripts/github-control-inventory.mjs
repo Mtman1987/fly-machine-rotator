@@ -108,6 +108,36 @@ function safeVolume(volume) {
   };
 }
 
+function safeSnapshot(snapshot) {
+  return {
+    id: snapshot?.id ?? null,
+    status: snapshot?.status ?? snapshot?.state ?? null,
+    storedSizeBytes: snapshot?.stored_size_bytes ?? snapshot?.storedSizeBytes ?? snapshot?.size ?? null,
+    volumeSizeGb: snapshot?.volume_size_gb ?? snapshot?.volumeSizeGb ?? snapshot?.volume_size ?? null,
+    createdAt: snapshot?.created_at ?? snapshot?.createdAt ?? null,
+    retentionDays: snapshot?.retention_days ?? snapshot?.retentionDays ?? null,
+  };
+}
+
+async function readVolumeSnapshots(appName, volumes) {
+  const output = [];
+  for (const volume of volumes) {
+    if (!volume.id) {
+      output.push({ volumeId: null, ok: false, error: 'Volume has no ID.' });
+      continue;
+    }
+    const read = await fly(['volumes', 'snapshots', 'list', String(volume.id), '--app', appName, '--json']);
+    if (!read.ok) {
+      output.push({ volumeId: volume.id, ok: false, error: read.stderr || 'Unable to list volume snapshots.' });
+      continue;
+    }
+    const parsed = parseJson(read.stdout, `Fly snapshots list for ${volume.id}`);
+    const rows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.snapshots) ? parsed.snapshots : []);
+    output.push({ volumeId: volume.id, ok: true, snapshotCount: rows.length, snapshots: rows.map(safeSnapshot) });
+  }
+  return output;
+}
+
 const COMMON_FS = String.raw`
 const fs=require('fs'),path=require('path');
 const emit=(value)=>process.stdout.write('SPMT_INVENTORY_JSON='+Buffer.from(JSON.stringify(value),'utf8').toString('base64'));
@@ -155,6 +185,8 @@ async function inventory(appName) {
   const volumesRead = await fly(['volumes', 'list', '--app', appName, '--json']);
   const volumesRaw = volumesRead.ok ? parseJson(volumesRead.stdout, 'Fly volumes list') : [];
   const volumes = Array.isArray(volumesRaw) ? volumesRaw.map(safeVolume) : [];
+  const snapshotInventory = await readVolumeSnapshots(appName, volumes);
+  const snapshotInventoryComplete = snapshotInventory.every((item) => item.ok);
 
   let data = { ok: false, error: 'No active Machine is available for the fixed read-only data probe.' };
   if (active?.id) {
@@ -167,7 +199,7 @@ async function inventory(appName) {
 
   const health = await readHealth(profile.healthUrl);
   return {
-    ok: Boolean(active?.id) && data.ok && health.ok,
+    ok: Boolean(active?.id) && data.ok && health.ok && snapshotInventoryComplete,
     readOnly: true,
     appName,
     capturedAt: new Date().toISOString(),
@@ -176,6 +208,8 @@ async function inventory(appName) {
     machines: machines.map(safeMachine),
     volumeCount: volumes.length,
     volumes,
+    snapshotInventoryComplete,
+    snapshotInventory,
     health,
     data,
   };
