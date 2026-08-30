@@ -30,7 +30,7 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|signal|logs|repair|chatqueue|chatjob|chatdone)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|chatqueue|chatjob|chatdone)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
@@ -38,6 +38,9 @@ jobs:
 
             if (command === 'states') {
               if (rest) payload.appName = rest.split(/\s+/)[0].slice(0, 120);
+            } else if (command === 'inventory') {
+              if (!rest) core.setFailed('inventory requires: /rotator inventory <hearmeout-main|hmo-dj-worker|spmt-live>');
+              payload.appName = rest.split(/\s+/)[0].slice(0, 120);
             } else if (command === 'signal') {
               if (rest) payload.limit = Number(rest.split(/\s+/)[0]);
             } else if (command === 'logs') {
@@ -82,6 +85,8 @@ jobs:
           set +e
           if [ "$COMMAND_NAME" = "signal" ]; then
             node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          elif [ "$COMMAND_NAME" = "inventory" ]; then
+            node scripts/github-control-inventory.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "chatqueue" ] || [ "$COMMAND_NAME" = "chatjob" ] || [ "$COMMAND_NAME" = "chatdone" ]; then
             node scripts/github-control-chat.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           else
