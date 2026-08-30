@@ -30,7 +30,7 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|chatqueue|chatjob|chatdone)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|chatqueue|chatjob|chatdone|hmocopy)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
@@ -67,6 +67,8 @@ jobs:
               const maybeOutcome = String(parts[0] || '').toLowerCase();
               payload.outcome = maybeOutcome === 'failed' || maybeOutcome === 'success' ? String(parts.shift()).toLowerCase() : 'success';
               payload.resolution = parts.join(' ').trim().slice(0, 4000) || 'Resolved by ChatGPT conversation.';
+            } else if (command === 'hmocopy') {
+              if (rest) core.setFailed('hmocopy does not accept arguments.');
             }
 
             const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -74,6 +76,25 @@ jobs:
             core.setOutput('command', command);
 
       - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Check out Apollo for HMO rehearsal
+        if: steps.parse.outputs.command == 'hmocopy'
+        uses: actions/checkout@v4
+        with:
+          repository: Mtman1987/ApolloStation
+          ref: main
+          path: apollo
+
+      - name: Set up Node 24 for HMO rehearsal
+        if: steps.parse.outputs.command == 'hmocopy'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Apollo dependencies for HMO rehearsal
+        if: steps.parse.outputs.command == 'hmocopy'
+        working-directory: apollo
+        run: npm ci --ignore-scripts
 
       - name: Execute bounded command through Fly
         id: execute
@@ -87,6 +108,8 @@ jobs:
             node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "inventory" ]; then
             node scripts/github-control-inventory.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          elif [ "$COMMAND_NAME" = "hmocopy" ]; then
+            node scripts/github-control-hmo-copy.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "chatqueue" ] || [ "$COMMAND_NAME" = "chatjob" ] || [ "$COMMAND_NAME" = "chatdone" ]; then
             node scripts/github-control-chat.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           else
