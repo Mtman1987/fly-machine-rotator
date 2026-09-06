@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   const command = process.argv[2] ?? "run";
   if (command === "serve") {
     await startWebStack(process.env);
-    console.log("Fly Machine Rotator dashboard and Athena Coder are running.");
+    console.log("Fly Machine Rotator dashboard and Stella Coder are running.");
     await new Promise(() => undefined);
     return;
   }

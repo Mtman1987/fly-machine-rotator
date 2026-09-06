@@ -25,7 +25,7 @@ export function scheduleAthenaForIncident(
 ): void {
   triggerChain = triggerChain
     .then(async () => { await triggerAthenaForIncident(event, env); })
-    .catch((error) => console.error("Athena incident trigger failed", error));
+    .catch((error) => console.error("Stella incident trigger failed", error));
 }
 
 export async function triggerAthenaForIncident(
@@ -52,7 +52,7 @@ export async function triggerAthenaForIncident(
   attempts.push(attempt);
   await writeAthenaIncidentAttempts(attemptsFile, attempts);
   await upsertUnifiedDiscordReport(env.DISCORD_WEBHOOK_URL).catch((error) => {
-    console.error("Could not refresh Discord when Athena started", error);
+    console.error("Could not refresh Discord when Stella started", error);
   });
 
   const dashboardPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT ?? (Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080) + 2));
@@ -66,7 +66,7 @@ export async function triggerAthenaForIncident(
       signal: AbortSignal.timeout(Number(env.ROTATOR_ATHENA_TRIGGER_TIMEOUT_MS ?? 10 * 60 * 1000))
     });
     const body = await response.text();
-    if (!response.ok) throw new Error(`Athena generate returned ${response.status}: ${body.slice(0, 500)}`);
+    if (!response.ok) throw new Error(`Stella generate returned ${response.status}: ${body.slice(0, 500)}`);
 
     const preparation = await prepareIncidentRepairForApproval(event.appName, event.fingerprint, env);
     attempt.status = preparation.status === "error" ? "failed" : "completed";
@@ -78,7 +78,7 @@ export async function triggerAthenaForIncident(
   attempt.finishedAt = new Date().toISOString();
   await writeAthenaIncidentAttempts(attemptsFile, attempts);
   await upsertUnifiedDiscordReport(env.DISCORD_WEBHOOK_URL).catch((error) => {
-    console.error("Could not refresh Discord after Athena attempt", error);
+    console.error("Could not refresh Discord after Stella attempt", error);
   });
   return { triggered: true, attempt };
 }

@@ -1,3 +1,4 @@
+import { requestOpenAiRepairPlanJson } from "./openAiRepairPlanner.js";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
@@ -191,6 +192,13 @@ async function requestFixPlan(
 ): Promise<ModelFixPlan> {
   const prompt = buildPrompt(repoLabel, repoPath, event, contextFiles, options);
   const failures: string[] = [];
+  if (env.OPENAI_API_KEY) {
+    try {
+      return assertUsableModelPlan(await requestOpenAiFixPlan(prompt, repoPath, env), "OpenAI");
+    } catch (error) {
+      failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
+    }
+  }
   if (env.SPMT_LLM_BASE_URL) {
     try {
       return assertUsableModelPlan(await requestSpmtLlmFixPlan(prompt, repoPath, env), "SPMT LLM");
@@ -201,13 +209,6 @@ async function requestFixPlan(
   if (env.EDENAI_API_KEY) {
     try {
       return assertUsableModelPlan(await requestEdenAiFixPlan(prompt, repoPath, env), "EdenAI");
-    } catch (error) {
-      failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
-    }
-  }
-  if (env.OPENAI_API_KEY) {
-    try {
-      return assertUsableModelPlan(await requestOpenAiFixPlan(prompt, repoPath, env), "OpenAI");
     } catch (error) {
       failures.push(redactSensitiveText(error instanceof Error ? error.message : String(error)));
     }
@@ -447,44 +448,8 @@ async function requestSpmtLlmFixPlan(prompt: string, repoPath: string, env: Node
 }
 
 async function requestOpenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {
-  const model = env.OPENAI_FIX_MODEL ?? "gpt-4.1-mini";
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    signal: AbortSignal.timeout(providerTimeoutMs(env)),
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You are a senior software engineer. Return JSON with summary, diagnosis, confidence, sourceSummary, and changes. Each change must include path, reason, and the full updated file content."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI request failed with ${response.status}: ${await response.text()}`);
-  }
-
-  const body = await response.json() as {
-    choices?: Array<{ message?: { content?: unknown } }>;
-  };
-  const content = extractModelText(body.choices?.[0]?.message?.content);
-  if (!content) {
-    throw new Error("OpenAI response did not include content.");
-  }
-
-  return normalizeModelPlan(parseModelPlanContent(content), repoPath);
+  const content=await requestOpenAiRepairPlanJson(prompt,env,providerTimeoutMs(env));
+  return normalizeModelPlan(parseModelPlanContent(content),repoPath);
 }
 
 async function requestEdenAiFixPlan(prompt: string, repoPath: string, env: NodeJS.ProcessEnv): Promise<ModelFixPlan> {

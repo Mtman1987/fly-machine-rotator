@@ -35,7 +35,7 @@ const after = `function assertUsableModelPlan(plan: ModelFixPlan, provider: stri
 if (source.includes(before)) {
   source = source.replace(before, after);
 } else if (!source.includes('returned diagnostic evidence but no patch; continuing to another repair provider when configured')) {
-  throw new Error('Athena provider-plan guard marker missing');
+  throw new Error('Stella provider-plan guard marker missing');
 }
 
 source = source.replace(
@@ -44,4 +44,4 @@ source = source.replace(
 );
 
 if (source !== original) fs.writeFileSync(file, source, 'utf8');
-console.log('Athena repair provider escalation patch applied.');
+console.log('Stella repair provider escalation patch applied.');

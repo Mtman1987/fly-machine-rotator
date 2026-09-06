@@ -68,7 +68,7 @@ function legacyDshCredential(env: NodeJS.ProcessEnv) {
 function repairReport(record: FixRecord) {
   const checks = record.checkResult?.commandResults || [];
   const sections = [
-    `Athena repair: ${record.id}`,
+    `Stella repair: ${record.id}`,
     `App: ${record.appName}`,
     `Repository: ${record.repoLabel || record.repoId || "unknown"}`,
     `State: ${record.status}`,
@@ -97,7 +97,7 @@ async function sendApprovalDm(record: FixRecord, env: NodeJS.ProcessEnv) {
   if (!credential) throw new Error("No DSH owner-DM compatibility credential is configured");
   const report = repairReport(record);
   const message = [
-    `Athena has a validated repair waiting for your approval.`,
+    `Stella has a validated repair waiting for your approval.`,
     `App: **${record.appName}**`,
     `Fix: **${record.id}**`,
     `Quality gate: **${record.qualityGate?.verdict || "unknown"}** (${record.qualityGate?.overallConfidence ?? "?"}%)`,
@@ -120,7 +120,7 @@ async function sendApprovalDm(record: FixRecord, env: NodeJS.ProcessEnv) {
         { label: "Deny / Hold", url: approvalUrl(env, record.id, "deny"), style: 4 },
       ],
       embed: {
-        title: "Athena repair approval required",
+        title: "Stella repair approval required",
         description: safe(record.summary || record.diagnosis || "Validated repair is ready for review.", 3000),
         fields: [
           { name: "App", value: record.appName, inline: true },
@@ -175,12 +175,12 @@ async function ensurePullRequest(record: FixRecord, env: NodeJS.ProcessEnv) {
   const payload = await githubRequest(env, `/repos/${repo}/pulls`, {
     method: "POST",
     body: JSON.stringify({
-      title: `Athena repair: ${record.appName} ${record.fingerprint}`,
+      title: `Stella repair: ${record.appName} ${record.fingerprint}`,
       head: record.pushResult.branch,
       base: "main",
       draft: false,
       body: [
-        "## Athena repair",
+        "## Stella repair",
         "",
         safe(record.summary || record.diagnosis || "Automated repair proposal.", 5000),
         "",
@@ -190,7 +190,7 @@ async function ensurePullRequest(record: FixRecord, env: NodeJS.ProcessEnv) {
         "## Validation",
         ...(record.checkResult?.commandResults || []).map((check) => `- ${check.exitCode === 0 ? "Passed" : "Failed"}: \`${check.command}\``),
         "",
-        "Owner approval was recorded through the SPMT-authenticated Athena repair gate.",
+        "Owner approval was recorded through the SPMT-authenticated Stella repair gate.",
       ].join("\n"),
     }),
   });

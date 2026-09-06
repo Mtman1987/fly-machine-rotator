@@ -131,13 +131,13 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
       '        if (request.method === "GET") {',
       '          const fixId = String(url.searchParams.get("fix") || "").trim();',
       '          const action = normalizeRepairAction(url.searchParams.get("action"));',
-      '          if (!fixId || !action) return sendRepairDecisionPage(response, 400, "Athena Repair Gate", "Invalid or incomplete repair decision link.");',
+      '          if (!fixId || !action) return sendRepairDecisionPage(response, 400, "Stella Repair Gate", "Invalid or incomplete repair decision link.");',
       '          return sendRepairDecisionConfirmation(response, fixId, action);',
       '        }',
       '        const form = new URLSearchParams(await readRequestText(request));',
       '        const fixId = String(form.get("fix") || "").trim();',
       '        const action = normalizeRepairAction(form.get("action"));',
-      '        if (!fixId || !action) return sendRepairDecisionPage(response, 400, "Athena Repair Gate", "Invalid repair decision payload.");',
+      '        if (!fixId || !action) return sendRepairDecisionPage(response, 400, "Stella Repair Gate", "Invalid repair decision payload.");',
       '        try {',
       '          const record = await decideRepairApproval(fixId, action, "spmt-owner", env);',
       '          return sendRepairDecisionPage(response, 200, action === "approve" ? "Repair approved" : "Repair denied", record.approval?.message || `Repair is now ${record.status}.`);',
@@ -174,13 +174,13 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
       '',
       'function sendRepairDecisionPage(response: ServerResponse, status: number, title: string, message: string) {',
       '  response.writeHead(status, privateHeaders("text/html; charset=utf-8"));',
-      '  response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeDecisionHtml(title)}</title><style>:root{color-scheme:dark}body{margin:0;background:#070b12;color:#eef4ff;font:16px/1.5 system-ui;display:grid;min-height:100vh;place-items:center;padding:24px}.card{width:min(720px,100%);background:#101722;border:1px solid #28364c;border-radius:16px;padding:24px}.muted{color:#9aacbf}a{color:#8edfff}</style></head><body><main class="card"><div class="muted">Athena · Repair Gate</div><h1>${escapeDecisionHtml(title)}</h1><p>${escapeDecisionHtml(message)}</p><p><a href="/athena">Return to Athena Coder</a></p></main></body></html>`);',
+      '  response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeDecisionHtml(title)}</title><style>:root{color-scheme:dark}body{margin:0;background:#070b12;color:#eef4ff;font:16px/1.5 system-ui;display:grid;min-height:100vh;place-items:center;padding:24px}.card{width:min(720px,100%);background:#101722;border:1px solid #28364c;border-radius:16px;padding:24px}.muted{color:#9aacbf}a{color:#8edfff}</style></head><body><main class="card"><div class="muted">Stella · Repair Gate</div><h1>${escapeDecisionHtml(title)}</h1><p>${escapeDecisionHtml(message)}</p><p><a href="/athena">Return to Stella Coder</a></p></main></body></html>`);',
       '}',
       '',
       'function sendRepairDecisionConfirmation(response: ServerResponse, fixId: string, action: "approve" | "deny") {',
       '  const verb = action === "approve" ? "Approve & deploy" : "Deny / hold";',
       '  response.writeHead(200, privateHeaders("text/html; charset=utf-8"));',
-      '  response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Athena Repair Gate</title><style>:root{color-scheme:dark}body{margin:0;background:#070b12;color:#eef4ff;font:16px/1.5 system-ui;display:grid;min-height:100vh;place-items:center;padding:24px}.card{width:min(720px,100%);background:#101722;border:1px solid #28364c;border-radius:16px;padding:24px}.muted{color:#9aacbf}.actions{display:flex;gap:12px;margin-top:22px}button,a{border:0;border-radius:10px;padding:12px 18px;font-weight:700;text-decoration:none}.approve{background:#31c76a;color:#06140b}.deny{background:#e14c58;color:white}.secondary{background:#29374a;color:#eef4ff}</style></head><body><main class="card"><div class="muted">Athena · Repair Gate</div><h1>${escapeDecisionHtml(verb)}</h1><p>Repair <code>${escapeDecisionHtml(fixId)}</code></p><p class="muted">Your existing SPMT admin session authenticated this decision. Approval allows Athena to create/merge the repair PR and verify deployment. Denial retains the branch for review.</p><form method="post"><input type="hidden" name="fix" value="${escapeDecisionHtml(fixId)}"><input type="hidden" name="action" value="${action}"><div class="actions"><button class="${action === "approve" ? "approve" : "deny"}" type="submit">${escapeDecisionHtml(verb)}</button><a class="secondary" href="/athena">Cancel</a></div></form></main></body></html>`);',
+      '  response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stella Repair Gate</title><style>:root{color-scheme:dark}body{margin:0;background:#070b12;color:#eef4ff;font:16px/1.5 system-ui;display:grid;min-height:100vh;place-items:center;padding:24px}.card{width:min(720px,100%);background:#101722;border:1px solid #28364c;border-radius:16px;padding:24px}.muted{color:#9aacbf}.actions{display:flex;gap:12px;margin-top:22px}button,a{border:0;border-radius:10px;padding:12px 18px;font-weight:700;text-decoration:none}.approve{background:#31c76a;color:#06140b}.deny{background:#e14c58;color:white}.secondary{background:#29374a;color:#eef4ff}</style></head><body><main class="card"><div class="muted">Stella · Repair Gate</div><h1>${escapeDecisionHtml(verb)}</h1><p>Repair <code>${escapeDecisionHtml(fixId)}</code></p><p class="muted">Your existing SPMT admin session authenticated this decision. Approval allows Stella to create/merge the repair PR and verify deployment. Denial retains the branch for review.</p><form method="post"><input type="hidden" name="fix" value="${escapeDecisionHtml(fixId)}"><input type="hidden" name="action" value="${action}"><div class="actions"><button class="${action === "approve" ? "approve" : "deny"}" type="submit">${escapeDecisionHtml(verb)}</button><a class="secondary" href="/athena">Cancel</a></div></form></main></body></html>`);',
       '}',
       '',
     ].join('\n');
@@ -189,4 +189,4 @@ patchFile('src/athenaSpmtGateway.ts', (source) => {
   return next;
 });
 
-console.log('Athena universal repair gates patched.');
+console.log('Stella universal repair gates patched.');

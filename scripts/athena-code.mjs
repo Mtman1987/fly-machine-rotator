@@ -11,7 +11,7 @@ function fail(message) {
 }
 
 function usage() {
-  console.log(`Athena Coder CLI
+  console.log(`Stella Coder CLI
 
 Usage:
   npm run athena -- repos
@@ -23,7 +23,7 @@ Usage:
   npm run athena -- publish <job-id>
 
 Authentication is selected automatically:
-  SPMT_CODEX_SERVICE_SECRET calls the SPMT Athena gateway (default).
+  SPMT_CODEX_SERVICE_SECRET calls the SPMT Stella gateway (default).
   CODEX_WORKER_SECRET calls ATHENA_CODER_BASE_URL directly for server-side/Fly use.
 
 Fly, GitHub, and OpenAI credentials remain on their servers.`);
@@ -125,7 +125,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     });
     const jobId = String(jobFrom(result)?.id || "");
     if (shouldWait) {
-      if (!jobId) throw new Error("Athena Coder did not return a job id.");
+      if (!jobId) throw new Error("Stella Coder did not return a job id.");
       result = await waitForJob(request, config.jobsPath, jobId, timeoutSeconds, intervalMs);
     }
   } else if (command === "status" || command === "wait") {
@@ -146,7 +146,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   console.log(typeof result === "string" ? result : JSON.stringify(result, null, 2));
   if ((command === "wait" || (command === "submit" && shouldWait)) && String(jobFrom(result)?.status || "") === "failed") {
-    throw new Error(String(jobFrom(result)?.error || `Athena Coder job ${jobFrom(result)?.id || ""} failed.`));
+    throw new Error(String(jobFrom(result)?.error || `Stella Coder job ${jobFrom(result)?.id || ""} failed.`));
   }
   return result;
 }

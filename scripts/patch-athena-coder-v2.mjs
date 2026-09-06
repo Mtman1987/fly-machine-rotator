@@ -7,7 +7,7 @@ const fixerPath = path.join(root, 'src/publicCodexFixer.ts');
 let source = fs.readFileSync(fixerPath, 'utf8').replace(/\r\n/g, '\n');
 
 function requireMarker(marker, label) {
-  if (!source.includes(marker)) throw new Error(`Athena Coder v2 patch marker missing: ${label}`);
+  if (!source.includes(marker)) throw new Error(`Stella Coder v2 patch marker missing: ${label}`);
 }
 
 if (!source.includes('from "./coderContext.js"')) {
@@ -27,7 +27,7 @@ if (!source.includes('const context = await buildRepositoryContext(description, 
   const endMarker = '  if (!context) throw new Error("Qwen Coder could not select readable repository context.");\n';
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error('Athena Coder v2 Qwen context block markers missing');
+  if (start < 0 || end < 0) throw new Error('Stella Coder v2 Qwen context block markers missing');
   source = source.slice(0, start) + '  const context = await buildRepositoryContext(description, workspace);\n' + source.slice(end + endMarker.length);
 }
 
@@ -57,8 +57,8 @@ if (!source.includes('async function runCodexWorkspaceCoder(')) {
     '    webSearchMode: "disabled",',
     '    approvalPolicy: "never",',
     '  });',
-    '  const prompt = `${ATHENA_CODE_PROMPT}\\n\\nAssigned repository: ${repo.label}\\nPublic report: ${description.slice(0, 4000)}\\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;',
-    '  const turn = await thread.run(prompt);',
+    '  const prompt = `${STELLA_CODE_PROMPT}\\n\\nAssigned repository: ${repo.label}\\nPublic report: ${description.slice(0, 4000)}\\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;',
+    '  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(300000) });',
     '  return {',
     '    threadId: thread.id || undefined,',
     '    summary: redact(turn.finalResponse || "Codex completed without a final response."),',
@@ -74,7 +74,7 @@ if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_UR
   const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error('Athena Coder v2 provider block markers missing');
+  if (start < 0 || end < 0) throw new Error('Stella Coder v2 provider block markers missing');
   const providerBlock = [
     '    const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());',
     '    let qwenChanged = false;',
@@ -95,7 +95,7 @@ if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_UR
     '    if (!qwenConfigured || !qwenChanged) {',
     '      if (!String(env.OPENAI_API_KEY || "").trim()) {',
     '        if (qwenFailure) throw new Error(`Qwen repair attempt did not produce a patch and Codex fallback is unavailable: ${qwenFailure}`);',
-    '        throw new Error("No Athena Coder provider is configured.");',
+    '        throw new Error("No Stella Coder provider is configured.");',
     '      }',
     '      const codexResult = await runCodexWorkspaceCoder(',
     '        String(input.description || "").slice(0, 4000),',
@@ -141,7 +141,7 @@ if (!source.includes('job.baselineChecks = [];')) {
   source = source.replace(marker, replacement);
 }
 
-if (!source.includes('BASELINE FAILURE ACCEPTED')) {
+if (!source.includes('BASELINE FAILURE REMAINS BLOCKING')) {
   const marker = [
     '    job.checks = [];',
     '    for (const command of repo.checkCommands) job.checks.push(await runCommand(command, workspace));',
@@ -155,8 +155,7 @@ if (!source.includes('BASELINE FAILURE ACCEPTED')) {
     '      const check = await runCommand(command, workspace);',
     '      const baseline = job.baselineChecks?.[index];',
     '      if (!check.ok && baseline && !baseline.ok) {',
-    '        check.ok = true;',
-    '        check.output = redact(`[BASELINE FAILURE ACCEPTED: this command already failed before Athena changed code]\\n\\nBefore repair:\\n${baseline.output}\\n\\nAfter repair:\\n${check.output}`);',
+    '        check.output = redact(`[BASELINE FAILURE REMAINS BLOCKING: this command failed before and after the repair; publication is blocked]\\n\\nBefore repair:\\n${baseline.output}\\n\\nAfter repair:\\n${check.output}`);',
     '      }',
     '      job.checks.push(check);',
     '    }',
@@ -176,7 +175,7 @@ const responseWriteMarker = '    await writeFile(join(dataDir, "jobs", job.id, "
 if (source.includes(responseWriteMarker)) {
   source = source.replace(
     responseWriteMarker,
-    '    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary || "Athena Coder completed without a summary.");'
+    '    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary || "Stella Coder completed without a summary.");'
   );
 }
 
@@ -196,4 +195,4 @@ if (source.includes(cleanupMarker)) {
 }
 
 fs.writeFileSync(fixerPath, source, 'utf8');
-console.log('Athena Coder v2 repository context, provider escalation, baseline validation, and Fly sandbox retention patched.');
+console.log('Stella Coder v2 repository context, provider escalation, baseline validation, and Fly sandbox retention patched.');

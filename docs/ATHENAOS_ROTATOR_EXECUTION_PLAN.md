@@ -12,7 +12,7 @@ Rotator should own:
 
 - private operator/workbench presentation;
 - worker health and provisioning;
-- Athena Coder repair sandboxes and review UX;
+- Stella Coder repair sandboxes and review UX;
 - Rotator read tools and confirmation-gated repair/deploy actions;
 - local-LLM worker lifecycle;
 - diagnostics that report AthenaOS state without duplicating its policy.
@@ -50,7 +50,7 @@ Known Rotator P0 items from the consolidated plan:
 - sensitive repair/deploy actions must require explicit confirmation;
 - action authorization must eventually bind requester, repo/app, operation, commit/input, and expiry.
 
-## Stage R0 — Make Athena Coder operational and owner-safe
+## Stage R0 — Make Stella Coder operational and owner-safe
 
 Status: **in progress on `codex/athena-plan-coder-workspace`**.
 

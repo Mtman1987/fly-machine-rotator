@@ -29,14 +29,14 @@ export function startAthenaCoderGateway(
 
       await proxyToDashboard(request, response, env, internalPort);
     } catch (error) {
-      console.error("Athena Coder gateway request failed", error);
+      console.error("Stella Coder gateway request failed", error);
       if (!response.headersSent) response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
 
   server.listen(publicPort, "0.0.0.0", () => {
-    console.log(`Athena Coder gateway listening on ${publicPort}; Rotator dashboard is internal on ${internalPort}`);
+    console.log(`Stella Coder gateway listening on ${publicPort}; Rotator dashboard is internal on ${internalPort}`);
   });
   return server;
 }
@@ -82,7 +82,7 @@ function renderAthenaCoderHtml(jobs: PublicCodexJob[], references: CodeReference
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Athena Coder</title>
+  <title>Stella Coder</title>
   <style>
     :root { color-scheme: dark; --bg:#050712; --panel:#11162a; --panel2:#171d36; --line:rgba(255,255,255,.12); --ink:#f8fafc; --muted:#aeb8cf; --violet:#8b5cf6; --cyan:#22d3ee; --good:#34d399; --warn:#fbbf24; --bad:#fb7185; }
     * { box-sizing:border-box; }
@@ -140,31 +140,31 @@ function renderAthenaCoderHtml(jobs: PublicCodexJob[], references: CodeReference
 <body>
 <main class="shell">
   <header class="topbar">
-    <div class="brand"><span class="orb"></span><span>Athena Coder</span></div>
+    <div class="brand"><span class="orb"></span><span>Stella Coder</span></div>
     <nav class="nav"><a href="/">Rotator</a><a href="/mountainview">MountainView</a><a href="/logs/errors.txt">Error log</a></nav>
   </header>
 
   <section class="hero">
     <div class="panel">
       <div class="eyebrow">SPMT engineering bridge</div>
-      <h1>Tell Athena what needs fixing.</h1>
-      <p class="lead">Athena creates a private isolated checkout, gives Codex only that workspace, runs the repository checks, and keeps GitHub publication as a separate owner action. Your existing SPMT admin session authorizes this screen—there is no second action-token prompt.</p>
+      <h1>Tell Stella what needs fixing.</h1>
+      <p class="lead">Stella creates a private isolated checkout, gives Codex only that workspace, runs the repository checks, and keeps GitHub publication as a separate owner action. Your existing SPMT admin session authorizes this screen—there is no second action-token prompt.</p>
       <div class="chips"><span class="chip">Restricted network</span><span class="chip">Per-job workspace</span><span class="chip">Pre-publish validation</span><span class="chip">Draft PR boundary</span></div>
       <div class="stats"><div class="stat"><span class="eyebrow">Jobs retained</span><strong id="job-count">${jobs.length}</strong></div><div class="stat"><span class="eyebrow">Repositories</span><strong>${references.length}</strong></div></div>
     </div>
     <div class="panel composer">
       <div class="section-head"><div><div class="eyebrow">New assignment</div><h2>Start a repair job</h2></div></div>
       <label>Repository<select id="repo-select"></select></label>
-      <label>Describe the problem<textarea id="job-description" placeholder="Example: Finish the Athena Coder UI so an authenticated admin can submit jobs, inspect progress and artifacts, and publish a passing job as a draft PR."></textarea></label>
+      <label>Describe the problem<textarea id="job-description" placeholder="Example: Finish the Stella Coder UI so an authenticated admin can submit jobs, inspect progress and artifacts, and publish a passing job as a draft PR."></textarea></label>
       <label>Helpful context (optional)<textarea id="job-context" placeholder="Paste an error, expected behavior, route, file name, or acceptance criteria."></textarea></label>
-      <button id="submit-job" type="button">Send to Athena</button>
+      <button id="submit-job" type="button">Send to Stella</button>
       <div id="composer-status" class="notice"></div>
     </div>
   </section>
 
   <section class="workspace">
     <aside class="panel"><div class="section-head"><div><div class="eyebrow">Mission queue</div><h2>Recent jobs</h2></div><button class="secondary" id="refresh-jobs">Refresh</button></div><div id="job-list" class="jobs"></div></aside>
-    <section class="panel detail" id="job-detail"><div class="muted">Select a job to inspect Athena's work.</div></section>
+    <section class="panel detail" id="job-detail"><div class="muted">Select a job to inspect Stella's work.</div></section>
   </section>
 </main>
 <script>
@@ -188,7 +188,7 @@ function renderAthenaCoderHtml(jobs: PublicCodexJob[], references: CodeReference
 
   function renderJobs() {
     document.getElementById('job-count').textContent = String(jobs.length);
-    if (!jobs.length) { list.innerHTML = '<div class="muted">No Athena jobs yet.</div>'; detail.innerHTML = '<div class="muted">Submit the first job above.</div>'; return; }
+    if (!jobs.length) { list.innerHTML = '<div class="muted">No Stella jobs yet.</div>'; detail.innerHTML = '<div class="muted">Submit the first job above.</div>'; return; }
     if (!selectedJobId || !jobs.some(job => job.id === selectedJobId)) selectedJobId = jobs[0].id;
     list.innerHTML = jobs.map(job => '<article class="job ' + (job.id === selectedJobId ? 'active' : '') + '" data-job-id="' + escapeHtml(job.id) + '"><div class="job-head"><strong>' + escapeHtml(repoLabel(job.repoId)) + '</strong><span class="status ' + escapeHtml(job.status) + '">' + escapeHtml(job.status) + '</span></div><p>' + escapeHtml(job.description) + '</p><div class="small muted" style="margin-top:10px">' + escapeHtml(fmt(job.updatedAt)) + '</div></article>').join('');
     list.querySelectorAll('[data-job-id]').forEach(card => card.addEventListener('click', () => { selectedJobId = card.dataset.jobId; selectedArtifact = ''; renderJobs(); renderDetail(); }));
@@ -208,7 +208,7 @@ function renderAthenaCoderHtml(jobs: PublicCodexJob[], references: CodeReference
       '<div class="timeline">' + steps + '</div>' +
       '<div class="file-list">' + files + '</div>' +
       '<div class="chips"><span class="chip">Checks: ' + escapeHtml(checkPass) + '</span>' + (job.threadId ? '<span class="chip">Thread retained</span>' : '') + (job.pullRequest ? '<a class="chip" target="_blank" rel="noreferrer" href="' + escapeHtml(job.pullRequest.url) + '">PR #' + escapeHtml(job.pullRequest.number) + '</a>' : '') + '</div>' +
-      '<div class="actions" style="margin-top:16px"><button class="secondary" data-artifact="response">Athena response</button><button class="secondary" data-artifact="diff">Diff</button><button class="secondary" data-artifact="checks">Checks</button><button id="publish-job" ' + (canPublish(job) && !job.pullRequest ? '' : 'disabled') + '>' + (job.pullRequest ? 'Draft PR opened' : 'Publish draft PR') + '</button></div>' +
+      '<div class="actions" style="margin-top:16px"><button class="secondary" data-artifact="response">Stella response</button><button class="secondary" data-artifact="diff">Diff</button><button class="secondary" data-artifact="checks">Checks</button><button id="publish-job" ' + (canPublish(job) && !job.pullRequest ? '' : 'disabled') + '>' + (job.pullRequest ? 'Draft PR opened' : 'Publish draft PR') + '</button></div>' +
       '<div id="detail-status" class="notice"></div><div id="artifact-view" class="artifact">' + (selectedArtifact ? '<pre>' + escapeHtml(selectedArtifact) + '</pre>' : '<p class="muted">Choose an artifact to inspect the completed work.</p>') + '</div>' +
       (job.error ? '<pre>' + escapeHtml(job.error) + '</pre>' : '') + (job.summary ? '<pre>' + escapeHtml(job.summary) + '</pre>' : '');
     detail.querySelectorAll('[data-artifact]').forEach(button => button.addEventListener('click', () => loadArtifact(job.id, button.dataset.artifact)));
@@ -219,12 +219,12 @@ function renderAthenaCoderHtml(jobs: PublicCodexJob[], references: CodeReference
     const description = document.getElementById('job-description').value.trim();
     const contextText = document.getElementById('job-context').value.trim();
     if (!description) { composerStatus.textContent = 'Describe the repair first.'; return; }
-    composerStatus.textContent = 'Athena is opening an isolated workspace...';
+    composerStatus.textContent = 'Stella is opening an isolated workspace...';
     try {
       const response = await fetch('/api/codex/jobs', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ source:'athena-coder-ui', reporter:'SPMT owner', appName:repoSelect.value, description, context:contextText ? { notes:contextText } : {} }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Job submission failed.');
-      jobs.unshift(payload.job); selectedJobId = payload.job.id; document.getElementById('job-description').value = ''; document.getElementById('job-context').value = ''; composerStatus.textContent = 'Job accepted. Athena is working.'; renderJobs();
+      jobs.unshift(payload.job); selectedJobId = payload.job.id; document.getElementById('job-description').value = ''; document.getElementById('job-context').value = ''; composerStatus.textContent = 'Job accepted. Stella is working.'; renderJobs();
     } catch (error) { composerStatus.textContent = error instanceof Error ? error.message : String(error); }
   }
 

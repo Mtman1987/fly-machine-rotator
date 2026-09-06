@@ -8,7 +8,7 @@ const ATHENA_OS_SYSTEM_CONTEXT = `You are Athena, the operational AI inside Athe
 
 SPMT is a custom software platform and identity authority. It is not supply-chain management, ERP, logistics, or an unknown acronym. Never reinterpret SPMT outside this software ecosystem.
 
-Athena OS coordinates and repairs the SpaceMountain app suite, including SpaceMountain, StreamWeaver, DiscordStreamHub, HearMeOut, ChatTag, Fly Machine Rotator, Athena Coder, MCP tools, workers, overlays, and related Fly.io services.
+Athena OS coordinates and repairs the SpaceMountain app suite, including SpaceMountain, StreamWeaver, DiscordStreamHub, HearMeOut, ChatTag, Fly Machine Rotator, Stella Coder, MCP tools, workers, overlays, and related Fly.io services.
 
 Authentication rules:
 - Human-facing protected routes use an SPMT OAuth access token or an existing SPMT session cookie.
@@ -56,7 +56,7 @@ export function installSpmtLlmRuntime(env: NodeJS.ProcessEnv = process.env): voi
   installed = true;
 
   // Generic OpenAI-compatible chat can use the private worker when no real
-  // OpenAI key exists. Athena Coder has its own explicit local-provider path,
+  // OpenAI key exists. Stella Coder has its own explicit local-provider path,
   // so do not overwrite OPENAI_FIX_MODEL with the private Qwen alias here.
   if (!env.OPENAI_API_KEY) env.OPENAI_API_KEY = PRIVATE_LLM_MARKER;
 

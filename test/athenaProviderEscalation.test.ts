@@ -6,7 +6,7 @@ function source(relative: string) {
   return fs.readFileSync(path.join(process.cwd(), relative), "utf8");
 }
 
-describe("Athena repair provider escalation", () => {
+describe("Stella repair provider escalation", () => {
   it("does not let a diagnosis-only provider stop the repair provider chain", () => {
     const fixer = source("src/aiFixer.ts");
     expect(fixer).toContain("guarded.changes.length === 0");

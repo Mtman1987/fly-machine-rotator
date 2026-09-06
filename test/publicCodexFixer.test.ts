@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { inferRepo } from "../src/publicCodexFixer.js";
 
-describe("Athena Coder repository routing", () => {
+describe("Stella Coder repository routing", () => {
   it("honors the explicit app even when the task mentions another ecosystem service", () => {
     expect(inferRepo({
       appName: "streamweaver-new",

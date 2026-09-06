@@ -1,6 +1,6 @@
 # SPMT Qwen Worker
 
-This directory deploys the Qwen service that SPMT uses for owner-controlled surfaces such as Athena Coder and StreamWeaver private Discord DMs. It is a CPU-hosted Fly application, not the proposed future GPU host.
+This directory deploys the Qwen service that SPMT uses for owner-controlled surfaces such as Stella Coder and StreamWeaver private Discord DMs. It is a CPU-hosted Fly application, not the proposed future GPU host.
 
 The worker uses the official llama.cpp server image and downloads:
 

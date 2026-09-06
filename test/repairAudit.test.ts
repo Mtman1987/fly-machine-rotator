@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getAthenaRepairAudit, renderAthenaRepairAuditText } from "../src/repairAudit.js";
 
-describe("Athena repair audit", () => {
+describe("Stella repair audit", () => {
   it("summarizes persisted fixes, incident attempts, and approval delivery without exposing proposed file bodies", async () => {
     const dir = await mkdtemp(join(tmpdir(), "athena-audit-"));
     const fixes = join(dir, "fixes.json");

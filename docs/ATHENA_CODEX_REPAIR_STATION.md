@@ -1,4 +1,4 @@
-# Athena Codex Repair Station
+# Stella Codex Repair Station
 
 The public `!mtfixit <problem>` command is accepted by StreamWeaver, passed through SPMT, and executed by the Fly Machine Rotator in an isolated repository sandbox. Public chat receives only a generic acknowledgment; when the requester is not Mtman1987, StreamWeaver sends the configured owner DM channel a compact report and the SPMT-authenticated repair-station link.
 
@@ -47,9 +47,9 @@ Private rotator worker:
 
 The operator UI is `https://mtman-machine-rotator.fly.dev/`. It redirects through SPMT OAuth and requires an SPMT administrator session.
 
-## Athena GPT and operator CLI
+## Stella GPT and operator CLI
 
-The Custom GPT Action schema is maintained in `spmt-live` at `docs/developers/ATHENA_GPT_ACTION_OPENAPI.yaml`. Configure the Action with the existing `SPMT_CODEX_SERVICE_SECRET` using the `x-spmt-codex-secret` header. Athena can submit jobs, read diffs/checks/responses, and—after explicit owner approval—publish a completed job as a draft pull request. It cannot merge or deploy through this Action; merging to `main` remains the release boundary and the existing GitHub Action performs the Fly deployment.
+The Custom GPT Action schema is maintained in `spmt-live` at `docs/developers/ATHENA_GPT_ACTION_OPENAPI.yaml`. Configure the Action with the existing `SPMT_CODEX_SERVICE_SECRET` using the `x-spmt-codex-secret` header. Stella can submit jobs, read diffs/checks/responses, and—after explicit owner approval—publish a completed job as a draft pull request. It cannot merge or deploy through this Action; merging to `main` remains the release boundary and the existing GitHub Action performs the Fly deployment.
 
 The same gateway can be used from a terminal without exposing Fly, GitHub, or OpenAI credentials locally:
 
@@ -66,4 +66,4 @@ Inside the Rotator/Fly server boundary, the CLI automatically reads the root-onl
 
 ## Incident lanes
 
-The log monitor persists two separate lanes. `LOG_ERROR_HISTORY_FILE` is the code-only repair queue consumed by Athena. `LOG_OBSERVATION_HISTORY_FILE` (default `/data/observed-incidents.json`) retains deduplicated auth/config, external/transient, expected-user, already-handled, and unknown incidents for seven days with their deterministic classification reason. Clearing active errors archives both files but only empties the repair queue; the observation ledger remains available on the dashboard.
+The log monitor persists two separate lanes. `LOG_ERROR_HISTORY_FILE` is the code-only repair queue consumed by Stella. `LOG_OBSERVATION_HISTORY_FILE` (default `/data/observed-incidents.json`) retains deduplicated auth/config, external/transient, expected-user, already-handled, and unknown incidents for seven days with their deterministic classification reason. Clearing active errors archives both files but only empties the repair queue; the observation ledger remains available on the dashboard.

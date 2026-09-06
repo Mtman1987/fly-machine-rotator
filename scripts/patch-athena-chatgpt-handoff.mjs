@@ -7,7 +7,7 @@ const fixerPath = path.join(root, 'src/publicCodexFixer.ts');
 let source = fs.readFileSync(fixerPath, 'utf8').replace(/\r\n/g, '\n');
 
 function requireMarker(marker, label) {
-  if (!source.includes(marker)) throw new Error(`Athena ChatGPT handoff patch marker missing: ${label}`);
+  if (!source.includes(marker)) throw new Error(`Stella ChatGPT handoff patch marker missing: ${label}`);
 }
 
 const coderContextImport = 'import { buildRepositoryContext } from "./coderContext.js";\n';
@@ -45,13 +45,20 @@ if (!source.includes('ChatGPT Business handoff')) {
   const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error('Athena ChatGPT handoff provider block markers missing');
+  if (start < 0 || end < 0) throw new Error('Stella ChatGPT handoff provider block markers missing');
 
   const providerBlock = [
     '    const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());',
     '    let qwenChanged = false;',
     '    let qwenFailure = "";',
-    '    if (qwenConfigured) {',
+    '    if (String(env.OPENAI_API_KEY || "").trim()) {',
+    '      const result = await runCodexWorkspaceCoder(String(input.description || "").slice(0, 4000), input.context, workspace, repo, env, dataDir);',
+    '      job.threadId = result.threadId;',
+    '      job.summary = result.summary;',
+    '      const status = await runCommand("git status --short", workspace);',
+    '      qwenChanged = status.ok && Boolean(status.output.trim());',
+    '      if (!qwenChanged) throw new Error("Hosted coder produced no patch; inspect the saved job evidence.");',
+    '    } else if (qwenConfigured) {',
     '      try {',
     '        job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);',
     '        const qwenStatus = await runCommand("git status --short", workspace);',
@@ -92,4 +99,4 @@ if (!source.includes('ChatGPT Business handoff')) {
 }
 
 fs.writeFileSync(fixerPath, source, 'utf8');
-console.log('Athena Coder ChatGPT Business handoff fallback patched.');
+console.log('Stella Coder ChatGPT Business handoff fallback patched.');

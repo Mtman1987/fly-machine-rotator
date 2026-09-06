@@ -45,7 +45,7 @@ function proposalGate(event: StoredErrorEvent, record: FixRecord): string[] {
   const classification = classifyIncident(event);
   const reasons: string[] = [];
   if (!classification.autoFixEligible) reasons.push(classification.reason);
-  if (!record.changes.length) reasons.push("Athena produced no file changes.");
+  if (!record.changes.length) reasons.push("Stella produced no file changes.");
   if (record.changes.length > 4) reasons.push("The proposal changes more than four files.");
   if (record.changes.some((change) => !change.path.trim() || !change.reason.trim())) reasons.push("Every proposed file requires a path and reason.");
   if ((record.confidenceScore ?? 0) < 75 && record.confidence !== "high") reasons.push("Root-cause confidence is below the unattended preparation threshold.");
@@ -137,7 +137,7 @@ export async function prepareIncidentRepairForApproval(
     });
     updateFixQualityGate(record);
     await save(store, record);
-    if (!record.checkResult.ok) return { advanced: false, status: "error", message: "Athena produced a patch, but repository validation failed." };
+    if (!record.checkResult.ok) return { advanced: false, status: "error", message: "Stella produced a patch, but repository validation failed." };
 
     if (!hasWorkingTreeChanges || !(await hasWorkingTreeChanges(repoPath))) {
       return { advanced: false, status: "handled", message: "The proposed change was already present after repository reconciliation." };

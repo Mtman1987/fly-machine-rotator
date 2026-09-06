@@ -8,7 +8,7 @@ async function exists(path: string) {
   try { await readFile(path); return true; } catch { return false; }
 }
 
-describe("Athena Coder storage lifecycle", () => {
+describe("Stella Coder storage lifecycle", () => {
   it("removes rebuildable checkouts while retaining durable job records", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-storage-"));
     const work = await mkdtemp(join(tmpdir(), "codex-work-"));

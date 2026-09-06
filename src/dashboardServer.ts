@@ -908,7 +908,7 @@ async function renderDashboardHtml(env: NodeJS.ProcessEnv): Promise<string> {
       </div>
       <nav class="nav">
         <a href="#ops">Ops Deck</a>
-        <a href="#codex-jobs">Athena Coder</a>
+        <a href="#codex-jobs">Stella Coder</a>
         <a href="#fixes">Fix Queue</a>
         <a href="#observations">Observed</a>
         <a href="/mountainview">MountainView</a>

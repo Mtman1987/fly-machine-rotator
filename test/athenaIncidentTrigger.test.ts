@@ -11,7 +11,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("Athena incident rotation cooldown", () => {
+describe("Stella incident rotation cooldown", () => {
   it("fires once per incident per rotation and becomes eligible after the next rotation", async () => {
     const directory = await mkdtemp(join(tmpdir(), "athena-attempts-"));
     directories.push(directory);

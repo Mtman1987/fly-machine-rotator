@@ -74,15 +74,15 @@ async function publishAdminSummary(env: NodeJS.ProcessEnv, summary: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      username: "Athena Repair Station",
+      username: "Stella Repair Station",
       content: summary,
       embeds: [{
-        title: "Review Athena repair run",
+        title: "Review Stella repair run",
         url,
         description: "Open the Rotator dashboard to edit proposals, approve and apply changes, run checks, push branches, and verify the repair before clearing the rolling logs.",
         color: 0x8b5cf6,
         fields: [
-          { name: "Approval required", value: "Athena never applies a proposed file change from this run without an explicit approval action.", inline: false },
+          { name: "Approval required", value: "Stella never applies a proposed file change from this run without an explicit approval action.", inline: false },
           { name: "Working-fix memory", value: "Approved fix records and their attempt history remain in the Rotator fix store for reuse on matching incidents.", inline: false },
         ],
         timestamp: new Date().toISOString(),
@@ -121,7 +121,7 @@ export async function handleAthenaRepairUiRequest(
     const review = options.generateFixes === false
       ? { ok: true, message: "Proposal generation skipped." }
       : await runDashboardAction(dashboardPort, env, "/actions/fixes/review-cycle");
-    const summary = `Athena manual repair run completed. Rotation: ${String(rotation.results ?? "complete")}. ${String(review.message ?? "Repair proposals refreshed.")}`;
+    const summary = `Stella manual repair run completed. Rotation: ${String(rotation.results ?? "complete")}. ${String(review.message ?? "Repair proposals refreshed.")}`;
     const delivery = options.publishSummary === false
       ? { posted: false, reason: "Summary publishing disabled for this run." }
       : await publishAdminSummary(env, summary);
@@ -141,7 +141,7 @@ export async function handleAthenaRepairUiRequest(
 
   if ((request.method || "GET") === "POST" && url.pathname === `${API_PREFIX}/finalize`) {
     const result = await runDashboardAction(dashboardPort, env, "/actions/errors/clear");
-    const summary = `Athena repair run finalized. ${String(result.message ?? "The rolling 24-hour error state was archived and cleared.")}`;
+    const summary = `Stella repair run finalized. ${String(result.message ?? "The rolling 24-hour error state was archived and cleared.")}`;
     const delivery = await publishAdminSummary(env, summary);
     sendJson(response, 200, {
       ok: true,
@@ -153,7 +153,7 @@ export async function handleAthenaRepairUiRequest(
     return true;
   }
 
-  sendJson(response, 404, { ok: false, error: "Unknown Athena repair operation." });
+  sendJson(response, 404, { ok: false, error: "Unknown Stella repair operation." });
   return true;
 }
 
@@ -163,13 +163,13 @@ function renderPage(rotatorDashboardUrl: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Athena Manual Repair Run</title>
+<title>Stella Manual Repair Run</title>
 <style>
 :root{color-scheme:dark;--bg:#070812;--panel:#121528;--ink:#f8fafc;--muted:#a8b0c3;--accent:#8b5cf6;--cyan:#22d3ee;--border:rgba(255,255,255,.13);--danger:#fb7185;--good:#34d399}*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:radial-gradient(circle at 10% 0,rgba(34,211,238,.14),transparent 30%),radial-gradient(circle at 90% 0,rgba(139,92,246,.2),transparent 28%),var(--bg);color:var(--ink);min-height:100vh}.shell{max-width:1100px;margin:auto;padding:36px 20px 80px}.panel{background:rgba(18,21,40,.86);border:1px solid var(--border);border-radius:24px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.35);margin-bottom:20px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:11px;color:var(--muted)}h1{font-size:clamp(2.4rem,6vw,4.7rem);line-height:.96;margin:12px 0 16px}p{line-height:1.65;color:var(--muted}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{border:1px solid var(--border);border-radius:18px;padding:18px;background:rgba(255,255,255,.04)}button,a.button{border:0;border-radius:14px;padding:13px 17px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-block;background:linear-gradient(135deg,var(--accent),var(--cyan));color:white}button.secondary,a.secondary{background:rgba(255,255,255,.07);border:1px solid var(--border)}button.danger{background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.4);color:#fecdd3}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.toggle{display:flex;gap:10px;align-items:center;margin:10px 0;color:var(--ink)}#status{white-space:pre-wrap;background:#080a14;border:1px solid var(--border);border-radius:16px;padding:16px;min-height:120px;color:#dbeafe}.good{color:var(--good)}@media(max-width:760px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main class="shell">
-<section class="panel"><div class="eyebrow">SPMT admin operations</div><h1>Athena Manual Repair Run</h1><p>Trigger one controlled rotation. Athena reads the current rolling error set, refreshes repair proposals, and publishes a summary. Every proposed file change remains approval-gated in the Rotator dashboard, regardless of how many attempts are needed.</p><div class="actions"><button id="run">Run Athena rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a></div></section>
+<section class="panel"><div class="eyebrow">SPMT admin operations</div><h1>Stella Manual Repair Run</h1><p>Trigger one controlled rotation. Stella reads the current rolling error set, refreshes repair proposals, and publishes a summary. Every proposed file change remains approval-gated in the Rotator dashboard, regardless of how many attempts are needed.</p><div class="actions"><button id="run">Run Stella rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a></div></section>
 <section class="grid">
 <div class="card"><div class="eyebrow">1 · Inspect</div><h2>Rotate and read errors</h2><p>Runs the tracked rotation and refreshes the unified app and Discord report.</p></div>
 <div class="card"><div class="eyebrow">2 · Repair</div><h2>Generate and test</h2><p>Creates or refreshes reusable fix records. Use Edit, Approve and apply, Run checks, Push branch, and Verify quiet on the dashboard.</p></div>

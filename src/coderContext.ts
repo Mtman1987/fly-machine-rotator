@@ -169,6 +169,6 @@ export async function buildRepositoryContext(description: string, workspace: str
     context += `\n\n--- ${path} ---\n${excerpt}`;
   }
 
-  if (!selected.size) throw new Error("Athena Coder could not select readable repository context.");
+  if (!selected.size) throw new Error("Stella Coder could not select readable repository context.");
   return context;
 }

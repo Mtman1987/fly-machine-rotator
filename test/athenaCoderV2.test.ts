@@ -8,7 +8,7 @@ import { buildRepositoryContext } from "../src/coderContext.js";
 
 const execFileAsync = promisify(execFile);
 
-describe("Athena Coder v2", () => {
+describe("Stella Coder v2", () => {
   it("builds incident context from the full tracked repository and follows related code/tests", async () => {
     const root = await mkdtemp(join(tmpdir(), "athena-context-"));
     await mkdir(join(root, "src", "services"), { recursive: true });
@@ -50,10 +50,11 @@ describe("Athena Coder v2", () => {
     expect(source).toContain('Qwen produced no code changes.');
     expect(source).toContain('writeChatGptHandoff(env');
     expect(source).toContain('ChatGPT Business handoff');
-    expect(source).not.toContain('const codexResult = await runCodexWorkspaceCoder(');
+    expect(source).toContain('const result = await runCodexWorkspaceCoder(');
+    expect(source).not.toContain('check.ok = true;');
     expect(source).not.toContain('Codex fallback:');
     expect(source).toContain('job.baselineChecks = []');
-    expect(source).toContain('BASELINE FAILURE ACCEPTED');
+    expect(source).toContain('BASELINE FAILURE REMAINS BLOCKING');
     expect(source).toContain('Keep failed sandboxes with code changes on the Fly machine');
   });
 });

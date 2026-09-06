@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error JavaScript CLI module has no declaration file.
 import { resolveClient } from "../scripts/athena-code.mjs";
 
-describe("Athena Coder CLI", () => {
+describe("Stella Coder CLI", () => {
   it("uses the SPMT gateway by default when its service secret is present", () => {
     expect(resolveClient({ SPMT_CODEX_SERVICE_SECRET: "gateway" })).toEqual({
       baseUrl: "https://spmt.live",

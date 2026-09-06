@@ -23,7 +23,7 @@ patch('src/mcpControlServer.ts', (source) => {
     const index = next.indexOf(marker);
     if (index < 0) throw new Error('MCP repair audit tool marker missing');
     const block = [
-      '    { name: "get_athena_repair_audit", title: "Read Athena repair audit", description: "Read persisted Athena fix records, incident attempts, approval delivery state, checks, pushes, and deployment outcomes. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "text"] } }, additionalProperties: false }, annotations: readOnlyAnnotations },',
+      '    { name: "get_athena_repair_audit", title: "Read Stella repair audit", description: "Read persisted Stella fix records, incident attempts, approval delivery state, checks, pushes, and deployment outcomes. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "text"] } }, additionalProperties: false }, annotations: readOnlyAnnotations },',
     ].join('\n') + '\n';
     next = next.slice(0, index) + block + next.slice(index);
   }
@@ -50,12 +50,12 @@ patch('src/athenaRepairUi.ts', (source) => {
   let next = source;
   if (!next.includes('from "./repairAudit.js"')) {
     const marker = 'import { requireSpmtAdmin } from "./spmtAuth.js";\n';
-    if (!next.includes(marker)) throw new Error('Athena repair UI audit import marker missing');
+    if (!next.includes(marker)) throw new Error('Stella repair UI audit import marker missing');
     next = next.replace(marker, marker + 'import { getAthenaRepairAudit, renderAthenaRepairAuditText } from "./repairAudit.js";\n');
   }
   if (!next.includes('function sendTextDownload(')) {
     const marker = 'function sendHtml(response: ServerResponse, html: string) {';
-    if (!next.includes(marker)) throw new Error('Athena repair UI send helper marker missing');
+    if (!next.includes(marker)) throw new Error('Stella repair UI send helper marker missing');
     const helper = [
       'function sendTextDownload(response: ServerResponse, text: string) {',
       '  response.writeHead(200, {',
@@ -72,7 +72,7 @@ patch('src/athenaRepairUi.ts', (source) => {
   }
   if (!next.includes('url.pathname === `${API_PREFIX}/audit`')) {
     const marker = '  if ((request.method || "GET") === "POST" && url.pathname === `${API_PREFIX}/run`) {';
-    if (!next.includes(marker)) throw new Error('Athena repair UI audit route marker missing');
+    if (!next.includes(marker)) throw new Error('Stella repair UI audit route marker missing');
     const routes = [
       '  if ((request.method || "GET") === "GET" && url.pathname === `${API_PREFIX}/audit`) {',
       '    sendJson(response, 200, await getAthenaRepairAudit(env));',
@@ -88,11 +88,11 @@ patch('src/athenaRepairUi.ts', (source) => {
     next = next.replace(marker, routes + marker);
   }
   if (!next.includes('Download repair audit')) {
-    const marker = '<div class="actions"><button id="run">Run Athena rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a></div>';
-    if (!next.includes(marker)) throw new Error('Athena repair UI audit button marker missing');
-    next = next.replace(marker, '<div class="actions"><button id="run">Run Athena rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a><a class="button secondary" href="/athena/api/repair/audit.txt">Download repair audit</a></div>');
+    const marker = '<div class="actions"><button id="run">Run Stella rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a></div>';
+    if (!next.includes(marker)) throw new Error('Stella repair UI audit button marker missing');
+    next = next.replace(marker, '<div class="actions"><button id="run">Run Stella rotation</button><a class="button secondary" href="${rotatorDashboardUrl}">Open approval dashboard</a><a class="button secondary" href="/athena/api/repair/audit.txt">Download repair audit</a></div>');
   }
   return next;
 });
 
-console.log('Athena repair audit access patched.');
+console.log('Stella repair audit access patched.');
