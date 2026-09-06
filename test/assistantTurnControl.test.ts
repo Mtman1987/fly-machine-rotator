@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AssistantTurnControl, WakeSuppression } from '../mobile/src/assistantTurnControl';
+import { AssistantTurnControl, WakeSuppression } from '../mobile/src/assistantTurnControl.js';
 
 function deferred() {
   let resolve!: () => void;
