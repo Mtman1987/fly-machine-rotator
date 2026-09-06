@@ -128,7 +128,7 @@ jobs:
         with:
           tag_name: mountainview-latest
           name: SpaceMountain Companion Latest Android APK
-          body: Latest installable SpaceMountain Companion Android APK for testing. Uses browser-based SPMT sign-in with a one-time mobile handoff, the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, persistent private HearMeOut Athena rooms, a strictly on-device foreground Hey Athena listener with no network recognition fallback, private-room Athena Coder controls with explicit draft-PR confirmation, deterministic voice intents, GPT-5.6 Sol fallback for ambiguous natural language, cache-first workspace restore, and canonical ecosystem presence. Legacy MountainView APK filenames remain available for existing testers.
+          body: Latest installable SpaceMountain Companion Android APK for testing. Uses browser-based SPMT sign-in with a one-time mobile handoff, the signed-in SPMT tenant, canonical Workspace/Overlay Bay/Settings surfaces, tenant-scoped Personal HUD controls, paired-PC Companion command routing, RTC-free private Athena chat with shared memory and natural voice, local music playback and ducking, a strictly on-device foreground Hey Athena listener with no network recognition fallback, private-room Athena Coder controls with explicit draft-PR confirmation, deterministic voice intents, GPT-5.6 Sol fallback for ambiguous natural language, cache-first workspace restore, and canonical ecosystem presence. Legacy MountainView APK filenames remain available for existing testers.
           prerelease: true
           files: |
             mobile/android/app/build/outputs/apk/release/SpaceMountain-Companion.apk

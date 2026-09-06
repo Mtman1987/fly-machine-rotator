@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
 import * as SecureStore from "expo-secure-store";
-import * as Speech from "expo-speech";
+import { LocalAssistantAudio, withoutAudio } from "./src/localAssistantAudio";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
@@ -293,7 +293,7 @@ export default function App() {
     appendActivityLog("api", `${options.method ?? "GET"} ${path}`, response.ok && !data.error ? "success" : "error", {
       status: response.status,
       durationMs: Date.now() - startedAt,
-      response: data.error ? { error: data.error } : data
+      response: data.error ? { error: data.error } : withoutAudio(data)
     });
     if (!response.ok || data.error) throw new Error(data.error ?? "Request failed");
     return data;
@@ -496,36 +496,34 @@ export default function App() {
     }
   }
 
-  async function speakText(text: string) {
-    try {
-      await metaWearables.prepareLocalVoiceOutput();
-    } catch {
-      // Local routing is best-effort; Expo speech can still use the active Android output route.
-    }
-    return new Promise<void>((resolve) => {
-      const spokenText = text.trim();
-      if (!spokenText) {
-        resolve();
-        return;
-      }
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      try {
-        Speech.stop();
-        Speech.speak(spokenText, {
-          onDone: finish,
-          onStopped: finish,
-          onError: finish
-        });
-        setTimeout(finish, Math.max(2500, Math.min(18000, spokenText.length * 75)));
-      } catch {
-        finish();
-      }
+  const localAudioRef = useRef<LocalAssistantAudio | null>(null);
+  function localAudio() {
+    if (!localAudioRef.current) localAudioRef.current = new LocalAssistantAudio({
+      apiBaseUrl, getToken: () => tokenRef.current,
+      onStatus: (message) => setStatusMessage(message),
+      onEnded: async (currentRequestId) => {
+        const data = await request("/private-assistant", { method: "POST", body: JSON.stringify({
+          action: "ended", currentRequestId, requestId: `ended-${currentRequestId}`,
+        }) }, tokenRef.current);
+        if (data.media) await localAudio().applySession(data.media);
+      },
     });
+    return localAudioRef.current;
+  }
+  useEffect(() => {
+    if (!token) void localAudioRef.current?.dispose();
+    return () => { void localAudioRef.current?.dispose(); localAudioRef.current = null; };
+  }, [token]);
+
+  async function speakText(text: string, preparedTts?: any) {
+    if (!text.trim()) return;
+    try {
+      const tts = preparedTts ?? (await request("/private-assistant", {
+        method: "POST", body: JSON.stringify({ action: "speech", text }),
+      }, tokenRef.current)).tts;
+      if (!tts?.ok) throw new Error(tts?.error || "Athena's voice is temporarily unavailable. Her reply is on screen.");
+      await localAudio().speak(tts.audioDataUris || [tts.audioDataUri]);
+    } catch (error) { reportSoftError("Athena voice", error); }
   }
 
   async function login() {
@@ -1241,9 +1239,8 @@ export default function App() {
       setLog(JSON.stringify(speech, null, 2));
       const transcript = String(speech.transcript ?? "").trim();
       if (!transcript) {
-        setStatusMessage("No speech recognized. Sending the typed prompt instead.");
+        setStatusMessage("I didn't catch any words. Tap Talk now and try again, or type your message.");
         await playTone("stop");
-        await runCommand("cmd_streamweaver_voice_commander", fallbackPrompt, voiceDestination, { visualContextOverride, commandMode });
         return;
       }
       await playTone("capture");
@@ -1310,7 +1307,7 @@ export default function App() {
     replyLoopActiveRef.current = false;
     setReplyLoopActive(false);
     setIsListening(false);
-    Speech.stop();
+    void localAudioRef.current?.stopSpeech();
     void playTone("stop");
     setStatusMessage("Reply loop stopped.");
   }
@@ -1449,7 +1446,7 @@ export default function App() {
       setLog(JSON.stringify(data, null, 2));
       updateVisualTargetFromText(`${logoTestText}\n${JSON.stringify(data)}`, "logo route");
       setStatusMessage(data.matched ? "Logo route matched." : "No logo route matched.");
-      Speech.speak(data.matched ? "Logo route matched." : "No logo route matched.");
+      await speakText(data.matched ? "Logo route matched." : "No logo route matched.");
       await load();
     } catch (error) {
       reportError("Logo route test", error);

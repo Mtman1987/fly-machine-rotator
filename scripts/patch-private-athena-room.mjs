@@ -17,6 +17,7 @@ function replaceRequired(source, from, to, label) {
 }
 
 await patch('src/mountainView.ts', (source) => {
+  if (!source.includes('from "./privateAssistant.js"')) source = 'import { callPrivateAssistant, withSpmtSession, proxyPrivateMedia } from "./privateAssistant.js";\n' + source;
   const routeMarker = `  if (method === "POST" && apiPath === "/api/voice/route") {
     const user = context.requireAuth(request);
     const body = await readJson(request);
@@ -24,6 +25,12 @@ await patch('src/mountainView.ts', (source) => {
   }
 `;
   const routeReplacement = `${routeMarker}
+  if (method === "GET" && apiPath.startsWith("/api/private-assistant/media/")) {
+    const user = context.requireAuth(request);
+    await context.streamPrivateMedia(user.id, request, response, url);
+    return true;
+  }
+
   if (method === "POST" && apiPath === "/api/private-assistant") {
     const user = context.requireAuth(request);
     const body = await readJson(request);
@@ -57,6 +64,7 @@ await patch('src/mountainView.ts', (source) => {
     const response = await fetch(new URL("/api/oauth/token", this.serviceBaseUrl("spmt")), {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
@@ -66,7 +74,7 @@ await patch('src/mountainView.ts', (source) => {
     });
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok) {
-      throw new HttpError(401, "MountainView SPMT refresh failed: " + (readText(payload, "error") || response.status));
+      throw new HttpError(response.status === 400 || response.status === 401 ? 401 : 503, "MountainView SPMT refresh failed: " + (readText(payload, "error") || response.status));
     }
     const accessToken = readText(payload, "access_token") || readText(payload, "token");
     const nextRefreshToken = readText(payload, "refresh_token") || refreshToken;
@@ -76,68 +84,27 @@ await patch('src/mountainView.ts', (source) => {
     return accessToken;
   }
 
-  private async createHearMeOutLaunchCode(userId: string): Promise<string> {
-    const spmtBase = this.serviceBaseUrl("spmt").replace(/\\/$/, "");
-    const hearMeOutOrigin = new URL(this.serviceBaseUrl("hearmeout")).origin;
-    let accessToken = this.getServiceToken(userId, "spmt");
-    if (!accessToken) {
-      throw new HttpError(401, "MountainView does not have an SPMT session for this user. Sign in with SPMT again.");
-    }
-    const launch = (token: string) => fetch(spmtBase + "/api/embed/launch", {
-      method: "POST",
-      headers: {
-        authorization: "Bearer " + token,
-        "content-type": "application/json",
-        accept: "application/json"
-      },
-      body: JSON.stringify({ client_id: "hearmeout", target_origin: hearMeOutOrigin })
+  private async privateAssistantFetch(userId: string, service: "streamweaver" | "hearmeout", path: string, init: RequestInit = {}): Promise<Response> {
+    if (!this.getServiceToken(userId, "spmt")) throw new HttpError(401, "Sign in with SPMT to restore your session.");
+    return withSpmtSession({
+      userId,
+      getToken: () => this.getServiceToken(userId, "spmt"),
+      refresh: () => this.refreshMountainViewSpmtAccessToken(userId),
+      send: (token) => fetch(new URL(path, this.serviceBaseUrl(service)), {
+        ...init,
+        headers: { ...Object.fromEntries(new Headers(init.headers).entries()), authorization: "Bearer " + token },
+      }),
     });
-    let response = await launch(accessToken);
-    if (response.status === 401) {
-      accessToken = await this.refreshMountainViewSpmtAccessToken(userId);
-      response = await launch(accessToken);
-    }
-    const payload = asRecord(await response.json().catch(() => ({})));
-    if (!response.ok) {
-      throw new HttpError(response.status >= 400 && response.status < 500 ? response.status : 502, "SPMT HearMeOut launch failed: " + (readText(payload, "error") || response.status));
-    }
-    const code = readText(payload, "code");
-    if (!code) throw new HttpError(502, "SPMT HearMeOut launch returned no one-time code.");
-    return code;
+  }
+
+  async streamPrivateMedia(userId: string, request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+    await proxyPrivateMedia(request, response, url, (service, path, init) => this.privateAssistantFetch(userId, service, path, init));
   }
 
   async runPrivateAssistant(userId: string, input: JsonRecord): Promise<JsonRecord> {
-    const action = String(input.action || "ensure").trim().toLowerCase();
-    const text = String(input.text || input.command || input.transcript || "").trim();
-    if (action !== "ensure" && action !== "utterance") {
-      throw new HttpError(400, "Private assistant action must be ensure or utterance.");
-    }
-    if (action === "utterance" && !text) throw new HttpError(400, "Private assistant utterance text is required.");
-
-    const launchCode = await this.createHearMeOutLaunchCode(userId);
-    const hearMeOutBase = this.serviceBaseUrl("hearmeout").replace(/\\/$/, "");
-    const response = await fetch(hearMeOutBase + "/api/private-assistant", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ launchCode, action, text })
-    });
-    const payload = asRecord(await response.json().catch(() => ({})));
-    if (!response.ok || payload.ok === false) {
-      const message = readText(payload, "error") || "HearMeOut private assistant returned HTTP " + response.status;
-      throw new HttpError(response.status >= 400 && response.status < 500 ? response.status : 502, message);
-    }
-    this.logCommand(
-      userId,
-      action === "ensure" ? "private-athena-room-ensure" : "private-athena-room-utterance",
-      "hearmeout",
-      "POST",
-      hearMeOutBase + "/api/private-assistant",
-      "success",
-      response.status,
-      0,
-      JSON.stringify({ status: payload.status, roomId: payload.roomId, persona: payload.persona }).slice(0, 2000),
-      ""
-    );
+    const payload = await callPrivateAssistant(input, (service, path, init) => this.privateAssistantFetch(userId, service, path, init));
+    const status = Number(payload.upstreamStatus || 200);
+    if (status >= 400 || payload.ok === false) throw new HttpError(status >= 400 ? status : 502, String(payload.error || "Athena is temporarily unavailable."));
     return payload;
   }
 
@@ -175,7 +142,7 @@ await patch('mobile/App.tsx', (source) => {
         method: "POST",
         body: JSON.stringify({ action: "ensure", reason })
       }, authToken);
-      appendActivityLog("voice", "Athena private room", "ready", {
+      appendActivityLog("voice", "Athena private chat", "ready", {
         reason,
         roomId: data.roomId,
         persona: data.persona,
@@ -184,27 +151,33 @@ await patch('mobile/App.tsx', (source) => {
       });
       return data;
     } catch (error) {
-      reportSoftError("Athena private room", error);
+      reportSoftError("Athena private chat", error);
       return null;
     }
   }
 
   async function runPrivateAssistantUtterance(message: string, speakReply = true) {
+    message = String(message || "").trim();
+    if (!message) {
+      setStatusMessage("Say or type a message for Athena first.");
+      return { ok: false, status: "empty-input" };
+    }
     const data = await request("/private-assistant", {
       method: "POST",
-      body: JSON.stringify({ action: "utterance", text: message })
+      body: JSON.stringify({ action: "utterance", text: message, speak: speakReply, requestId: \`companion-\${Date.now()}-\${Math.random().toString(36).slice(2)}\` })
     });
     const reply = String(data.reply ?? data.response?.response ?? data.response?.reply ?? data.response?.message ?? "").trim();
-    setLog(JSON.stringify(data, null, 2));
-    setPreviewFromResult("Athena private room", data);
-    appendActivityLog("voice", "Athena private room", "response", {
+    setLog(JSON.stringify(withoutAudio(data), null, 2));
+    setPreviewFromResult("Athena private chat", withoutAudio(data));
+    appendActivityLog("voice", "Athena private chat", "response", {
       roomId: data.roomId,
       persona: data.persona,
       speech: data.speech,
       reply
     });
-    setStatusMessage(reply || "Athena private room is ready.");
-    if (speakReply && reply) await speakText(reply);
+    setStatusMessage(reply || "Athena is ready.");
+    if (data.media) void localAudio().applySession(data.media).catch((error) => reportError("Music playback", error));
+    if (speakReply && reply) await speakText(reply, data.tts);
     return data;
   }
 `;
