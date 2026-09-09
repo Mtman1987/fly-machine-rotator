@@ -1,0 +1,143 @@
+name: One-shot OpenAI Qwen bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/oneshot-openai-qwen-bridge.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Persist OpenAI-first Stella Coder
+        run: |
+          node scripts/patch-athena-coder-v2.mjs
+          node scripts/patch-athena-chatgpt-handoff.mjs
+      - name: Bridge interactive Qwen routes to OpenAI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/athenaChat.ts')
+          source = path.read_text()
+          old = '''  return [
+              { id: "local", label: "Local Qwen", ready: Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },
+              { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini" },'''.replace('          ', '')
+          new = '''  return [
+              { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5.6-luna" },
+              { id: "local", label: "Local Qwen", ready: Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },'''.replace('          ', '')
+          if old not in source:
+              raise SystemExit('athenaChat provider-list marker missing')
+          source = source.replace(old, new, 1)
+          source = source.replace('env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini"', 'env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5.6-luna"')
+          old_normalize = 'function normalizeProvider(value: unknown): ChatProvider { return value === "openai" || value === "eden" || value === "gemini" ? value : "local"; }'
+          new_normalize = 'function normalizeProvider(value: unknown): ChatProvider { return value === "local" || value === "openai" || value === "eden" || value === "gemini" ? value : "openai"; }'
+          if old_normalize not in source:
+              raise SystemExit('athenaChat normalizeProvider marker missing')
+          source = source.replace(old_normalize, new_normalize, 1)
+          path.write_text(source)
+
+          path = Path('src/mountainView.ts')
+          source = path.read_text()
+          old_mode = '''    const modeNote = mode === "adult"
+              ? "\\n[Private owner session. Adult mode active. No content restrictions apply.]" : "";'''.replace('          ', '')
+          new_mode = '''    const modeNote = mode === "adult"
+              ? "\\n[Private owner session. Adult mode active for consensual fictional adult conversation between unambiguously 18+ adults. Provider safety rules still apply.]" : "";'''.replace('          ', '')
+          if old_mode not in source:
+              raise SystemExit('MountainView adult-mode marker missing')
+          source = source.replace(old_mode, new_mode, 1)
+
+          marker = '''    const started = Date.now();
+              let responseText = "";
+              let upstreamStatus = 0;
+              try {
+                const res = await fetch(`${qwenUrl}/api/chat`, {'''.replace('          ', '')
+          bridge = '''    const started = Date.now();
+              let responseText = "";
+              let upstreamStatus = 0;
+
+              const openAiKey = String(env.OPENAI_API_KEY || "").trim();
+              if (openAiKey) {
+                const openAiModel = String(env.MOUNTAINVIEW_CHAT_OPENAI_MODEL || "gpt-5.6-luna");
+                const openAiStarted = Date.now();
+                try {
+                  const res = await fetch("https://api.openai.com/v1/responses", {
+                    method: "POST",
+                    headers: {
+                      authorization: `Bearer ${openAiKey}`,
+                      "content-type": "application/json"
+                    },
+                    signal: AbortSignal.timeout(120_000),
+                    body: JSON.stringify({
+                      model: openAiModel,
+                      store: false,
+                      instructions: fullSystem,
+                      input: messages.map((message) => ({ role: message.role, content: message.content })),
+                      max_output_tokens: 1200
+                    })
+                  });
+                  const raw = await res.text();
+                  upstreamStatus = res.status;
+                  if (res.ok) {
+                    const data = JSON.parse(raw) as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
+                    responseText = (data.output || [])
+                      .flatMap((item) => item.content || [])
+                      .filter((part) => part.type === "output_text")
+                      .map((part) => String(part.text || ""))
+                      .join("")
+                      .trim();
+                    if (responseText) {
+                      this.logCommand(user.id, "athena-chat", "openai", "POST", "https://api.openai.com/v1/responses", "success", upstreamStatus, Date.now() - openAiStarted, responseText.slice(0, 2000), "");
+                      this.saveMemory(user.id, {
+                        kind: "athena-chat",
+                        title: `Athena chat (${mode})`,
+                        body: messages.at(-1)?.content?.slice(0, 300) ?? "",
+                        tags: ["athena", "private-chat", mode],
+                        metadata: { tenantId, mode, provider: "openai", model: openAiModel, responseSnippet: responseText.slice(0, 200) }
+                      });
+                      return { ok: true, text: responseText, mode, provider: "openai", model: openAiModel };
+                    }
+                  }
+                  this.logCommand(user.id, "athena-chat", "openai", "POST", "https://api.openai.com/v1/responses", "error", upstreamStatus, Date.now() - openAiStarted, raw.slice(0, 2000), res.ok ? "OpenAI returned no usable text" : `HTTP ${upstreamStatus}`);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  this.logCommand(user.id, "athena-chat", "openai", "POST", "https://api.openai.com/v1/responses", "error", 0, Date.now() - openAiStarted, "", msg);
+                }
+              }
+
+              // Local Qwen remains the fallback. When the Companion-hosted model is
+              // restored we can flip this ordering without changing the route contract.
+              try {
+                const res = await fetch(`${qwenUrl}/api/chat`, {'''.replace('          ', '')
+          if marker not in source:
+              raise SystemExit('MountainView Qwen request marker missing')
+          source = source.replace(marker, bridge, 1)
+          path.write_text(source)
+          PY
+      - name: Validate bridge
+        run: |
+          npm run typecheck
+          npx vitest run test/athenaCoderV2.test.ts
+          grep -q 'gpt-5.6-luna' src/athenaChat.ts
+          grep -q 'api.openai.com/v1/responses' src/mountainView.ts
+          grep -q 'runCodexWorkspaceCoder' src/publicCodexFixer.ts
+      - name: Commit bridge
+        run: |
+          git config user.name "spmt-fix-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/publicCodexFixer.ts src/athenaChat.ts src/mountainView.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: use OpenAI while local Qwen is offline"
+          git push origin HEAD:main
