@@ -1,0 +1,50 @@
+name: One-shot stop SPMT LLM worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/oneshot-stop-spmt-llm-worker.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spmt-fly-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  stop-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TARGET_APP: spmt-llm-worker
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Stop every machine in exact target app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${FLY_API_TOKEN:-}"
+          flyctl machines list --app "$TARGET_APP" --json > /tmp/machines-before.json
+          jq -r '.[] | select((.state // "") != "stopped" and (.state // "") != "destroyed") | .id' /tmp/machines-before.json |
+            while IFS= read -r machine_id; do
+              test -n "$machine_id" || continue
+              flyctl machine stop "$machine_id" --app "$TARGET_APP"
+            done
+      - name: Verify zero active machines
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            flyctl machines list --app "$TARGET_APP" --json > /tmp/machines-after.json
+            active=$(jq '[.[] | select((.state // "") != "stopped" and (.state // "") != "destroyed")] | length' /tmp/machines-after.json)
+            if [ "$active" -eq 0 ]; then
+              jq '{app:"spmt-llm-worker", machineCount:length, activeCount:([.[] | select((.state // "") != "stopped" and (.state // "") != "destroyed")] | length), machines:[.[] | {id,state,region}]}' /tmp/machines-after.json
+              exit 0
+            fi
+            sleep 5
+          done
+          jq '{app:"spmt-llm-worker", machines:[.[] | {id,state,region}]}' /tmp/machines-after.json
+          exit 1
