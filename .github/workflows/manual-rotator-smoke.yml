@@ -62,7 +62,7 @@ jobs:
             exit 1
           fi
           # Four readers; a stuck app cannot block the rest of the fleet.
-          sed '/^[[:space:]]*$/d' diagnostics/apps.txt | xargs -r -P4 -I{} bash -c '
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' diagnostics/apps.txt | xargs -r -P4 -I{} bash -c '
             set -euo pipefail
             app="$1"
             [[ "$app" =~ ^[A-Za-z0-9_-]+$ ]] || exit 1

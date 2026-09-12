@@ -279,7 +279,7 @@ function renderLatestRunLines(history: RotationHistoryEntry[], runtimeLines: str
 }
 
 function summarizeFailureCounts(events: StoredErrorEvent[]): string {
-  if (events.length === 0) return "No errors in the last 24 hours.";
+  if (events.length === 0) return "No queued repair incidents in the last 24 hours. Check the observation ledger for other failures.";
   const counts = new Map<string, number>();
   for (const event of events) {
     counts.set(event.appName, (counts.get(event.appName) ?? 0) + 1);

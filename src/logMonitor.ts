@@ -61,6 +61,7 @@ interface DiscordReportMessageState {
 }
 
 const ERROR_PATTERNS = [
+  /\blegacy_auth_used\b/i,
   /\berror\b/i,
   /\bexception\b/i,
   /\bunhandled\b/i,
@@ -73,7 +74,9 @@ const ERROR_PATTERNS = [
   /\btypeerror\b/i,
   /\breferenceerror\b/i,
   /\bmodule_not_found\b/i,
-  /\becconnrefused\b/i,
+  /\beconnrefused\b/i,
+  /\beconnreset\b/i,
+  /\benotfound\b/i,
   /\betimedout\b/i,
   /\bout of memory\b/i,
   /\boom\b/i
@@ -100,28 +103,34 @@ export async function runLogMonitor(options: LogMonitorOptions): Promise<void> {
   });
   console.log(`connected to Fly NATS log stream for ${options.orgSlug}; watching ${options.appNames.length} apps`);
 
-  const subscription = nc.subscribe("logs.>");
-  for await (const message of subscription) {
-    const payload = codec.decode(message.data);
-    const subject = parseLogSubject(message.subject) ?? parseLogPayloadSubject(payload);
-    if (!subject || !appSet.has(subject.appName)) continue;
+  try {
+    const subscription = nc.subscribe("logs.>");
+    for await (const message of subscription) {
+      const payload = codec.decode(message.data);
+      const subject = parseLogSubject(message.subject) ?? parseLogPayloadSubject(payload);
+      if (!subject || !appSet.has(subject.appName)) continue;
 
-    const context = contexts.get(subject.appName) ?? [];
-    contexts.set(subject.appName, context);
-    await handleLogLine(
-      subject.appName,
-      payload,
-      context,
-      options,
-      dedupe,
-      history,
-      observations,
-      reportState,
-      ignoreRules,
-      observationBaseline,
-      undefined,
-      subject
-    );
+      const context = contexts.get(subject.appName) ?? [];
+      contexts.set(subject.appName, context);
+      await handleLogLine(
+        subject.appName,
+        payload,
+        context,
+        options,
+        dedupe,
+        history,
+        observations,
+        reportState,
+        ignoreRules,
+        observationBaseline,
+        undefined,
+        subject
+      );
+    }
+    const failure = nc.isClosed() ? await nc.closed() : undefined;
+    throw failure ?? new Error("Fly log subscription ended unexpectedly; monitoring stopped");
+  } finally {
+    await nc.close();
   }
 }
 
@@ -728,6 +737,7 @@ export class DedupeStore {
       const content = await readFile(path, "utf8");
       const parsed = JSON.parse(content) as unknown;
       const values = new Map<string, number>();
+      if (!Array.isArray(parsed)) throw new Error("Dedupe state must be a JSON array");
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
           if (typeof item === "string") {
@@ -741,7 +751,8 @@ export class DedupeStore {
         }
       }
       return new DedupeStore(path, values);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return new DedupeStore(path, new Map());
     }
   }
@@ -772,6 +783,7 @@ export class DedupeStore {
       }
     } catch {
       // Preserve the current in-memory state if the file is briefly unreadable.
+      console.error("Log monitor failed to reload dedupe state; retaining in-memory fingerprints");
     }
   }
 

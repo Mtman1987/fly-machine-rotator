@@ -117,15 +117,19 @@ async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> 
     .find((event) => classifyIncident({ ...event, context: event.context || [] }).autoFixEligible && !attempted.has(incidentKey(event))) || null;
 }
 
-async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; handoffId?: string; fileContent?: string }) {
+export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; handoffId?: string; fileContent?: string }) {
   if (notifyMode(env) === "log-only") return;
   const key = String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
-  if (!key) return;
+  if (!key) {
+    console.error("Hourly repair notification failed: SPMT API key is not configured");
+    return;
+  }
   const buttons = input.handoffId ? [
     { label: "Approve ChatGPT Repair", customId: `chatgpt_approve:${input.handoffId}`, style: 3 },
     { label: "Decline / Hold", customId: `chatgpt_deny:${input.handoffId}`, style: 4 },
   ] : undefined;
-  await fetch(String(env.DSH_BASE_URL || "https://discord-stream-hub-new.fly.dev").replace(/\/$/, "") + "/api/internal/owner-dm", {
+  try {
+    const response = await fetch(String(env.DSH_BASE_URL || "https://discord-stream-hub-new.fly.dev").replace(/\/$/, "") + "/api/internal/owner-dm", {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({
@@ -134,7 +138,15 @@ async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; han
       ...(input.fileContent ? { fileName: "athena-hourly-repair.txt", fileContent: safe(input.fileContent, 120_000) } : {}),
     }),
     signal: AbortSignal.timeout(15_000),
-  }).catch(() => undefined);
+    });
+    if (!response.ok) {
+      console.error(`Hourly repair notification failed: owner-dm HTTP ${response.status}`);
+    }
+    await response.body?.cancel();
+  } catch {
+    // Never log request headers, message contents, or a provider response body.
+    console.error("Hourly repair notification failed: owner-dm network request did not complete");
+  }
 }
 
 async function ensureFallbackHandoff(env: NodeJS.ProcessEnv, event: ErrorEvent, job: CoderJob | null, failure: string) {

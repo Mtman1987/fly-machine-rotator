@@ -72,5 +72,7 @@ async function main(): Promise<void> {
 
 main().catch(async (error) => {
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-  process.exitCode = 1;
+  // The web servers and background timers otherwise keep a failed monitor alive
+  // behind a green health check. Let Fly restart the failed process.
+  process.exit(1);
 });

@@ -3,6 +3,16 @@ import { buildUnifiedPayload } from "../src/unifiedReport.js";
 import { RotatorRuntimeState } from "../src/runtimeState.js";
 
 describe("buildUnifiedPayload", () => {
+  it("does not call an empty repair queue an error-free fleet", () => {
+    const payload = buildUnifiedPayload([], [], runtimeState(), undefined, "https://example.test", [{
+      recordedAt: new Date().toISOString(), appName: "apollo", fingerprint: "auth-failure",
+      message: "Authentication failed", suggestion: "Check configuration", context: [],
+    }]);
+    const text = JSON.stringify(payload);
+    expect(text).toContain("Observed only (7d): 1");
+    expect(text).toContain("Check the observation ledger");
+    expect(text).not.toContain("No errors in the last 24 hours");
+  });
   it("includes the dashboard link, latest rotation lines, schedule metadata, and per-app error totals", () => {
     const now = Date.now();
     const recentOne = new Date(now - 10 * 60 * 1000).toISOString();

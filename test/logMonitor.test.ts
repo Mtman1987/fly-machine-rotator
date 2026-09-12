@@ -1,16 +1,31 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DedupeStore, ERROR_DEDUPE_COOLDOWN_MS, isBeforeObservationBaseline, isNonActionableErrorMessage, looksLikeError, ObservationBaselineStore, suggestFix } from "../src/logMonitor.js";
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
 describe("log monitor repeat suppression", () => {
+  it("retains fingerprints and reports a corrupted on-disk dedupe file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rotator-dedupe-corrupt-"));
+    tempDirs.push(directory);
+    const path = join(directory, "fingerprints.json");
+    const store = await DedupeStore.load(path);
+    store.add("known-error");
+    await store.save();
+    await writeFile(path, "{truncated");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await store.syncFromDisk();
+    expect(store.has("known-error")).toBe(true);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("retaining in-memory"));
+    await expect(DedupeStore.load(path)).rejects.toThrow();
+  });
   it("does not re-ingest retained Fly logs from before a cleared observation baseline", () => {
     const baseline = "2026-07-19T05:09:57.304Z";
     expect(isBeforeObservationBaseline("2026-07-18T17:03:33.248Z", baseline)).toBe(true);
@@ -76,6 +91,9 @@ describe("log monitor repeat suppression", () => {
 });
 
 describe("log monitor noise filtering", () => {
+  it.each(["connect ECONNREFUSED 10.0.0.1:8080", "read ECONNRESET", "getaddrinfo ENOTFOUND service.internal"])("captures standalone network failures: %s", message => {
+    expect(looksLikeError(message)).toBe(true);
+  });
   it.each([
     '[API Error] /api/tag: 400 {"error":"tigerflakes420 is immune (20-min cooldown)"}',
     '[API Error] /api/tag: 400 {"error":"You are not it! chronic_medusa is it."}',

@@ -1,10 +1,27 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { runHourlyAthenaDiagnostic } from "../src/hourlyAthenaDiagnostic.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { notifyOwner, runHourlyAthenaDiagnostic } from "../src/hourlyAthenaDiagnostic.js";
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("hourly Athena diagnostic", () => {
+  it.each([401, 500])("reports a rejected owner notification (HTTP %s)", async status => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("private upstream body", { status })));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await notifyOwner({ SPMT_API_KEY: "private-test-key" }, { message: "private notification" });
+    expect(logged).toHaveBeenCalledWith(`Hourly repair notification failed: owner-dm HTTP ${status}`);
+    expect(JSON.stringify(logged.mock.calls)).not.toMatch(/private/);
+  });
+  it("reports network and missing-credential failures without logging secrets", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("private-test-key")));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await notifyOwner({ SPMT_API_KEY: "private-test-key" }, { message: "private notification" });
+    await notifyOwner({}, { message: "private notification" });
+    expect(logged).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logged.mock.calls)).not.toMatch(/private/);
+  });
   it("records a bounded no-op cycle when only non-actionable transport health noise exists", async () => {
     const root = await mkdtemp(join(tmpdir(), "hourly-athena-"));
     const history = join(root, "errors.json");
