@@ -17,7 +17,10 @@ export async function runRotationOnce(
     maxRetries: Number(env.API_MAX_RETRIES ?? 8)
   });
   const rotator = new MachineRotator(fly, config.rotation);
-  const results = await rotator.rotateApps(config.appNames);
+  // The owner retired this expensive worker. Monitoring may still include it,
+  // but a scheduled/manual rotation must never start its stopped Machine.
+  const appNames = config.appNames.filter((name) => name !== "spmt-llm-worker");
+  const results = await rotator.rotateApps(appNames);
 
   for (const result of results) {
     const prefix = result.success ? "OK" : "FAIL";

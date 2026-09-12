@@ -7,16 +7,18 @@ type RotationHistoryEntry = { at?: string };
 export async function startAutoRotationLoop(argv: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<never> {
   const historyFile = env.ROTATION_HISTORY_FILE ?? "/data/rotation-history.json";
   const runtime = await RotatorRuntimeStateStore.load(getRuntimeStateFile(env));
+  let nextDelayMs = await getNextRotationDelayMs(historyFile);
 
   for (;;) {
-    let nextDelayMs = await getNextRotationDelayMs(historyFile);
+    const nextRunAt = Date.now() + nextDelayMs;
     if (nextDelayMs > 0) {
       console.log(`auto-rotation sleeping for ${Math.ceil(nextDelayMs / 1000)}s`);
     }
     while (nextDelayMs > 0) {
-      await runtime.setNextRunAt(new Date(Date.now() + nextDelayMs).toISOString());
+      await runtime.setNextRunAt(new Date(nextRunAt).toISOString());
       await sleep(Math.min(nextDelayMs, 60_000));
-      nextDelayMs = await getNextRotationDelayMs(historyFile);
+      // Keep the outcome-based deadline even when a failed run never wrote history.
+      nextDelayMs = Math.max(0, nextRunAt - Date.now());
     }
 
     console.log("auto-rotation starting");

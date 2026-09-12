@@ -15,10 +15,11 @@ export async function executeTrackedRotation(
 ): Promise<AppRotationResult[]> {
   if (inFlightRotation) return inFlightRotation;
   const runPromise = executeTrackedRotationInner(argv, env, trigger);
-  inFlightRotation = runPromise.finally(() => {
-    if (inFlightRotation === runPromise) inFlightRotation = undefined;
+  const trackedPromise = runPromise.finally(() => {
+    if (inFlightRotation === trackedPromise) inFlightRotation = undefined;
   });
-  return inFlightRotation;
+  inFlightRotation = trackedPromise;
+  return trackedPromise;
 }
 
 async function executeTrackedRotationInner(

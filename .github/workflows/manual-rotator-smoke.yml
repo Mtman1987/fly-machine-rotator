@@ -67,10 +67,14 @@ jobs:
             app="$1"
             [[ "$app" =~ ^[A-Za-z0-9_-]+$ ]] || exit 1
             capture "diagnostics/$app-machines.txt" flyctl machine list -a "$app" --json
-            capture "diagnostics/$app-logs.txt" flyctl logs -a "$app" --json --no-tail
+            if FILE="diagnostics/$app-machines.txt" node -e "const fs=require(\"fs\");const rows=JSON.parse(fs.readFileSync(process.env.FILE,\"utf8\"));process.exit(rows.some(m=>m.state===\"started\")?0:1)"; then
+              capture "diagnostics/$app-logs.txt" flyctl logs -a "$app" --json --no-tail
+            else
+              echo "$app logs skipped: no running machine" > "diagnostics/$app-logs.txt.result"
+            fi
           ' _ '{}'
           # Read existing state only: no start, rotation, model call, or repair submission.
-          capture diagnostics/rotator-ledgers.jsonl flyctl ssh console -a mtman-machine-rotator --command 'node --input-type=module -e "import fs from \"node:fs\";import {redactSensitiveText} from \"/app/dist/redaction.js\";for(const name of [\"error-history.json\",\"observed-incidents.json\",\"error-baseline.json\",\"runtime-state.json\",\"hourly-repair-cycles.json\"]){try{const data=JSON.parse(fs.readFileSync(\"/data/\"+name,\"utf8\"));console.log(redactSensitiveText(JSON.stringify({file:name,total:Array.isArray(data)?data.length:undefined,data:Array.isArray(data)?data.slice(-1000):data})))}catch(e){console.log(JSON.stringify({file:name,readError:e.code||e.name}));process.exitCode=1}}"'
+          capture diagnostics/rotator-ledgers.jsonl flyctl ssh console -a mtman-machine-rotator --command 'node --input-type=module -e "import fs from \"node:fs\";import {redactSensitiveText} from \"/app/dist/redaction.js\";console.log(JSON.stringify({managedApps:process.env.FLY_ROTATOR_APPS||process.env.MANAGED_FLY_APPS}));for(const name of [\"error-history.json\",\"observed-incidents.json\",\"error-baseline.json\",\"runtime-state.json\",\"hourly-repair-cycles.json\"]){try{const path=\"/data/\"+name;const size=fs.statSync(path).size;console.log(JSON.stringify({file:name,bytes:size}));if(size>25000000)throw new Error(\"ledger-too-large\");const data=JSON.parse(fs.readFileSync(path,\"utf8\"));const rows=Array.isArray(data)?data.slice(-50).map(r=>({recordedAt:r.recordedAt,appName:r.appName,status:r.status,message:String(r.message||r.summary||\"\").slice(0,700),classification:r.classification,startedAt:r.startedAt,finishedAt:r.finishedAt})):data;console.log(redactSensitiveText(JSON.stringify({file:name,total:Array.isArray(data)?data.length:undefined,data:rows})))}catch(e){console.log(JSON.stringify({file:name,readError:e.code||e.message}));process.exitCode=1}}" '
           cat diagnostics/*.result
           for app in mtman-machine-rotator apollo-station apollo-station-new streamweaver-new discord-stream-hub-new spmt-llm-worker; do
             for file in diagnostics/"$app"-*.txt; do
