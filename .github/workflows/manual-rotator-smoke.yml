@@ -1,3 +1,4 @@
+# Diagnostic trigger: 2026-09-21 Lounge !sr failure
 name: Manual Rotator Smoke
 on:
   push:
