@@ -46,6 +46,20 @@ export function isDshMtFixItAuthorized(request: Pick<IncomingMessage, "headers">
   return expectedSecrets.some((expected) => suppliedSecrets.some((supplied) => secretMatches(expected, supplied)));
 }
 
+async function isDshMtFixItServiceAuthorized(request: Pick<IncomingMessage, "headers">, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const bearer = String(request.headers.authorization || "").match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
+  if (!bearer) return false;
+  const baseUrl = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/api/oauth/serviceinfo`, {
+    headers: { authorization: `Bearer ${bearer}`, accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!response?.ok) return false;
+  const payload = await response.json().catch(() => null) as any;
+  const scopes = Array.isArray(payload?.scopes) ? payload.scopes.map(String) : [];
+  return payload?.client_id === "discord-stream-hub" && payload?.token_use === "client_credentials" && scopes.includes("athena:write");
+}
+
 export function mapDshMtFixItWorkerPath(method: string, pathname: string, search = ""): string | null {
   if (method === "POST" && (pathname === DSH_PREFIX || pathname === `${DSH_PREFIX}/jobs`)) return `/api/codex/jobs${search}`;
   if (method === "GET" && /^\/api\/dsh\/mtfixit\/jobs\/[a-zA-Z0-9_-]{8,100}$/.test(pathname)) return `${pathname.replace(DSH_PREFIX, "/api/codex")}${search}`;
@@ -280,7 +294,10 @@ async function proxyToAthenaGateway(incoming: IncomingMessage, outgoing: ServerR
 export async function handleDshMtFixItGatewayRequest(request: IncomingMessage, response: ServerResponse, env: NodeJS.ProcessEnv, dashboardPort: number): Promise<boolean> {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (url.pathname !== DSH_PREFIX && !url.pathname.startsWith(`${DSH_PREFIX}/`)) return false;
-  if (!isDshMtFixItAuthorized(request, env)) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
+  const serviceAuthorized = await isDshMtFixItServiceAuthorized(request, env);
+  const legacyAuthorized = !serviceAuthorized && isDshMtFixItAuthorized(request, env);
+  if (!serviceAuthorized && !legacyAuthorized) { sendJson(response, 401, { error: "Unauthorized" }); return true; }
+  if (legacyAuthorized) console.warn(`[auth-migration] LEGACY_AUTH_USED migration=AUTH-ROT-001 caller=discord-stream-hub route=${url.pathname} transport=dsh-shared-secret`);
   if (/^\/api\/dsh\/mtfixit\/jobs\/[a-zA-Z0-9_-]{8,100}\/resolution$/.test(url.pathname)) {
     return handleMtFixItResolutionRequest(request, response, env, dashboardPort);
   }
