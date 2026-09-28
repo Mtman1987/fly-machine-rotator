@@ -91,6 +91,7 @@ export interface RotationOptions {
   allowVolumeRotation: boolean;
   allowMultiMachineServices: boolean;
   restartUnsafeApps: boolean;
+  restartOnly?: boolean;
   restartStartRetries: number;
   restartStartRetryDelayMs: number;
 }

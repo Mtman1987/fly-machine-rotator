@@ -1868,6 +1868,10 @@ function summarizeFixStatuses(events: StoredErrorEvent[], fixesById: Map<string,
     checked: 0,
     pushed: 0,
     handled: 0,
+    awaiting_approval: 0,
+    deploying: 0,
+    deployed: 0,
+    denied: 0,
     error: 0
   };
 
