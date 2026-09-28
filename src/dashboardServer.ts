@@ -18,6 +18,7 @@ import { isNonActionableErrorMessage } from "./logMonitor.js";
 import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
 import { handlePublicCodexRequest, listCodexJobs } from "./publicCodexFixer.js";
+import { requestRepairApproval } from "./repairApproval.js";
 
 export function startDashboardServer(env: NodeJS.ProcessEnv = process.env) {
   const port = Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080);
@@ -64,7 +65,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const history = await readErrorHistory(env);
     response.writeHead(200, {
       "content-type": "text/plain; charset=utf-8",
@@ -113,7 +114,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/rotate") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const results = await executeTrackedRotation([], env, "dashboard");
     await refreshUnifiedReport(env, results);
     return json(response, { ok: true, results: results.length });
@@ -121,7 +122,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/errors/clear") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const cleared = await clearErrorState(env);
     await refreshUnifiedReport(env);
     return json(response, { ok: true, message: `Archived the prior baseline and cleared ${cleared.events} error event(s) plus ${cleared.proposals} proposal record(s).` });
@@ -129,7 +130,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/errors/ignore-fingerprint") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const id = url.searchParams.get("id");
     if (!id) throw new HttpError(400, "Missing error id.");
     const result = await ignoreErrorFingerprint(id, env);
@@ -138,7 +139,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/errors/ignore-pattern") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const id = url.searchParams.get("id");
     if (!id) throw new HttpError(400, "Missing error id.");
     const result = await ignoreErrorPattern(id, env);
@@ -147,7 +148,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/errors/unignore") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const ruleId = url.searchParams.get("rule");
     if (!ruleId) throw new HttpError(400, "Missing ignore rule id.");
     const result = await removeIgnoreRule(ruleId, env);
@@ -156,7 +157,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/errors/auto-ignore-noise") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const result = await autoIgnoreKnownNoise(env);
     await refreshUnifiedReport(env);
     return json(response, { ok: true, message: result.message });
@@ -164,21 +165,21 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "POST" && url.pathname === "/actions/fixes/review-cycle") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const result = await runReviewCycle(env);
     return json(response, { ok: true, message: result.message });
   }
 
   if (method === "POST" && url.pathname === "/actions/fixes/auto-fix-cycle") {
     await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const result = await runAutoFixCycle(env);
     return json(response, { ok: true, message: result.message });
   }
 
   if (method === "POST" && url.pathname.startsWith("/actions/fixes/")) {
     const body = await readBody(request);
-    authorizeAction(request, env);
+    await authorizeAction(request, env);
     const id = url.searchParams.get("id");
     if (!id) throw new HttpError(400, "Missing fix id.");
     const result = await handleFixAction(url.pathname, id, env, body);
@@ -188,7 +189,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "GET" && url.pathname === "/") {
     if (!(await requireSpmtAdmin(request, env))) {
-      response.writeHead(302, { location: "/mountainview/auth/login?next=%2F", "cache-control": "no-store" });
+      response.writeHead(302, { location: "/auth/spmt/login?next=%2F", "cache-control": "no-store" });
       response.end();
       return;
     }
@@ -311,9 +312,12 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       ? await maybePushCheckedFixBranch(existing, config, repoPath, env)
       : false;
     updateFixQualityGate(existing);
+    if (existing.checkResult.ok && existing.pushResult?.commit) {
+      await requestRepairApproval(existing, env);
+    }
     store.upsert(existing);
     await store.save();
-    return { ok: true, message: existing.checkResult.ok ? branchPushed ? `Checks passed and pushed branch ${existing.pushResult?.branch}.` : "Checks passed." : "Checks failed." };
+    return { ok: true, message: existing.approval?.status === "awaiting_approval" ? "Checks passed. Repair sent to owner approval DM." : existing.checkResult.ok ? branchPushed ? `Checks passed and pushed branch ${existing.pushResult?.branch}.` : "Checks passed." : "Checks failed." };
   }
 
   if (pathname.endsWith("/push")) {
@@ -339,9 +343,10 @@ async function handleFixAction(pathname: string, id: string, env: NodeJS.Process
       details: push.commit
     });
     updateFixQualityGate(existing);
+    await requestRepairApproval(existing, env);
     store.upsert(existing);
     await store.save();
-    return { ok: true, message: `Pushed branch ${push.branch}.` };
+    return { ok: true, message: existing.approval?.status === "awaiting_approval" ? `Pushed branch ${push.branch} and sent the repair to owner approval.` : `Pushed branch ${push.branch}.` };
   }
 
   if (pathname.endsWith("/verify")) {
@@ -1369,15 +1374,17 @@ function confidenceLabelToScore(confidence: FixRecord["confidence"]): number {
   return 25;
 }
 
-export function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): void {
-  const expected = String(env.ROTATOR_DASHBOARD_ACTION_TOKEN || '').trim();
-  if (!expected) throw new HttpError(503, "Dashboard actions are unavailable because ROTATOR_DASHBOARD_ACTION_TOKEN is not configured.");
-  const bearer = String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-  const suppliedHeader = request.headers['x-rotator-action-token'];
-  const supplied = String(Array.isArray(suppliedHeader) ? suppliedHeader[0] : suppliedHeader || bearer).trim();
-  const expectedHash = createHash('sha256').update(expected).digest();
-  const suppliedHash = createHash('sha256').update(supplied).digest();
-  if (!supplied || !timingSafeEqual(expectedHash, suppliedHash)) throw new HttpError(401, "Invalid rotator dashboard action token.");
+function isSameProcessAction(request: IncomingMessage): boolean {
+  const remote = String(request.socket?.remoteAddress || "");
+  const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  const marker = String(request.headers["x-rotator-internal"] || "").trim();
+  return loopback && marker === "same-process";
+}
+
+export async function authorizeAction(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<void> {
+  if (isSameProcessAction(request)) return;
+  const identity = await requireSpmtAdmin(request, env);
+  if (!identity) throw new HttpError(401, "SPMT owner/admin session required.");
 }
 
 export function getHttpErrorStatus(error: unknown): number {
@@ -1550,6 +1557,9 @@ async function runAutoFixCycle(env: NodeJS.ProcessEnv): Promise<{ message: strin
 
       if (record.checkResult.ok && await maybePushCheckedFixBranch(record, config, repoPath, env)) {
         pushed += 1;
+      }
+      if (record.checkResult.ok && record.pushResult?.commit) {
+        await requestRepairApproval(record, env);
       }
     } catch (error) {
       record.status = "error";
@@ -1868,6 +1878,10 @@ function summarizeFixStatuses(events: StoredErrorEvent[], fixesById: Map<string,
     checked: 0,
     pushed: 0,
     handled: 0,
+    awaiting_approval: 0,
+    deploying: 0,
+    deployed: 0,
+    denied: 0,
     error: 0
   };
 

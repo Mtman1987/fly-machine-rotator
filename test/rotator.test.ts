@@ -17,6 +17,27 @@ const baseOptions = {
 };
 
 describe("MachineRotator", () => {
+  it("refreshes each process Machine without treating other roles as extras", async () => {
+    const fly = new FakeFlyClient([
+      machine("dj", "started"),
+      machine("lounge", "started"),
+      machine("spotlight", "started"),
+      machine("standby", "stopped")
+    ]);
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("hmo-dj-worker");
+
+    expect(result.success).toBe(true);
+    expect(activeIds(fly.machines)).toEqual(["dj", "lounge", "spotlight"]);
+    expect(fly.calls).not.toContain("create");
+    expect(fly.calls.filter((call) => call.startsWith("stop "))).toEqual([
+      "stop dj", "stop lounge", "stop spotlight"
+    ]);
+    expect(fly.calls.filter((call) => call.startsWith("start "))).toEqual([
+      "start dj", "start lounge", "start spotlight"
+    ]);
+    expect(result.actions.at(-1)).toContain("without cloning or stopping other process groups");
+  });
+
   it("starts a healthy standby before stopping the previous active Machine", async () => {
     const fly = new FakeFlyClient([
       machine("active-1", "started"),

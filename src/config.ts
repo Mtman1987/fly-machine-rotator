@@ -34,6 +34,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       allowVolumeRotation: env.ALLOW_VOLUME_ROTATION === "true",
       allowMultiMachineServices: env.ALLOW_MULTI_MACHINE_SERVICES === "true",
       restartUnsafeApps: env.RESTART_UNSAFE_APPS !== "false",
+      restartOnly: env.ROTATOR_RESTART_ONLY === "true",
       restartStartRetries: numberEnv(env.RESTART_START_RETRIES, 8),
       restartStartRetryDelayMs: numberEnv(env.RESTART_START_RETRY_DELAY_MS, 10_000)
     }
