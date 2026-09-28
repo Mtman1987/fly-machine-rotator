@@ -36,6 +36,23 @@ describe("MachineRotator", () => {
       "start dj", "start lounge", "start spotlight"
     ]);
     expect(result.actions.at(-1)).toContain("without cloning or stopping other process groups");
+    expect(fly.calls.filter((call) => call.startsWith("lease "))).toEqual(["lease dj"]);
+    expect(fly.calls.filter((call) => call.startsWith("release "))).toEqual(["release dj"]);
+    expect(result.previousActiveId).toBe("dj");
+    expect(result.newActiveId).toBe("dj");
+  });
+
+  it("aborts later groups if a stop never reaches stopped, without leaving the first Machine down", async () => {
+    const fly = new FakeFlyClient([machine("a", "started"), machine("b", "started")]);
+    fly.waitFailure = { machineId: "a", state: "stopped" };
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("app");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("refresh failed");
+    expect(fly.calls).toContain("start a");
+    expect(fly.calls).not.toContain("stop b");
+    expect(activeIds(fly.machines)).toEqual(["a", "b"]);
+    expect(fly.calls.filter((call) => call.startsWith("release "))).toEqual(["release a"]);
   });
 
   it("starts a healthy standby before stopping the previous active Machine", async () => {
@@ -177,6 +194,7 @@ class FakeFlyClient implements FlyClient {
   calls: string[] = [];
   machines: FlyMachine[];
   private created = 0;
+  waitFailure?: { machineId: string; state: string };
 
   constructor(machines: FlyMachine[]) {
     this.machines = machines.map((item) => structuredClone(item));
@@ -219,6 +237,7 @@ class FakeFlyClient implements FlyClient {
 
   async waitForMachineState(_appName: string, machineId: string, state: string): Promise<void> {
     this.calls.push(`wait ${machineId} ${state}`);
+    if (this.waitFailure?.machineId === machineId && this.waitFailure.state === state) throw new Error("wait timeout");
   }
 
   async createLease(_appName: string, machineId: string): Promise<Lease> {

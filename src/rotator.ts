@@ -163,56 +163,87 @@ export class MachineRotator {
     actions: string[],
     warnings: string[]
   ): Promise<AppRotationResult> {
-    // A Fly app may contain distinct process groups. Every started Machine is
-    // refreshed independently; stopped standbys are left alone.
+    // Choose one stable anchor, including stopped Machines, so overlapping
+    // runs contend for the same lease even while the anchor is restarting.
+    const anchor = [...machines].sort((a, b) => a.id.localeCompare(b.id))[0];
     const running = active(machines);
     if (running.length === 0) {
       throw new Error("No running Machines to refresh.");
     }
     if (this.options.dryRun) {
       for (const machine of running) actions.push(`Would restart Machine ${machine.id} in place.`);
-      return successResult(appName, true, before, before, undefined, undefined, actions, warnings);
+      return successResult(appName, true, before, before, running[0].id, running[0].id, actions, warnings);
     }
 
-    for (const machine of running) {
-      const current = await this.fly.getMachine(appName, machine.id);
-      if (!isActive(current)) {
-        throw new Error(`Machine ${machine.id} stopped before its refresh; aborting remaining restarts.`);
+    const lease = await this.fly.createLease(
+      appName,
+      anchor.id,
+      this.options.leaseTtlSeconds,
+      `fly-machine-rotator refresh ${new Date().toISOString()}`
+    );
+    try {
+      for (const machine of running) {
+        const current = await this.fly.getMachine(appName, machine.id);
+        if (!isActive(current)) {
+          throw new Error(`Machine ${machine.id} stopped before its refresh; aborting remaining restarts.`);
+        }
+        const nonce = machine.id === anchor.id ? lease.nonce : undefined;
+        try {
+          actions.push(`Stopping Machine ${machine.id} to clear RAM and ephemeral temp files.`);
+          await this.fly.stopMachine(
+            appName,
+            machine.id,
+            { signal: "SIGTERM", timeout: `${this.options.stopTimeoutSeconds}s` },
+            nonce
+          );
+          await this.fly.waitForMachineState(appName, machine.id, "stopped");
+          const stoppedMachine = await this.fly.getMachine(appName, machine.id);
+          if (stoppedMachine.state !== "stopped") {
+            throw new Error(`Expected stopped state, found ${stoppedMachine.state}.`);
+          }
+          actions.push(`Starting Machine ${machine.id}.`);
+          await this.startRestartedMachine(appName, machine.id, actions, warnings, nonce);
+          await this.waitForRestartReady(appName, machine.id, actions);
+        } catch (error) {
+          // A failed readiness check must not strand a stopped Machine.
+          const state = await this.fly.getMachine(appName, machine.id).catch(() => undefined);
+          if (state?.state === "stopped") {
+            try {
+              await this.startRestartedMachine(appName, machine.id, actions, warnings, nonce);
+              await this.waitForRestartReady(appName, machine.id, actions);
+              warnings.push(`Recovered Machine ${machine.id} after a refresh error.`);
+            } catch (recoveryError) {
+              warnings.push(`Recovery of Machine ${machine.id} failed: ${String(recoveryError)}`);
+            }
+          }
+          throw new Error(`Machine ${machine.id} refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-      const lease = await this.fly.createLease(
-        appName,
-        machine.id,
-        this.options.leaseTtlSeconds,
-        `fly-machine-rotator refresh ${new Date().toISOString()}`
-      );
-      try {
-        actions.push(`Stopping Machine ${machine.id} to clear RAM and ephemeral temp files.`);
-        await this.fly.stopMachine(
-          appName,
-          machine.id,
-          { signal: "SIGTERM", timeout: `${this.options.stopTimeoutSeconds}s` },
-          lease.nonce
-        );
-        await this.fly.waitForMachineState(appName, machine.id, "stopped").catch(() => undefined);
-        actions.push(`Starting Machine ${machine.id}.`);
-        const state = await this.fly.getMachine(appName, machine.id);
-        if (!isActive(state)) await this.startRestartedMachine(appName, machine.id, actions, warnings, lease.nonce);
-        await this.waitForHealthy(appName, machine.id, actions);
-      } catch (error) {
-        // Do not proceed to another process group after a failed refresh.
-        throw new Error(`Machine ${machine.id} refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        await this.fly.releaseLease(appName, machine.id, lease.nonce).catch(() => undefined);
+      const after = snapshot(await this.fly.listMachines(appName));
+      for (const machine of running) {
+        if (!after.some((item) => item.id === machine.id && item.state === "started")) {
+          throw new Error(`Machine ${machine.id} is not started after the refresh.`);
+        }
       }
+      actions.push(`Refreshed ${running.length} running Machine(s) without cloning or stopping other process groups.`);
+      return successResult(appName, false, before, after, running[0].id, running[0].id, actions, warnings);
+    } finally {
+      await this.fly.releaseLease(appName, anchor.id, lease.nonce).catch(() => undefined);
     }
-    const after = snapshot(await this.fly.listMachines(appName));
-    for (const machine of running) {
-      if (!after.some((item) => item.id === machine.id && item.state === "started")) {
-        throw new Error(`Machine ${machine.id} is not started after the refresh.`);
+  }
+
+  private async waitForRestartReady(appName: string, machineId: string, actions: string[]): Promise<void> {
+    await this.fly.waitForMachineState(appName, machineId, "started");
+    const deadline = Date.now() + this.options.healthTimeoutMs;
+    while (Date.now() < deadline) {
+      const machine = await this.fly.getMachine(appName, machineId);
+      if (machine.state === "started" && isHealthy(machine, this.options.requireHealthChecks)) {
+        actions.push(`Machine ${machineId} is healthy.`);
+        return;
       }
+      await sleep(this.options.healthPollIntervalMs);
     }
-    actions.push(`Refreshed ${running.length} running Machine(s) without cloning or stopping other process groups.`);
-    return successResult(appName, false, before, after, undefined, undefined, actions, warnings);
+    throw new Error(`Timed out waiting for Machine ${machineId} to become healthy.`);
   }
 
   private async createStandby(appName: string, activeMachine: FlyMachine, actions: string[]): Promise<FlyMachine> {
@@ -294,7 +325,7 @@ export class MachineRotator {
     machineId: string,
     actions: string[],
     warnings: string[],
-    leaseNonce: string
+    leaseNonce?: string
   ): Promise<void> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.options.restartStartRetries; attempt += 1) {
