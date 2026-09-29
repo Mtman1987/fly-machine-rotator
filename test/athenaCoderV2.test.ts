@@ -42,19 +42,18 @@ describe("Stella Coder v2", () => {
     expect(context).toContain("Repository inventory:");
   });
 
-  it("patches the repair executor with ecosystem context, ChatGPT handoff, baseline validation, and sandbox retention", async () => {
+  it("preserves explicit Codex routing and baseline validation through build patches", async () => {
     const source = await readFile(join(process.cwd(), "src", "publicCodexFixer.ts"), "utf8");
     expect(source).toContain('buildRepositoryContext(description, workspace)');
     expect(source).toContain('loadEcosystemOperatorContext(env)');
     expect(source).toContain('Canonical ecosystem operator context:');
-    expect(source).toContain('Qwen produced no code changes.');
-    expect(source).toContain('writeChatGptHandoff(env');
-    expect(source).toContain('ChatGPT Business handoff');
-    expect(source).toContain('const result = await runCodexWorkspaceCoder(');
+    expect(source).toContain('CODEX_FIXER_PROVIDER === "qwen"');
+    expect(source).toContain('if (!hasRealOpenAiKey(env))');
+    expect(source).toContain('await runCodexWorkspaceCoder(');
     expect(source).not.toContain('check.ok = true;');
     expect(source).not.toContain('Codex fallback:');
     expect(source).toContain('job.baselineChecks = []');
     expect(source).toContain('BASELINE FAILURE REMAINS BLOCKING');
-    expect(source).toContain('Keep failed sandboxes with code changes on the Fly machine');
+    expect(source).toContain('Job base commit changed; rerun the repair against current main.');
   });
 });
