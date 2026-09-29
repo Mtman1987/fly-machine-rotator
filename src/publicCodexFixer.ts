@@ -307,6 +307,11 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     job.updatedAt = new Date().toISOString();
     await saveJob(env, job);
 
+    // Validation hooks may rewrite tracked files. Start the coder from the
+    // exact base commit so generated baseline edits never enter its patch.
+    const reset = await runCommand("git reset --hard HEAD && git clean -fd", workspace);
+    if (!reset.ok) throw new Error("Could not reset baseline validation side effects.");
+
     if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim()) {
       job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);
     } else {
