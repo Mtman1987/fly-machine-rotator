@@ -36,7 +36,7 @@ describe("Stella Coder storage lifecycle", () => {
     expect(await exists(join(work, "sandboxes", "failed_job_1", "marker"))).toBe(false);
     expect(await exists(join(work, "sandboxes", "empty_job_12", "marker"))).toBe(false);
     expect(await exists(join(work, "sandboxes", "published_12", "marker"))).toBe(false);
-    expect(await exists(join(work, "sandboxes", "ready_job_12", "marker"))).toBe(false);
+    expect(await exists(join(work, "sandboxes", "ready_job_12", "marker"))).toBe(true);
     expect(await exists(join(root, "jobs", "ready_job_12.json"))).toBe(true);
   });
 });
