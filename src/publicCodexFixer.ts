@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRepoConfigForApp, listRepoConfigs, type RepoConfig } from "./repoMap.js";
+import { buildRepositoryContext } from "./coderContext.js";
 import { ensureRepoDependencies, ensureRepoReady, pushRepoBranch } from "./repoOps.js";
 import { requireSpmtAdmin } from "./spmtAuth.js";
 
@@ -28,6 +29,7 @@ export type PublicCodexJob = {
   baseCommit?: string;
   changedFiles: string[];
   checks: Array<{ command: string; ok: boolean; output: string }>;
+  baselineChecks?: Array<{ command: string; ok: boolean; output: string }>;
   error?: string;
   pullRequest?: { number: number; url: string; branch: string; commit: string };
 };
@@ -129,26 +131,7 @@ function parseQwenCoderResult(content: string): { summary: string; patch: string
 }
 
 async function runQwenCoder(description: string, workspace: string, env: NodeJS.ProcessEnv): Promise<string> {
-  const tracked = (await execFileAsync("git", ["ls-files"], { cwd: workspace, timeout: 60_000 })).stdout
-    .split(/\r?\n/).filter(Boolean);
-  const terms = [...new Set(description.toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) || [])]
-    .filter((term) => !new Set(["with", "that", "this", "from", "only", "current", "default", "without"]).has(term));
-  const score = (path: string) => terms.reduce((total, term) => total + (path.toLowerCase().includes(term) ? 3 : 0), 0)
-    + (/private|chat|qwen|adult|llm|model|provider|setting/i.test(path) ? 5 : 0)
-    + (/AGENTS\.md$|package\.json$/i.test(path) ? 10 : 0);
-  const candidates = tracked.map((path) => ({ path, score: score(path) }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
-    .slice(0, 18);
-
-  let context = "";
-  for (const candidate of candidates) {
-    const source = await readFile(join(workspace, candidate.path), "utf8").catch(() => "");
-    if (!source || context.length >= 32_000) continue;
-    const remaining = 32_000 - context.length;
-    context += `\n\n--- ${candidate.path} ---\n${source.slice(0, Math.min(12_000, remaining))}`;
-  }
-  if (!context) throw new Error("Qwen Coder could not select readable repository context.");
+  const context = await buildRepositoryContext(description, workspace);
 
   const baseUrl = String(env.SPMT_LLM_BASE_URL || "http://spmt-llm-worker.internal:8080/v1").replace(/\/$/, "");
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -186,6 +169,40 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
   return result.summary;
 }
 
+function hasRealOpenAiKey(env: NodeJS.ProcessEnv): boolean {
+  const key = String(env.OPENAI_API_KEY || "").trim();
+  return Boolean(key) && key !== "spmt-private-network-no-auth";
+}
+
+async function runCodexWorkspaceCoder(
+  description: string,
+  inputContext: unknown,
+  workspace: string,
+  repo: RepoConfig,
+  env: NodeJS.ProcessEnv,
+  dataDir: string
+): Promise<{ summary: string; threadId?: string }> {
+  const codex = new Codex({
+    apiKey: String(env.OPENAI_API_KEY || ""),
+    env: minimalCodexEnv(env, dataDir),
+    config: { sandbox_workspace_write: { network_access: false } },
+  });
+  const thread = codex.startThread({
+    workingDirectory: workspace,
+    model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),
+    modelReasoningEffort: "high",
+    sandboxMode: "workspace-write",
+    networkAccessEnabled: false,
+    webSearchMode: "disabled",
+    approvalPolicy: "never",
+  });
+  const prompt = `${STELLA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${description.slice(0, 4000)}\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;
+  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(300000) });
+  return {
+    threadId: thread.id || undefined,
+    summary: redact(turn.finalResponse || "Codex completed without a final response."),
+  };
+}
 function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {
   return {
     PATH: String(env.PATH || "/usr/local/bin:/usr/bin:/bin"),
@@ -225,11 +242,17 @@ export async function reclaimCodexStorage(env: NodeJS.ProcessEnv): Promise<void>
 
   const sandboxesDir = join(workDir(env), "sandboxes");
   const sandboxIds = await readdir(sandboxesDir).catch(() => []);
+  const retained: Array<{ id: string; updated: number }> = [];
   for (const id of sandboxIds) {
     const job = await readCodexJob(env, id);
-    const retainForOwner = job?.status === "completed" && job.changedFiles.length > 0 && !job.pullRequest;
-    if (!retainForOwner) await rm(join(sandboxesDir, id), { recursive: true, force: true });
+    const updated = job ? Date.parse(job.updatedAt) : NaN;
+    const retainForOwner = job?.status === "completed" && job.changedFiles.length > 0 && !job.pullRequest
+      && Number.isFinite(updated) && Date.now() - updated < 14 * 24 * 60 * 60_000;
+    if (retainForOwner) retained.push({ id, updated });
+    else await rm(join(sandboxesDir, id), { recursive: true, force: true });
   }
+  retained.sort((a, b) => b.updated - a.updated);
+  for (const { id } of retained.slice(5)) await rm(join(sandboxesDir, id), { recursive: true, force: true });
 }
 
 export async function listCodeReferences(env: NodeJS.ProcessEnv) {
@@ -273,28 +296,31 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     await cloneWorkspace(target, workspace);
     await ensureRepoDependencies(workspace, repo.installCommand);
     await mkdir(join(dataDir, "tmp"), { recursive: true });
+    await mkdir(join(dataDir, "jobs", job.id), { recursive: true });
 
-    if (String(env.SPMT_LLM_BASE_URL || "").trim()) {
+    job.baselineChecks = [];
+    for (const command of repo.checkCommands) job.baselineChecks.push(await runCommand(command, workspace));
+    await writeFile(
+      join(dataDir, "jobs", job.id, "baseline-checks.txt"),
+      job.baselineChecks.map((check) => `$ ${check.command}\n${check.ok ? "PASS" : "FAIL"}\n${check.output}`).join("\n\n")
+    );
+    job.updatedAt = new Date().toISOString();
+    await saveJob(env, job);
+
+    if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim()) {
       job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);
     } else {
-      const codex = new Codex({
-        apiKey: String(env.OPENAI_API_KEY || ""),
-        env: minimalCodexEnv(env, dataDir),
-        config: { sandbox_workspace_write: { network_access: false } },
-      });
-      const thread = codex.startThread({
-        workingDirectory: workspace,
-        model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),
-        modelReasoningEffort: "high",
-        sandboxMode: "workspace-write",
-        networkAccessEnabled: false,
-        webSearchMode: "disabled",
-        approvalPolicy: "never",
-      });
-      const prompt = `${STELLA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${String(input.description || "").slice(0, 4000)}\nContext JSON: ${JSON.stringify(input.context || {}).slice(0, 6000)}`;
-      const turn = await thread.run(prompt);
-      job.threadId = thread.id || undefined;
-      job.summary = redact(turn.finalResponse || "Codex completed without a final response.");
+      if (!hasRealOpenAiKey(env)) throw new Error("Codex requires a real OpenAI key.");
+      const codexResult = await runCodexWorkspaceCoder(
+        String(input.description || "").slice(0, 4000),
+        input.context,
+        workspace,
+        repo,
+        env,
+        dataDir
+      );
+      job.threadId = codexResult.threadId;
+      job.summary = codexResult.summary;
     }
 
     // Intent-to-add makes new files part of the durable patch without staging
@@ -308,19 +334,31 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     const changed = await runCommand("git status --short", workspace);
     job.changedFiles = changed.output.split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
     job.checks = [];
-    for (const command of repo.checkCommands) job.checks.push(await runCommand(command, workspace));
-    await writeFile(join(dataDir, "jobs", job.id, "checks.txt"), job.checks.map((check) => `$ ${check.command}\n${check.output}`).join("\n\n"));
-    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary);
+    for (let index = 0; index < repo.checkCommands.length; index += 1) {
+      const command = repo.checkCommands[index];
+      const check = await runCommand(command, workspace);
+      const baseline = job.baselineChecks?.[index];
+      if (!check.ok && baseline && !baseline.ok) {
+        check.output = redact(`[BASELINE FAILURE REMAINS BLOCKING: this command failed before and after the repair; publication is blocked]\n\nBefore repair:\n${baseline.output}\n\nAfter repair:\n${check.output}`);
+      }
+      job.checks.push(check);
+    }
+    await writeFile(join(dataDir, "jobs", job.id, "checks.txt"), job.checks.map((check) => `$ ${check.command}\n${check.ok ? "ACCEPT" : "REGRESSION"}\n${check.output}`).join("\n\n"));
+    await writeFile(join(dataDir, "jobs", job.id, "response.txt"), job.summary || "Stella Coder completed without a summary.");
     job.status = job.checks.every((check) => check.ok) ? "completed" : "failed";
-    if (job.status === "failed") job.error = "One or more validation checks failed.";
+    if (job.status === "failed") job.error = `Validation regression: ${job.checks.filter((check) => !check.ok).map((check) => check.command).join(", ")}`;
   } catch (error) {
     job.status = "failed";
     job.error = redact(error instanceof Error ? error.message : String(error));
   }
   job.updatedAt = new Date().toISOString();
   await saveJob(env, job);
-  if (job.status === "failed" || job.changedFiles.length === 0) {
+  // Keep failed sandboxes with code changes on the Fly machine for live inspection.
+  // Durable diff/check/response artifacts are already stored under /data/codex-fixer.
+  if (job.changedFiles.length === 0) {
     await rm(join(workDir(env), "sandboxes", job.id), { recursive: true, force: true }).catch(() => undefined);
+  } else {
+    await rm(join(workDir(env), "sandboxes", job.id, repo.cloneDirName, "node_modules"), { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -336,10 +374,10 @@ async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
   if (!repo) throw new Error(`Unknown repository ${job.repoId}.`);
   const workspace = join(workDir(env), "sandboxes", job.id, repo.cloneDirName);
   const hasWorkspace = await readFile(join(workspace, ".git", "HEAD"), "utf8").then(() => true).catch(() => false);
+  const { target } = await syncReference(repo, env);
+  const currentCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: target, timeout: 30_000 })).stdout.trim();
+  if (!job.baseCommit || job.baseCommit !== currentCommit) throw new Error("Job base commit changed; rerun the repair against current main.");
   if (!hasWorkspace) {
-    const { target } = await syncReference(repo, env);
-    const currentCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: target, timeout: 30_000 })).stdout.trim();
-    if (!job.baseCommit || job.baseCommit !== currentCommit) throw new Error("Job base commit changed; rerun the repair against current main.");
     await cloneWorkspace(target, workspace);
     const storedPatch = await readFile(join(rootDir(env), "jobs", job.id, "diff.patch"), "utf8");
     if (!storedPatch.trim()) throw new Error("The saved Stella patch is empty.");
@@ -509,7 +547,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   }
 
   if (method === "POST" && url.pathname === "/api/codex/jobs") {
-    if (!String(env.SPMT_LLM_BASE_URL || env.OPENAI_API_KEY || "").trim()) return sendJson(response, 503, { error: "No Stella Coder model provider is configured" }), true;
+    if (env.CODEX_FIXER_PROVIDER === "qwen" ? !String(env.SPMT_LLM_BASE_URL || "").trim() : !hasRealOpenAiKey(env)) return sendJson(response, 503, { error: "The selected Stella Coder provider is not configured" }), true;
     const input = await readJson(request);
     const description = String(input.description || "").trim();
     if (!description) return sendJson(response, 400, { error: "description is required" }), true;
