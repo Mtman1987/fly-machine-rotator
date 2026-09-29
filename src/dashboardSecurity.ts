@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { dirname } from "node:path";
@@ -55,6 +55,19 @@ export function consumeOwnerMutationRate(request: IncomingMessage, env: NodeJS.P
 }
 
 export async function authorizeOwnerMutation(request: IncomingMessage, env: NodeJS.ProcessEnv): Promise<{ ok: true } | { ok: false; status: number; error: string; retryAfter?: number }> {
+  // The Codex worker is a server-only caller; its own API checks the same
+  // secret again. Do not extend this service route to other owner actions.
+  const pathname = new URL(request.url || "/", "http://localhost").pathname;
+  const expected = String(env.CODEX_WORKER_SECRET || "").trim();
+  const supplied = header(request, "x-codex-worker-secret");
+  if (pathname.startsWith("/api/codex/") && expected && supplied) {
+    const a = createHash("sha256").update(expected).digest();
+    const b = createHash("sha256").update(supplied).digest();
+    if (timingSafeEqual(a, b)) {
+      const rate = consumeOwnerMutationRate(request, env);
+      return rate.ok ? { ok: true } : { ok: false, status: 429, error: "Too many Rotator mutations.", retryAfter: rate.retryAfter };
+    }
+  }
   if (!isSameOriginMutation(request)) return { ok: false, status: 403, error: "Owner mutation requires a same-origin browser request or SPMT bearer token." };
   const identity = await requireSpmtAdmin(request, env).catch(() => null);
   if (!identity) return { ok: false, status: 401, error: "SPMT owner/admin session required." };
