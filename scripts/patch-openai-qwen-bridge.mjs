@@ -9,15 +9,15 @@ function patchFile(path, transform) {
 
 patchFile('src/athenaChat.ts', (source) => {
   source = source.replace(
-    '    { id: "local", label: "Local Qwen", ready: Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },\n    { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini" },',
-    '    { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5.6-luna" },\n    { id: "local", label: "Local Qwen", ready: Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },',
+    '    { id: "local", label: "Local Qwen", ready: env.ATHENA_CHAT_LOCAL_ENABLED === "true" && Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },\n    { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini" },',
+    '    { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini" },\n    { id: "local", label: "Local Qwen", ready: Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },',
   );
-  source = source.replaceAll('env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini"', 'env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5.6-luna"');
+  source = source.replaceAll('env.ATHENA_CHAT_OPENAI_MODEL || "gpt-5-mini"', 'env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini"');
   source = source.replace(
     'function normalizeProvider(value: unknown): ChatProvider { return value === "openai" || value === "eden" || value === "gemini" ? value : "local"; }',
     'function normalizeProvider(value: unknown): ChatProvider { return value === "local" || value === "openai" || value === "eden" || value === "gemini" ? value : "openai"; }',
   );
-  if (!source.includes('gpt-5.6-luna') || !source.includes('? value : "openai"')) throw new Error('Athena OpenAI bridge did not apply.');
+  if (!source.includes('gpt-4o-mini') || !source.includes('? value : "openai"')) throw new Error('Athena OpenAI bridge did not apply.');
   return source;
 });
 
@@ -41,7 +41,7 @@ patchFile('src/mountainView.ts', (source) => {
 
     const openAiKey = String(env.OPENAI_API_KEY || "").trim();
     if (openAiKey) {
-      const openAiModel = String(env.MOUNTAINVIEW_CHAT_OPENAI_MODEL || "gpt-5.6-luna");
+      const openAiModel = String(env.MOUNTAINVIEW_CHAT_OPENAI_MODEL || "gpt-4o-mini");
       const openAiStarted = Date.now();
       try {
         const res = await fetch("https://api.openai.com/v1/responses", {
@@ -80,7 +80,10 @@ patchFile('src/mountainView.ts', (source) => {
       }
     }
 
-    // Local Qwen remains the fallback until the Companion-hosted model is restored.
+    // Never use a stale local worker unless the owner explicitly enables it.
+    if (env.MOUNTAINVIEW_CHAT_LOCAL_ENABLED !== "true") {
+      return { ok: false, upstreamStatus: upstreamStatus || 503, error: "OpenAI chat is unavailable; local model is disabled" };
+    }
     try {
       const res = await fetch(\`\${qwenUrl}/api/chat\`, {`;
   return source.replace(marker, bridge);

@@ -25,6 +25,7 @@ export type PublicCodexJob = {
   description: string;
   summary?: string;
   threadId?: string;
+  baseCommit?: string;
   changedFiles: string[];
   checks: Array<{ command: string; ok: boolean; output: string }>;
   error?: string;
@@ -220,7 +221,6 @@ export async function reclaimCodexStorage(env: NodeJS.ProcessEnv): Promise<void>
   await Promise.all([
     rm(join(dataDir, "references"), { recursive: true, force: true }),
     rm(join(dataDir, "tmp"), { recursive: true, force: true }),
-    rm(workDir(env), { recursive: true, force: true }),
   ]);
 
   const sandboxesDir = join(workDir(env), "sandboxes");
@@ -266,6 +266,8 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     job.updatedAt = new Date().toISOString();
     await saveJob(env, job);
     const { target } = await syncReference(repo, env);
+    job.baseCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: target, timeout: 30_000 })).stdout.trim();
+    await saveJob(env, job);
     // Share the trusted local cache's immutable Git objects and put the mutable
     // checkout/dependencies on the machine filesystem, not the durable volume.
     await cloneWorkspace(target, workspace);
@@ -297,8 +299,10 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
 
     // Intent-to-add makes new files part of the durable patch without staging
     // their contents or changing the publication safety boundary.
-    await runCommand("git add -N -- .", workspace);
+    const intent = await runCommand("git add -N -- .", workspace);
+    if (!intent.ok) throw new Error("Could not prepare the job diff.");
     const diff = await runCommand("git diff --binary --no-ext-diff", workspace);
+    if (!diff.ok) throw new Error("Could not capture the job diff.");
     await mkdir(join(dataDir, "jobs", job.id), { recursive: true });
     await writeFile(join(dataDir, "jobs", job.id, "diff.patch"), diff.output);
     const changed = await runCommand("git status --short", workspace);
@@ -334,6 +338,8 @@ async function publishJob(job: PublicCodexJob, env: NodeJS.ProcessEnv) {
   const hasWorkspace = await readFile(join(workspace, ".git", "HEAD"), "utf8").then(() => true).catch(() => false);
   if (!hasWorkspace) {
     const { target } = await syncReference(repo, env);
+    const currentCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: target, timeout: 30_000 })).stdout.trim();
+    if (!job.baseCommit || job.baseCommit !== currentCommit) throw new Error("Job base commit changed; rerun the repair against current main.");
     await cloneWorkspace(target, workspace);
     const storedPatch = await readFile(join(rootDir(env), "jobs", job.id, "diff.patch"), "utf8");
     if (!storedPatch.trim()) throw new Error("The saved Stella patch is empty.");
