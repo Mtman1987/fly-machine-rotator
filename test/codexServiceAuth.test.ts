@@ -7,7 +7,7 @@ function request(path: string, secret: string): IncomingMessage {
     url: path,
     headers: { "x-codex-worker-secret": secret },
     socket: { remoteAddress: "127.0.0.1" },
-  } as IncomingMessage;
+  } as unknown as IncomingMessage;
 }
 
 describe("Codex worker mutation authorization", () => {
