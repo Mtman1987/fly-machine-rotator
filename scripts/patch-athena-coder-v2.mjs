@@ -69,7 +69,7 @@ if (!source.includes('async function runCodexWorkspaceCoder(')) {
   source = source.replace(marker, helper + marker);
 }
 
-if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());')) {
+if (!source.includes('selectCoderProvider(env) === "qwen"') && !source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());')) {
   const startMarker = '    if (String(env.SPMT_LLM_BASE_URL || "").trim()) {\n';
   const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
   const start = source.indexOf(startMarker);
