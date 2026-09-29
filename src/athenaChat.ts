@@ -54,10 +54,12 @@ export async function handleAthenaChatRequest(request: IncomingMessage, response
   return send(response, 200, { ...result, provider, adultMode });
 }
 
+function hasRealOpenAiKey(env: NodeJS.ProcessEnv) { return Boolean(env.OPENAI_API_KEY) && env.OPENAI_API_KEY !== "spmt-private-network-no-auth"; }
+
 function listProviders(env: NodeJS.ProcessEnv) {
   return [
     { id: "local", label: "Local Qwen", ready: env.ATHENA_CHAT_LOCAL_ENABLED === "true" && Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },
-    { id: "openai", label: "OpenAI", ready: Boolean(env.OPENAI_API_KEY), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini" },
+    { id: "openai", label: "OpenAI", ready: hasRealOpenAiKey(env), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini" },
     { id: "eden", label: "Eden AI", ready: Boolean(env.EDENAI_API_KEY), model: env.ATHENA_CHAT_EDEN_MODEL || "openai/gpt-4.1-mini" },
     { id: "gemini", label: "Gemini", ready: Boolean(env.GEMINI_API_KEY), model: env.ATHENA_CHAT_GEMINI_MODEL || "gemini-2.5-flash" },
   ];
@@ -68,6 +70,7 @@ async function runProvider(provider: ChatProvider, messages: ChatMessage[], body
   if (provider === "eden") return runEden(messages, body, env);
   const local = provider === "local";
   if (local && env.ATHENA_CHAT_LOCAL_ENABLED !== "true") throw new Error("Local model is disabled");
+  if (!local && !hasRealOpenAiKey(env)) throw new Error("OpenAI chat is not configured");
   const base = local ? String(env.SPMT_LLM_BASE_URL || "").replace(/\/$/, "") : "https://api.openai.com/v1";
   const key = local ? "" : String(env.OPENAI_API_KEY || "");
   if (!base || (!local && !key)) throw new Error(`${provider} chat provider is not configured`);
@@ -122,7 +125,7 @@ function normalizeMessages(value: unknown): ChatMessage[] {
 }
 function clamp(value: unknown, fallback: number) { const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(2, number)) : fallback; }
 async function readJson(request: IncomingMessage) { const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk)); if (Buffer.concat(chunks).length > 1_000_000) throw new Error("Chat request too large"); return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); }
-function privateHeaders(type: string) { return { "content-type": type, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" }; }
+function privateHeaders(type: string) { return { "content-type": type, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: https://spmt.live https://spacemountain.live; frame-src https://spmt.live https://spacemountain.live; frame-ancestors 'none'" }; }
 function send(response: ServerResponse, status: number, value: unknown): true { response.writeHead(status, privateHeaders("application/json; charset=utf-8")); response.end(JSON.stringify(value)); return true; }
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character] || character); }
 

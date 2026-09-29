@@ -40,7 +40,7 @@ patchFile('src/mountainView.ts', (source) => {
     let upstreamStatus = 0;
 
     const openAiKey = String(env.OPENAI_API_KEY || "").trim();
-    if (openAiKey) {
+    if (openAiKey && openAiKey !== "spmt-private-network-no-auth") {
       const openAiModel = String(env.MOUNTAINVIEW_CHAT_OPENAI_MODEL || "gpt-4o-mini");
       const openAiStarted = Date.now();
       try {

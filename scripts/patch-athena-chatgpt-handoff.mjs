@@ -40,7 +40,7 @@ if (!source.includes('Canonical ecosystem operator context:')) {
   );
 }
 
-if (!source.includes('ChatGPT Business handoff')) {
+if (!source.includes('ChatGPT Business handoff') && !source.includes('if (env.CODEX_FIXER_PROVIDER === "qwen"')) {
   const startMarker = '    const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());\n';
   const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
   const start = source.indexOf(startMarker);

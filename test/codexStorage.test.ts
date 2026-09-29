@@ -20,8 +20,8 @@ describe("Stella Coder storage lifecycle", () => {
     const jobs = [
       { id: "failed_job_1", status: "failed", changedFiles: ["a.ts"] },
       { id: "empty_job_12", status: "completed", changedFiles: [] },
-      { id: "ready_job_12", status: "completed", changedFiles: ["a.ts"] },
-      { id: "published_12", status: "completed", changedFiles: ["a.ts"], pullRequest: { number: 1 } },
+      { id: "ready_job_12", status: "completed", changedFiles: ["a.ts"], updatedAt: new Date().toISOString() },
+      { id: "published_12", status: "completed", changedFiles: ["a.ts"], updatedAt: new Date().toISOString(), pullRequest: { number: 1 } },
     ];
     for (const job of jobs) {
       await mkdir(join(work, "sandboxes", job.id), { recursive: true });

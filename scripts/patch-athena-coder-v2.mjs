@@ -69,14 +69,14 @@ if (!source.includes('async function runCodexWorkspaceCoder(')) {
   source = source.replace(marker, helper + marker);
 }
 
-if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());')) {
+if (!source.includes('const qwenConfigured = env.CODEX_FIXER_PROVIDER === "qwen" && Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());') && !source.includes('if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim())')) {
   const startMarker = '    if (String(env.SPMT_LLM_BASE_URL || "").trim()) {\n';
   const endMarker = '\n\n    // Intent-to-add makes new files part of the durable patch';
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
   if (start < 0 || end < 0) throw new Error('Stella Coder v2 provider block markers missing');
   const providerBlock = [
-    '    const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());',
+    '    const qwenConfigured = env.CODEX_FIXER_PROVIDER === "qwen" && Boolean(String(env.SPMT_LLM_BASE_URL || "").trim());',
     '    let qwenChanged = false;',
     '    let qwenFailure = "";',
     '    if (qwenConfigured) {',
@@ -93,7 +93,7 @@ if (!source.includes('const qwenConfigured = Boolean(String(env.SPMT_LLM_BASE_UR
     '    }',
     '',
     '    if (!qwenConfigured || !qwenChanged) {',
-    '      if (!String(env.OPENAI_API_KEY || "").trim()) {',
+    '      if (!hasRealOpenAiKey(env)) {',
     '        if (qwenFailure) throw new Error(`Qwen repair attempt did not produce a patch and Codex fallback is unavailable: ${qwenFailure}`);',
     '        throw new Error("No Stella Coder provider is configured.");',
     '      }',
