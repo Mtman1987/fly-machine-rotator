@@ -192,42 +192,47 @@ async function coderJobStatus(id) {
 }
 
 async function streamStart() {
+  const list = await fly(['machines', 'list', '--app', 'hmo-dj-worker', '--json']);
+  if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
+  let machines = [];
+  try { machines = JSON.parse(list.stdout || '[]'); }
+  catch { throw new Error('HearMeOut worker machine list returned malformed JSON.'); }
+  const active = Array.isArray(machines) ? machines.filter((m) => ['started', 'starting'].includes(String(m?.state))) : [];
+  if (!active.length) throw new Error('No active HearMeOut worker machine is available.');
+
   const source = `
 (async()=>{
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const key=String(process.env.SPMT_API_KEY||process.env.SPMT_PLATFORM_API_KEY||'').trim();
-if(!key) throw Error('SPMT API key is not configured');
-const headers={authorization:'Bearer '+key,accept:'application/json'};
-const twitchUrl='https://discord-stream-hub-new.fly.dev/api/internal/twitch/live-status?login=spacemountainlive';
-const hmoUrl='https://hearmeout-main.fly.dev/api/internal/restream-control';
-async function json(url,init={}){const r=await fetch(url,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(15000)});const b=await r.json().catch(()=>null);return {r,b}}
-let live=await json(twitchUrl);
-if(!live.r.ok||!live.b?.ok||typeof live.b?.isLive!=='boolean') throw Error('Twitch live state could not be verified');
-if(live.b.isLive){process.stdout.write(JSON.stringify({ok:true,reason:'Twitch is already live',twitch:live.b}));process.exit(0)}
-const status=await json(hmoUrl);
-if(!status.r.ok) throw Error('Restream controller status failed ('+status.r.status+')');
-if(status.b?.automationEnabled!==true) throw Error('Restream automation is not enabled');
-if(status.b?.state!=='offline') throw Error('Restream is not in a recognized offline state (state='+String(status.b?.state||'unknown')+')');
-const started=await json(hmoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'start'})});
+const role=String(process.env.HMO_WORKER_ROLE||'').toLowerCase();
+if(role!=='lounge'&&role!=='all'){process.stdout.write(JSON.stringify({skip:true,role}));return}
+const secret=String(process.env.HMO_WORKER_SHARED_SECRET||'').trim();
+if(!secret) throw Error('Lounge worker authentication is not configured');
+const headers={authorization:'Bearer '+secret,accept:'application/json','content-type':'application/json'};
+async function call(path,init={}){const r=await fetch('http://127.0.0.1:3002'+path,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(90000)});const b=await r.json().catch(()=>null);return {r,b}}
+const before=await call('/restream/status');
+if(!before.r.ok) throw Error('Restream controller status failed ('+before.r.status+')');
+if(before.b?.automationEnabled!==true) throw Error('Restream automation is not enabled');
+if(before.b?.state==='live'){process.stdout.write(JSON.stringify({ok:true,reason:'Restream is already live',before:before.b,after:before.b}));return}
+if(before.b?.state!=='offline') throw Error('Restream is not in a recognized offline state (state='+String(before.b?.state||'unknown')+')');
+const started=await call('/restream/start',{method:'POST',body:'{}'});
 if(!started.r.ok||started.b?.ok===false) throw Error(String(started.b?.error||('Restream start failed ('+started.r.status+')')));
-const deadline=Date.now()+90000;
-while(Date.now()<deadline){
-  await sleep(5000);
-  live=await json(twitchUrl);
-  if(live.r.ok&&live.b?.ok&&live.b?.isLive===true){process.stdout.write(JSON.stringify({ok:true,reason:'Twitch is live',twitch:live.b,controller:started.b}));process.exit(0)}
-}
-throw Error('Restream started but Twitch did not become live within 90 seconds');
+const after=await call('/restream/status');
+if(!after.r.ok||after.b?.state!=='live') throw Error('Restream did not reach a recognized live state after start');
+process.stdout.write(JSON.stringify({ok:true,reason:'Restream is live',before:before.b,after:after.b,startedWith:started.b?.startedWith||null}));
 })().catch(e=>{console.error(e?.message||e);process.exit(1)});
 `;
   const encoded = Buffer.from(source, 'utf8').toString('base64');
-  const remote = `node -e "eval(Buffer.from(process.argv[1],'base64').toString('utf8'))" '${encoded}'`;
-  const run = await fly(['ssh', 'console', '--app', ROTATOR_APP, '--command', remote], { timeout: 180000 });
-  if (!run.ok) throw new Error(run.stderr || 'Stream start command failed.');
-  const raw = run.stdout.trim();
-  const start = raw.indexOf('{');
-  if (start < 0) throw new Error('Stream start command returned malformed output.');
-  try { return JSON.parse(raw.slice(start)); }
-  catch { throw new Error('Stream start command returned malformed JSON.'); }
+  const results = [];
+  for (const machine of active) {
+    const run = await fly(['machine', 'exec', '--app', 'hmo-dj-worker', machine.id, 'node', '-e', "eval(Buffer.from(process.argv[1],'base64').toString('utf8'))", encoded], { timeout: 150000 });
+    const raw = String(run.stdout || '').trim();
+    let payload = null;
+    const jsonStart = raw.indexOf('{');
+    if (jsonStart >= 0) { try { payload = JSON.parse(raw.slice(jsonStart)); } catch {} }
+    if (run.ok && payload?.ok) return { ...payload, machineId: machine.id };
+    if (run.ok && payload?.skip) { results.push({ machineId: machine.id, ...payload }); continue; }
+    results.push({ machineId: machine.id, ok: false, error: run.stderr || 'Worker command failed.' });
+  }
+  throw new Error('No Lounge worker completed the Restream start: ' + redact(JSON.stringify(results)));
 }
 
 async function repair(payload) {
