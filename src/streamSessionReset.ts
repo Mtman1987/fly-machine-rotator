@@ -51,10 +51,9 @@ async function restreamStatus(env: NodeJS.ProcessEnv) {
   if (!key) throw new Error("SPMT API key is not configured");
   const response = await fetch(`${hmoBaseUrl(env)}/api/internal/restream-control`, {
     headers: { authorization: `Bearer ${key}`, accept: "application/json" },
-    cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({})) as any;
   if (!response.ok) throw new Error(`Restream controller status failed (${response.status})`);
   return body as any;
 }
@@ -75,7 +74,7 @@ async function runRestreamReset(env: NodeJS.ProcessEnv) {
     }),
     signal: AbortSignal.timeout(Number(env.STREAM_SESSION_RESET_CONTROLLER_TIMEOUT_MS || 120_000)),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({})) as any;
   if (!response.ok || body?.ok === false) {
     throw new Error(String(body?.error || `Restream controlled reset failed (${response.status})`).slice(0, 800));
   }
