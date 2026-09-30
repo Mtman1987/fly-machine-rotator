@@ -87,12 +87,22 @@ if(!r.ok) process.exit(2);
 
   const verifySource = `
 (async()=>{
-const key=String(process.env.SPMT_API_KEY||process.env.SPMT_PLATFORM_API_KEY||'').trim();
-if(!key) throw Error('SPMT service key is unavailable for Twitch verification');
-const r=await fetch('https://discord-stream-hub-new.fly.dev/api/internal/twitch/live-status?login=spacemountainlive',{headers:{authorization:'Bearer '+key,accept:'application/json'},signal:AbortSignal.timeout(12000)});
+const clientId=String(process.env.TWITCH_CLIENT_ID||'').trim();
+const clientSecret=String(process.env.TWITCH_CLIENT_SECRET||'').trim();
+let token=String(process.env.TWITCH_ACCESS_TOKEN||'').trim();
+if(!clientId) throw Error('Twitch client id is unavailable for verification');
+if(clientSecret){
+  const tr=await fetch('https://id.twitch.tv/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:'client_credentials'}),signal:AbortSignal.timeout(8000)});
+  const tb=await tr.json().catch(()=>null);
+  if(!tr.ok||!tb?.access_token) throw Error('Twitch app token request failed');
+  token=String(tb.access_token);
+}
+if(!token) throw Error('Twitch access token is unavailable for verification');
+const r=await fetch('https://api.twitch.tv/helix/streams?user_login=spacemountainlive',{headers:{'client-id':clientId,authorization:'Bearer '+token,accept:'application/json'},signal:AbortSignal.timeout(12000)});
 const b=await r.json().catch(()=>null);
-process.stdout.write(JSON.stringify({status:r.status,body:b}));
-if(!r.ok||!b?.ok||typeof b?.isLive!=='boolean') process.exit(2);
+const isLive=Boolean(r.ok&&Array.isArray(b?.data)&&b.data.length);
+process.stdout.write(JSON.stringify({status:r.status,body:{ok:r.ok,isLive,startedAt:b?.data?.[0]?.started_at||null,streamId:b?.data?.[0]?.id||null}}));
+if(!r.ok||!Array.isArray(b?.data)) process.exit(2);
 })().catch(e=>{console.error(e?.message||e);process.exit(1)});
 `;
   const verifyEncoded = Buffer.from(verifySource, 'utf8').toString('base64');
