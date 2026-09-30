@@ -116,8 +116,12 @@ export async function recordStreamContinuityEvent(
   } catch {}
   rows.push(row);
   rows = rows.slice(-1000);
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(rows, null, 2), "utf8");
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(rows, null, 2), "utf8");
+  } catch {
+    // Continuity evidence is diagnostic; it must never break rotation/recovery.
+  }
 }
 
 export async function notifyStreamContinuityOwner(
@@ -159,12 +163,19 @@ export async function appendStreamContinuityIncident(
     suggestion: "Inspect the app rotation/restart path, machine readiness, and stream continuity around the maintenance event.",
     context: [],
   });
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(rows.slice(-2000), null, 2), "utf8");
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(rows.slice(-2000), null, 2), "utf8");
+  } catch {
+    // Keep the stream alert path alive even if durable incident storage is briefly unavailable.
+  }
 }
 
 
 export async function startStreamContinuityWatchLoop(env: NodeJS.ProcessEnv = process.env): Promise<never> {
+  if (!apiKey(env) || env.STREAM_CONTINUITY_ENABLED === "false") {
+    for (;;) await sleep(60_000);
+  }
   const intervalMs = Number(env.STREAM_CONTINUITY_WATCH_INTERVAL_MS || 30_000);
   const dropGraceMs = Number(env.STREAM_CONTINUITY_DROP_GRACE_MS || 45_000);
   let lastConfirmedLive: boolean | undefined;
