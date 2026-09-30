@@ -22,6 +22,7 @@ export type StreamContinuityEvent = {
 
 const DEFAULT_LOGIN = "spacemountainlive";
 const DEFAULT_DSH = "https://discord-stream-hub-new.fly.dev";
+const DEFAULT_HMO = "https://hearmeout-main.fly.dev";
 const DEFAULT_HISTORY = "/data/stream-continuity.json";
 
 function sleep(ms: number) {
@@ -38,6 +39,10 @@ function baseUrl(env: NodeJS.ProcessEnv) {
 
 function apiKey(env: NodeJS.ProcessEnv) {
   return String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
+}
+
+function hmoBaseUrl(env: NodeJS.ProcessEnv) {
+  return String(env.HEARMEOUT_BASE_URL || DEFAULT_HMO).replace(/\/$/, "");
 }
 
 function historyFile(env: NodeJS.ProcessEnv) {
@@ -79,6 +84,69 @@ export async function probeStreamLiveState(env: NodeJS.ProcessEnv = process.env)
   } catch {
     return { ok: false, login: twitchLogin, checkedAt: new Date().toISOString(), error: "DSH live-status probe did not complete" };
   }
+}
+
+export async function startStreamIfConfirmedOffline(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: boolean; reason?: string; twitch?: StreamLiveState; controller?: unknown }> {
+  const before = await probeStreamLiveState(env);
+  if (!before.ok) return { ok: false, reason: before.error || "Twitch live state could not be verified", twitch: before };
+  if (before.isLive) return { ok: true, reason: "Twitch is already live", twitch: before };
+
+  const key = apiKey(env);
+  if (!key) return { ok: false, reason: "SPMT API key is not configured", twitch: before };
+
+  let controller: any;
+  try {
+    const statusResponse = await fetch(`${hmoBaseUrl(env)}/api/internal/restream-control`, {
+      headers: { authorization: `Bearer ${key}`, accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    controller = await statusResponse.json().catch(() => null);
+    if (!statusResponse.ok) {
+      return { ok: false, reason: `Restream controller status failed (${statusResponse.status})`, twitch: before, controller };
+    }
+  } catch {
+    return { ok: false, reason: "Restream controller status did not complete", twitch: before };
+  }
+
+  if (controller?.automationEnabled !== true) {
+    return { ok: false, reason: "Restream automation is not enabled", twitch: before, controller };
+  }
+  if (controller?.state === "live") {
+    return { ok: false, reason: "Restream says live while Twitch says offline; refusing an ambiguous restart", twitch: before, controller };
+  }
+  if (controller?.state !== "offline") {
+    return { ok: false, reason: `Restream is not in a recognized offline state (state=${String(controller?.state || "unknown")})`, twitch: before, controller };
+  }
+
+  let startBody: any;
+  try {
+    const response = await fetch(`${hmoBaseUrl(env)}/api/internal/restream-control`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "start" }),
+      signal: AbortSignal.timeout(Number(env.STREAM_CONTINUITY_START_TIMEOUT_MS || 120_000)),
+    });
+    startBody = await response.json().catch(() => null);
+    if (!response.ok || startBody?.ok === false) {
+      return { ok: false, reason: String(startBody?.error || `Restream start failed (${response.status})`), twitch: before, controller: startBody || controller };
+    }
+  } catch {
+    return { ok: false, reason: "Restream start request did not complete", twitch: before, controller };
+  }
+
+  const after = await waitForStreamRecovery(env);
+  if (!after.ok || !after.isLive) {
+    return { ok: false, reason: after.error || "Restream was started but Twitch did not become live", twitch: after, controller: startBody };
+  }
+
+  await recordStreamContinuityEvent({ kind: "recovered", detail: "Automatic start-only Restream recovery restored Twitch live state." }, env);
+  return { ok: true, reason: "Twitch is live", twitch: after, controller: startBody };
 }
 
 export async function waitForStreamRecovery(
@@ -212,10 +280,22 @@ export async function startStreamContinuityWatchLoop(env: NodeJS.ProcessEnv = pr
             `Twitch stream ${state.login} dropped outside a planned rotation and remained offline past the continuity grace window.`,
             env,
           );
-          await notifyStreamContinuityOwner(
-            `⚠️ Twitch stream **${state.login}** went offline outside a planned rotation and has not recovered within ${Math.round(dropGraceMs / 1000)} seconds. No automatic restart was attempted because this drop is not causally tied to maintenance.`,
-            env,
-          );
+          const recovery = await startStreamIfConfirmedOffline(env);
+          if (recovery.ok && recovery.twitch?.isLive) {
+            await notifyStreamContinuityOwner(
+              `✅ Twitch stream **${state.login}** was confirmed offline and Restream was started automatically. Twitch is live again.`,
+              env,
+            );
+            lastConfirmedLive = true;
+            offlineSince = undefined;
+            notified = false;
+          } else {
+            await recordStreamContinuityEvent({ kind: "recovery-failed", detail: recovery.reason || "Automatic Restream start failed." }, env);
+            await notifyStreamContinuityOwner(
+              `🚨 Twitch stream **${state.login}** is offline and the one-shot automatic Restream start did not recover it. Reason: ${recovery.reason || "unknown"}`,
+              env,
+            );
+          }
         }
       }
     } else {
