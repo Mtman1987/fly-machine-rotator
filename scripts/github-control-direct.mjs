@@ -191,6 +191,57 @@ async function coderJobStatus(id) {
   catch { throw new Error('Coder job status returned malformed JSON.'); }
 }
 
+async function spmtBrowserInspect() {
+  const ownerLookup = [
+    "const Database=require('better-sqlite3');",
+    "const db=new Database(process.env.DATABASE_PATH||'/data/spmt.db',{readonly:true,fileMustExist:true});",
+    "const row=db.prepare('SELECT id FROM users WHERE lower(username)=? LIMIT 1').get('mtman1987');",
+    "if(!row?.id){process.stderr.write('owner not found');process.exit(2)}",
+    "process.stdout.write(String(row.id));",
+  ].join('');
+  const lookup = await fly(['ssh','console','--app','spmt-live','--process-group','app','--command',\`node -e "\${ownerLookup.replace(/"/g,'\\"')}"\`,'--quiet'], { timeout: 60000 });
+  if (!lookup.ok) throw new Error(lookup.stderr || 'Could not resolve the SPMT owner browser profile.');
+  const ownerId = String(lookup.stdout || '').trim().split(/\r?\n/).pop()?.trim();
+  if (!ownerId) throw new Error('SPMT owner browser profile could not be resolved.');
+
+  const source = \`
+(async()=>{
+const uid=Buffer.from(process.argv[1],'base64').toString('utf8');
+const secret=String(process.env.CLOUD_XBOX_WORKER_SECRET||process.env.JWT_SECRET||'').trim();
+if(!secret) throw Error('Cloud browser worker secret is not configured');
+const headers={'x-spmt-worker-secret':secret,'x-spmt-user-id':uid,'content-type':'application/json'};
+async function call(path,init={}){const r=await fetch('http://127.0.0.1:3003'+path,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(45000)});const type=r.headers.get('content-type')||'';const b=type.includes('application/json')?await r.json().catch(()=>null):null;return {r,b}}
+const opened=await call('/v1/session',{method:'POST',body:JSON.stringify({mode:'restream'})});
+if(!opened.r.ok) throw Error(String(opened.b?.error||('Restream browser open failed ('+opened.r.status+')')));
+const status=await call('/v1/status',{headers:{'content-type':'application/json'}});
+if(!status.r.ok) throw Error('Restream browser status failed ('+status.r.status+')');
+const inspect=await call('/v1/inspect',{headers:{'content-type':'application/json'}});
+if(!inspect.r.ok) throw Error('Restream browser inspection failed ('+inspect.r.status+')');
+const cleanText=String(inspect.b?.bodyText||'').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi,'[email]').slice(0,3500);
+process.stdout.write(JSON.stringify({
+  ok:true,
+  running:Boolean(status.b?.running),
+  mode:status.b?.mode||null,
+  url:String(inspect.b?.url||status.b?.url||'').slice(0,500),
+  title:String(inspect.b?.title||status.b?.title||'').slice(0,300),
+  buttons:Array.isArray(inspect.b?.buttons)?inspect.b.buttons.slice(0,80):[],
+  bodyText:cleanText,
+  profilePersistent:Boolean(status.b?.profilePersistent),
+  persistentHost:Boolean(status.b?.persistentHost)
+}));
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
+\`;
+  const encoded = Buffer.from(source, 'utf8').toString('base64');
+  const userEncoded = Buffer.from(ownerId, 'utf8').toString('base64');
+  const command = \`node -e "eval(Buffer.from('\${encoded}','base64').toString('utf8'))" '\${userEncoded}'\`;
+  const run = await fly(['ssh','console','--app','spmt-live','--process-group','xbox','--command',command,'--quiet'], { timeout: 120000 });
+  if (!run.ok) throw new Error(run.stderr || 'Persistent Restream browser inspection failed.');
+  const raw=String(run.stdout||'').trim();
+  const start=raw.indexOf('{');
+  if(start<0) throw new Error('Persistent Restream browser inspection returned malformed output.');
+  try { return JSON.parse(raw.slice(start)); } catch { throw new Error('Persistent Restream browser inspection returned malformed JSON.'); }
+}
+
 async function streamStatus() {
   const list = await fly(['machines', 'list', '--app', 'hmo-dj-worker', '--json']);
   if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
@@ -290,6 +341,7 @@ export async function execute(payload) {
   if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
   if (command === 'coderjob') return await coderJobStatus(payload.id);
+  if (command === 'spmtbrowser') return await spmtBrowserInspect();
   if (command === 'streamstatus') return await streamStatus();
   if (command === 'streamstart') return await streamStart();
   throw new Error('Unsupported command.');
