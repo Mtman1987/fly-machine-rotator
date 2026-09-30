@@ -363,6 +363,14 @@ export function classifyIncident(event: Pick<StoredErrorEvent, "appName" | "mess
   if (event.appName === "hmo-dj-worker" && messageLower.includes("[voicebridge] start failed") && messageLower.includes("unknown channel")) {
     return classification("hmo-dj-worker:discord-voice-channel", "auth_config", "The configured Discord voice channel is missing or inaccessible. Select a valid voice channel or repair the stored mapping; code cannot join an unknown channel.");
   }
+  if (messageLower.includes("twitch stream was confirmed live before rotating") && messageLower.includes("failed to recover")) {
+    return {
+      key: `${event.appName}:rotation-induced-stream-continuity`,
+      disposition: "code",
+      autoFixEligible: true,
+      reason: "A planned Machine rotation took a confirmed-live Twitch stream offline and the bounded recovery path failed; inspect rotation ordering, readiness, and restart continuity.",
+    };
+  }
   if (/\b(?:429|too many requests)\b/.test(messageLower) && messageLower.includes("twitch")) {
     return classification(`${event.appName}:twitch-rate-limit`, "transient_external", "Twitch rate limiting needs shared caching, request coalescing, and bounded backoff; it must not be hidden as noise.");
   }
