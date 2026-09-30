@@ -223,7 +223,8 @@ process.stdout.write(JSON.stringify({ok:true,reason:'Restream is live',before:be
   const encoded = Buffer.from(source, 'utf8').toString('base64');
   const results = [];
   for (const machine of active) {
-    const run = await fly(['machine', 'exec', '--app', 'hmo-dj-worker', machine.id, 'node', '-e', "eval(Buffer.from(process.argv[1],'base64').toString('utf8'))", encoded], { timeout: 150000 });
+    const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+    const run = await fly(['ssh', 'console', '--app', 'hmo-dj-worker', '--machine', String(machine.id), '--command', command, '--quiet'], { timeout: 150000 });
     const raw = String(run.stdout || '').trim();
     let payload = null;
     const jsonStart = raw.indexOf('{');
