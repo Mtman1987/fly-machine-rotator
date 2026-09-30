@@ -3,6 +3,7 @@ import { sendDiscordReport } from "./discord.js";
 import { runRotationOnce } from "./rotationRunner.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { AppRotationResult } from "./types.js";
+import { handleScheduledStreamSessionReset } from "./streamSessionReset.js";
 
 export const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 export const FAILURE_RETRY_MS = 60 * 60 * 1000;
@@ -34,6 +35,8 @@ async function executeTrackedRotationInner(
 
   try {
     const results = await runRotationOnce(argv, env, { skipDiscordReport: true });
+    const sessionReset = await handleScheduledStreamSessionReset(results, trigger, env);
+    if (sessionReset) results.push(sessionReset);
     const finishedAt = new Date();
     const nextRunAt = new Date(finishedAt.getTime() + computeNextIntervalMs(results)).toISOString();
     await store.markFinished(trigger, finishedAt.toISOString(), finishedAt.getTime() - startedAt.getTime(), results, nextRunAt);

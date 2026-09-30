@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isStreamSessionResetSuppressed } from "./streamSessionResetState.js";
 
 export type StreamLiveState = {
   ok: boolean;
@@ -13,7 +14,7 @@ export type StreamLiveState = {
 
 export type StreamContinuityEvent = {
   at: string;
-  kind: "pre-rotation" | "post-rotation" | "recovered" | "recovery-failed" | "watch-drop" | "watch-recovered" | "probe-error";
+  kind: "pre-rotation" | "post-rotation" | "recovered" | "recovery-failed" | "watch-drop" | "watch-recovered" | "probe-error" | "planned-reset" | "planned-reset-complete" | "planned-reset-failed";
   appName?: string;
   login: string;
   detail?: string;
@@ -194,6 +195,13 @@ export async function startStreamContinuityWatchLoop(env: NodeJS.ProcessEnv = pr
         offlineSince = undefined;
         notified = false;
       } else {
+        const resetSuppressed = await isStreamSessionResetSuppressed(env);
+        if (resetSuppressed) {
+          offlineSince = undefined;
+          notified = false;
+          await sleep(intervalMs);
+          continue;
+        }
         if (lastConfirmedLive === true && offlineSince === undefined) offlineSince = Date.now();
         if (offlineSince !== undefined && !notified && Date.now() - offlineSince >= dropGraceMs) {
           lastConfirmedLive = false;
