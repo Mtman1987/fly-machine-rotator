@@ -191,6 +191,17 @@ async function coderJobStatus(id) {
   catch { throw new Error('Coder job status returned malformed JSON.'); }
 }
 
+async function streamStart() {
+  const remote = `node -e "import('./dist/streamContinuity.js').then(async m=>{const r=await m.startStreamIfConfirmedOffline(process.env);process.stdout.write(JSON.stringify(r))}).catch(e=>{console.error(e?.message||e);process.exit(1)})"`;
+  const run = await fly(['ssh', 'console', '--app', ROTATOR_APP, '--command', remote], { timeout: 180000 });
+  if (!run.ok) throw new Error(run.stderr || 'Stream start command failed.');
+  const raw = run.stdout.trim();
+  const start = raw.indexOf('{');
+  if (start < 0) throw new Error('Stream start command returned malformed output.');
+  try { return JSON.parse(raw.slice(start)); }
+  catch { throw new Error('Stream start command returned malformed JSON.'); }
+}
+
 async function repair(payload) {
   const appName = requireApp(payload.appName);
   const description = text(payload.description, 4000);
@@ -215,6 +226,7 @@ export async function execute(payload) {
   if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
   if (command === 'coderjob') return await coderJobStatus(payload.id);
+  if (command === 'streamstart') return await streamStart();
   throw new Error('Unsupported command.');
 }
 
