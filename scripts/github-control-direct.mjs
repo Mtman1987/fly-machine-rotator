@@ -209,7 +209,7 @@ async function call(path,init={}){const r=await fetch('http://127.0.0.1:3002'+pa
 const before=await call('/restream/status');
 if(before.r.status===404){process.stdout.write(JSON.stringify({skip:true,reason:'not-lounge'}));return}
 if(!before.r.ok) throw Error('Restream controller status failed ('+before.r.status+')');
-if(before.b?.automationEnabled!==true) throw Error('Restream automation is not enabled');
+if(before.b?.automationEnabled!==true) throw Error('Restream automation is not enabled (state='+String(before.b?.state||'unknown')+')');
 if(before.b?.state==='live'){process.stdout.write(JSON.stringify({ok:true,reason:'Restream is already live',before:before.b,after:before.b}));return}
 if(before.b?.state!=='offline') throw Error('Restream is not in a recognized offline state (state='+String(before.b?.state||'unknown')+')');
 const started=await call('/restream/start',{method:'POST',body:'{}'});
