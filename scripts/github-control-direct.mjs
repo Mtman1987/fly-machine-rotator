@@ -193,6 +193,7 @@ async function coderJobStatus(id) {
 
 async function streamStart() {
   const source = `
+(async()=>{
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const key=String(process.env.SPMT_API_KEY||process.env.SPMT_PLATFORM_API_KEY||'').trim();
 if(!key) throw Error('SPMT API key is not configured');
@@ -216,6 +217,7 @@ while(Date.now()<deadline){
   if(live.r.ok&&live.b?.ok&&live.b?.isLive===true){process.stdout.write(JSON.stringify({ok:true,reason:'Twitch is live',twitch:live.b,controller:started.b}));process.exit(0)}
 }
 throw Error('Restream started but Twitch did not become live within 90 seconds');
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
 `;
   const encoded = Buffer.from(source, 'utf8').toString('base64');
   const remote = `node -e "eval(Buffer.from(process.argv[1],'base64').toString('utf8'))" '${encoded}'`;
