@@ -4,30 +4,28 @@ import { describe, expect, it } from 'vitest';
 
 function source(path: string) { return readFileSync(resolve(process.cwd(), path), 'utf8'); }
 
-describe('MtFixIt ChatGPT review routing', () => {
-  it('queues validated MtFixIt repairs through the ChatGPT handoff instead of direct deployment', () => {
+describe('Autonomous MtFixIt routing', () => {
+  it('keeps new repairs owner-gated and lets exact known fixes deploy without ChatGPT', () => {
     const resolution = source('src/mtfixitResolution.ts');
-    expect(resolution).toContain('queueMtFixItForChatGpt');
-    expect(resolution).toContain('status: \'awaiting_chatgpt\'');
-    expect(resolution).toContain("approveChatGptHandoff(env, handoff.id, 'mtfixit-standing-policy')");
-    expect(resolution).toContain('mtfixit: true');
-    expect(resolution).toContain('draftPullRequest: pullRequest');
-    expect(resolution).toContain('return queueMtFixItForChatGpt(job, env, dashboardPort, signature)');
+    expect(resolution).toContain('status: known ? "deploying" : "awaiting_approval"');
+    expect(resolution).toContain('if (known) void deployInBackground(job, env, dashboardPort, state)');
+    expect(resolution).toContain('export async function applyMtFixItResolutionAction');
+    expect(resolution).not.toContain('queueMtFixItForChatGpt');
+    expect(resolution).not.toContain("status: 'awaiting_chatgpt'");
   });
 
-  it('synchronizes ChatGPT completion back into MtFixIt lifecycle state', () => {
-    const control = source('scripts/github-control-chat.mjs');
-    const workflow = source('.github/workflows/github-rotator-control.yml');
-    expect(control).toContain("r.userContext&&r.userContext.mtfixit");
-    expect(control).toContain("state.status=outcome==='success'?'deployed':'failed'");
-    expect(control).toContain('state.chatgptHandoffId=r.id');
-    expect(control).toContain('resultStatus=outcome');
-    expect(workflow).toContain('[success|failed]');
-    expect(workflow).toContain("payload.outcome = maybeOutcome === 'failed' || maybeOutcome === 'success'");
+  it('hourly diagnostics resolve validated jobs locally and DM the owner for new fixes', () => {
+    const hourly = source('src/hourlyAthenaDiagnostic.ts');
+    expect(hourly).toContain('applyMtFixItResolutionAction(job.id, "resolve", env, dashboardPort)');
+    expect(hourly).toContain('mtfixit_approve:');
+    expect(hourly).toContain('Approve & Deploy');
+    expect(hourly).toContain('deploying-known-fix');
+    expect(hourly).not.toContain('Approve ChatGPT Repair');
+    expect(hourly).not.toContain('approveChatGptHandoff');
   });
 
-  it('runs the MtFixIt review patch in every validation/build patch chain', () => {
+  it('does not re-enable the legacy MtFixIt ChatGPT rewrite during test/build patch chains', () => {
     const pkg = JSON.parse(source('package.json'));
-    expect(pkg.scripts['patch:athena-repair']).toContain('patch-mtfixit-chatgpt-review.mjs');
+    expect(pkg.scripts['patch:athena-repair']).not.toContain('patch-mtfixit-chatgpt-review.mjs');
   });
 });
