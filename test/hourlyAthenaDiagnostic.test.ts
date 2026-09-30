@@ -14,6 +14,21 @@ describe("hourly Athena diagnostic", () => {
     expect(logged).toHaveBeenCalledWith(`Hourly repair notification failed: owner-dm HTTP ${status}`);
     expect(JSON.stringify(logged.mock.calls)).not.toMatch(/private/);
   });
+  it("sends owner-gated MtFixIt approval buttons for validated new repairs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await notifyOwner(
+      { SPMT_API_KEY: "private-test-key" },
+      { message: "validated repair", jobId: "mtfix_12345678" },
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(String(init.body || "{}"));
+    expect(body.buttons).toEqual([
+      { label: "Approve & Deploy", customId: "mtfixit_approve:mtfix_12345678", style: 3 },
+      { label: "Deny / Hold", customId: "mtfixit_deny:mtfix_12345678", style: 4 },
+    ]);
+  });
+
   it("reports network and missing-credential failures without logging secrets", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("private-test-key")));
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
