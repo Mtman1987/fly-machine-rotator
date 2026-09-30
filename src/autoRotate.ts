@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { executeTrackedRotation, FAILURE_RETRY_MS, SUCCESS_INTERVAL_MS } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
+import { capNextRotationDelayForStreamReset } from "./streamSessionReset.js";
 
 type RotationHistoryEntry = { at?: string };
 
@@ -8,6 +9,7 @@ export async function startAutoRotationLoop(argv: string[] = [], env: NodeJS.Pro
   const historyFile = env.ROTATION_HISTORY_FILE ?? "/data/rotation-history.json";
   const runtime = await RotatorRuntimeStateStore.load(getRuntimeStateFile(env));
   let nextDelayMs = await getNextRotationDelayMs(historyFile);
+  nextDelayMs = await capNextRotationDelayForStreamReset(nextDelayMs, env);
 
   for (;;) {
     const nextRunAt = Date.now() + nextDelayMs;
@@ -25,7 +27,9 @@ export async function startAutoRotationLoop(argv: string[] = [], env: NodeJS.Pro
     try {
       const results = await executeTrackedRotation(argv, env, "auto");
       const allSucceeded = results.every((result) => result.success);
-      nextDelayMs = allSucceeded ? SUCCESS_INTERVAL_MS : FAILURE_RETRY_MS;
+      nextDelayMs = allSucceeded
+        ? await capNextRotationDelayForStreamReset(SUCCESS_INTERVAL_MS, env)
+        : FAILURE_RETRY_MS;
       await runtime.setNextRunAt(new Date(Date.now() + nextDelayMs).toISOString());
       console.log(`auto-rotation finished; next run in ${Math.ceil(nextDelayMs / 1000)}s`);
     } catch (error) {
