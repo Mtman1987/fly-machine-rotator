@@ -178,6 +178,19 @@ async function logs(appName, requestedLimit, errorsOnly) {
   return { ok: result.every((row) => row.ok), sampledAt: new Date().toISOString(), errorsOnly: Boolean(errorsOnly), apps: result };
 }
 
+async function coderJobStatus(id) {
+  const jobId = text(id, 120);
+  if (!/^mtfix_[a-zA-Z0-9_-]{8,100}$/.test(jobId)) throw new Error('Invalid coder job id.');
+  const remote = `node scripts/athena-code.mjs status ${jobId}`;
+  const run = await fly(['ssh', 'console', '--app', ROTATOR_APP, '--command', remote], { timeout: 120000 });
+  if (!run.ok) throw new Error(run.stderr || 'Coder job status lookup failed.');
+  const raw = run.stdout.trim();
+  const start = raw.indexOf('{');
+  if (start < 0) throw new Error('Coder job status returned malformed output.');
+  try { return { ok: true, job: JSON.parse(raw.slice(start)) }; }
+  catch { throw new Error('Coder job status returned malformed JSON.'); }
+}
+
 async function repair(payload) {
   const appName = requireApp(payload.appName);
   const description = text(payload.description, 4000);
@@ -201,6 +214,7 @@ export async function execute(payload) {
   if (command === 'signal') return await signalHistory(payload.limit);
   if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
+  if (command === 'coderjob') return await coderJobStatus(payload.id);
   throw new Error('Unsupported command.');
 }
 
