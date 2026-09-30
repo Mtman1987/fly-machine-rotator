@@ -202,13 +202,12 @@ async function streamStart() {
 
   const source = `
 (async()=>{
-const role=String(process.env.HMO_WORKER_ROLE||'').toLowerCase();
-if(role!=='lounge'&&role!=='all'){process.stdout.write(JSON.stringify({skip:true,role}));return}
 const secret=String(process.env.HMO_WORKER_SHARED_SECRET||'').trim();
 if(!secret) throw Error('Lounge worker authentication is not configured');
 const headers={authorization:'Bearer '+secret,accept:'application/json','content-type':'application/json'};
 async function call(path,init={}){const r=await fetch('http://127.0.0.1:3002'+path,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(90000)});const b=await r.json().catch(()=>null);return {r,b}}
 const before=await call('/restream/status');
+if(before.r.status===404){process.stdout.write(JSON.stringify({skip:true,reason:'not-lounge'}));return}
 if(!before.r.ok) throw Error('Restream controller status failed ('+before.r.status+')');
 if(before.b?.automationEnabled!==true) throw Error('Restream automation is not enabled');
 if(before.b?.state==='live'){process.stdout.write(JSON.stringify({ok:true,reason:'Restream is already live',before:before.b,after:before.b}));return}
