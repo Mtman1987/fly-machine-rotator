@@ -109,7 +109,9 @@ jobs:
           COMMAND_NAME: ${{ steps.parse.outputs.command }}
         run: |
           set +e
-          if [ "$COMMAND_NAME" = "signal" ]; then
+          if [ "$COMMAND_NAME" = "spmtbrowser" ]; then
+            node scripts/github-control-spmt-browser.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          elif [ "$COMMAND_NAME" = "signal" ]; then
             node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "inventory" ]; then
             node scripts/github-control-inventory.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
