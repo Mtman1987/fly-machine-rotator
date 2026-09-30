@@ -113,7 +113,7 @@ export async function reconcileInterruptedCodexJobs(env: NodeJS.ProcessEnv): Pro
       job.status = "failed";
       job.error = "Coder job was interrupted by a rotator restart before completion. Safe to retry.";
       job.updatedAt = new Date().toISOString();
-      await saveJob(env, job);
+      await writeFile(file, JSON.stringify(job, null, 2));
       reconciled += 1;
     } catch {
       // Ignore malformed historical job files; normal job reads already skip them.
