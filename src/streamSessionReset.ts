@@ -156,7 +156,7 @@ export async function handleScheduledStreamSessionReset(
   env: NodeJS.ProcessEnv = process.env,
   now = Date.now(),
 ): Promise<AppRotationResult | null> {
-  if (env.STREAM_SESSION_RESET_ENABLED === "false" || trigger !== "auto") return null;
+  if (env.STREAM_SESSION_RESET_ENABLED === "false" || trigger !== "auto" || !apiKey(env)) return null;
   if (!results.length || results.some(result => !result.success)) return null;
 
   const state = await readStreamSessionResetState(env);
