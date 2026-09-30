@@ -75,7 +75,7 @@ describe("controlled Twitch session reset", () => {
 
     let twitchCalls = 0;
     let resetPosts = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/internal/twitch/live-status")) {
         twitchCalls += 1;
@@ -133,7 +133,7 @@ describe("controlled Twitch session reset", () => {
     }, env);
 
     let resetPosts = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/internal/twitch/live-status")) {
         return new Response(JSON.stringify({
