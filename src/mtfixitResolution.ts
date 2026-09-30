@@ -198,7 +198,7 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
   await saveResolution(env, state); if (known) void deployInBackground(job, env, dashboardPort, state); return state;
 }
 
-async function applyAction(jobId: string, action: ResolutionAction, env: NodeJS.ProcessEnv, dashboardPort: number) {
+export async function applyMtFixItResolutionAction(jobId: string, action: ResolutionAction, env: NodeJS.ProcessEnv, dashboardPort: number) {
   const job = await readJob(env, dashboardPort, jobId); if (action === "resolve") return resolveJob(job, env, dashboardPort);
   const state = await resolveJob(job, env, dashboardPort);
   if (action === "deny") { const denied: MtFixItResolutionState = { ...state, status: "denied", deniedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), message: "mtman denied automatic deployment. The repair is waiting for further instructions." }; await saveResolution(env, denied); return denied; }
@@ -218,6 +218,6 @@ export async function handleMtFixItResolutionRequest(request: IncomingMessage, r
     if (method !== "POST") { sendJson(response, 405, { error: "Method not allowed" }); return true; }
     const body = await readBody(request); const action = String(body?.action || "resolve").toLowerCase() as ResolutionAction;
     if (!["resolve", "approve", "deny"].includes(action)) { sendJson(response, 400, { error: "Invalid resolution action" }); return true; }
-    const state = await applyAction(jobId, action, env, dashboardPort); sendJson(response, 200, { ok: true, state }); return true;
+    const state = await applyMtFixItResolutionAction(jobId, action, env, dashboardPort); sendJson(response, 200, { ok: true, state }); return true;
   } catch (error) { sendJson(response, 409, { error: safeText(error instanceof Error ? error.message : error, 1200) }); return true; }
 }
