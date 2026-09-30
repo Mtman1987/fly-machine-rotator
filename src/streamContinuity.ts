@@ -162,3 +162,46 @@ export async function appendStreamContinuityIncident(
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(rows.slice(-2000), null, 2), "utf8");
 }
+
+
+export async function startStreamContinuityWatchLoop(env: NodeJS.ProcessEnv = process.env): Promise<never> {
+  const intervalMs = Number(env.STREAM_CONTINUITY_WATCH_INTERVAL_MS || 30_000);
+  const dropGraceMs = Number(env.STREAM_CONTINUITY_DROP_GRACE_MS || 45_000);
+  let lastConfirmedLive: boolean | undefined;
+  let offlineSince: number | undefined;
+  let notified = false;
+
+  for (;;) {
+    const state = await probeStreamLiveState(env);
+    if (state.ok) {
+      if (state.isLive) {
+        if (lastConfirmedLive === false && notified) {
+          await recordStreamContinuityEvent({ kind: "watch-recovered", detail: "Twitch live state recovered outside rotation." }, env);
+          await notifyStreamContinuityOwner(`Twitch stream continuity recovered for **${state.login}** after an offline period.`, env);
+        }
+        lastConfirmedLive = true;
+        offlineSince = undefined;
+        notified = false;
+      } else {
+        if (lastConfirmedLive === true && offlineSince === undefined) offlineSince = Date.now();
+        if (offlineSince !== undefined && !notified && Date.now() - offlineSince >= dropGraceMs) {
+          lastConfirmedLive = false;
+          notified = true;
+          await recordStreamContinuityEvent({ kind: "watch-drop", detail: `Confirmed offline for at least ${dropGraceMs}ms outside a rotation.` }, env);
+          await appendStreamContinuityIncident(
+            String(env.STREAM_CONTINUITY_DEFAULT_APP || "streamweaver-new"),
+            `Twitch stream ${state.login} dropped outside a planned rotation and remained offline past the continuity grace window.`,
+            env,
+          );
+          await notifyStreamContinuityOwner(
+            `⚠️ Twitch stream **${state.login}** went offline outside a planned rotation and has not recovered within ${Math.round(dropGraceMs / 1000)} seconds. No automatic restart was attempted because this drop is not causally tied to maintenance.`,
+            env,
+          );
+        }
+      }
+    } else {
+      await recordStreamContinuityEvent({ kind: "probe-error", detail: state.error || "Continuity watch probe failed." }, env);
+    }
+    await sleep(intervalMs);
+  }
+}
