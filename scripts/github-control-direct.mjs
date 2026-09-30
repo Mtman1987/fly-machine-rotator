@@ -192,7 +192,33 @@ async function coderJobStatus(id) {
 }
 
 async function streamStart() {
-  const remote = `node -e "import('./dist/streamContinuity.js').then(async m=>{const r=await m.startStreamIfConfirmedOffline(process.env);process.stdout.write(JSON.stringify(r))}).catch(e=>{console.error(e?.message||e);process.exit(1)})"`;
+  const source = `
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const key=String(process.env.SPMT_API_KEY||process.env.SPMT_PLATFORM_API_KEY||'').trim();
+if(!key) throw Error('SPMT API key is not configured');
+const headers={authorization:'Bearer '+key,accept:'application/json'};
+const twitchUrl='https://discord-stream-hub-new.fly.dev/api/internal/twitch/live-status?login=spacemountainlive';
+const hmoUrl='https://hearmeout-main.fly.dev/api/internal/restream-control';
+async function json(url,init={}){const r=await fetch(url,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(15000)});const b=await r.json().catch(()=>null);return {r,b}}
+let live=await json(twitchUrl);
+if(!live.r.ok||!live.b?.ok||typeof live.b?.isLive!=='boolean') throw Error('Twitch live state could not be verified');
+if(live.b.isLive){process.stdout.write(JSON.stringify({ok:true,reason:'Twitch is already live',twitch:live.b}));process.exit(0)}
+const status=await json(hmoUrl);
+if(!status.r.ok) throw Error('Restream controller status failed ('+status.r.status+')');
+if(status.b?.automationEnabled!==true) throw Error('Restream automation is not enabled');
+if(status.b?.state!=='offline') throw Error('Restream is not in a recognized offline state (state='+String(status.b?.state||'unknown')+')');
+const started=await json(hmoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'start'})});
+if(!started.r.ok||started.b?.ok===false) throw Error(String(started.b?.error||('Restream start failed ('+started.r.status+')')));
+const deadline=Date.now()+90000;
+while(Date.now()<deadline){
+  await sleep(5000);
+  live=await json(twitchUrl);
+  if(live.r.ok&&live.b?.ok&&live.b?.isLive===true){process.stdout.write(JSON.stringify({ok:true,reason:'Twitch is live',twitch:live.b,controller:started.b}));process.exit(0)}
+}
+throw Error('Restream started but Twitch did not become live within 90 seconds');
+`;
+  const encoded = Buffer.from(source, 'utf8').toString('base64');
+  const remote = `node -e "eval(Buffer.from(process.argv[1],'base64').toString('utf8'))" '${encoded}'`;
   const run = await fly(['ssh', 'console', '--app', ROTATOR_APP, '--command', remote], { timeout: 180000 });
   if (!run.ok) throw new Error(run.stderr || 'Stream start command failed.');
   const raw = run.stdout.trim();
