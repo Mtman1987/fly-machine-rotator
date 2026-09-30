@@ -2,9 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
-import { approveChatGptHandoff, readChatGptHandoff, writeChatGptHandoff } from "./chatgptHandoff.js";
 import { classifyIncident } from "./incidentClassifier.js";
-import { loadEcosystemOperatorContext } from "./ecosystemContext.js";
+import { applyMtFixItResolutionAction } from "./mtfixitResolution.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_HISTORY = "/data/error-history.json";
@@ -38,7 +37,7 @@ export type HourlyRepairCycle = {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "no-actionable-incident" | "qwen-reviewed" | "awaiting-owner-approval" | "failed";
+  status: "running" | "no-actionable-incident" | "awaiting-owner-approval" | "deploying-known-fix" | "failed";
   appName?: string;
   fingerprint?: string;
   incidentRecordedAt?: string;
@@ -117,16 +116,16 @@ async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> 
     .find((event) => classifyIncident({ ...event, context: event.context || [] }).autoFixEligible && !attempted.has(incidentKey(event))) || null;
 }
 
-export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; handoffId?: string; fileContent?: string }) {
+export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; jobId?: string; fileContent?: string }) {
   if (notifyMode(env) === "log-only") return;
   const key = String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim();
   if (!key) {
     console.error("Hourly repair notification failed: SPMT API key is not configured");
     return;
   }
-  const buttons = input.handoffId ? [
-    { label: "Approve ChatGPT Repair", customId: `chatgpt_approve:${input.handoffId}`, style: 3 },
-    { label: "Decline / Hold", customId: `chatgpt_deny:${input.handoffId}`, style: 4 },
+  const buttons = input.jobId ? [
+    { label: "Approve & Deploy", customId: `mtfixit_approve:${input.jobId}`, style: 3 },
+    { label: "Deny / Hold", customId: `mtfixit_deny:${input.jobId}`, style: 4 },
   ] : undefined;
   try {
     const response = await fetch(String(env.DSH_BASE_URL || "https://discord-stream-hub-new.fly.dev").replace(/\/$/, "") + "/api/internal/owner-dm", {
@@ -147,28 +146,6 @@ export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: stri
     // Never log request headers, message contents, or a provider response body.
     console.error("Hourly repair notification failed: owner-dm network request did not complete");
   }
-}
-
-async function ensureFallbackHandoff(env: NodeJS.ProcessEnv, event: ErrorEvent, job: CoderJob | null, failure: string) {
-  const jobId = job?.id || `hourly_${Date.now()}_${event.fingerprint.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24)}`;
-  const id = `chatgpt-${jobId}`;
-  const existing = await readChatGptHandoff(env, id);
-  if (existing) return existing;
-  const operatorContext = await loadEcosystemOperatorContext(env);
-  return writeChatGptHandoff(env, {
-    jobId,
-    appName: event.appName,
-    repoId: job?.repoId || event.appName,
-    repoLabel: job?.repoId || event.appName,
-    repoUrl: "",
-    description: `${event.message}\n\n${(event.context || []).slice(-12).join("\n")}`.slice(0, 4000),
-    userContext: { source: "hourly-athena-diagnostic", fingerprint: event.fingerprint, recordedAt: event.recordedAt, suggestion: event.suggestion || "" },
-    qwenFailure: failure,
-    baselineChecks: (job?.baselineChecks || job?.checks || []).map((check) => ({ command: check.command, ok: check.ok, output: String(check.output || "") })),
-    operatorContext,
-    repositoryContext: "Fresh ChatGPT worker must fetch current main and AGENTS.md through the connected GitHub tools before changing code.",
-    validationCommands: (job?.checks || []).map((check) => check.command),
-  });
 }
 
 export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process.env, now = new Date()): Promise<HourlyRepairCycle> {
@@ -198,37 +175,34 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
     const job = unwrapJob(submitted.payload);
     cycle.jobId = job?.id;
 
-    const qwenSucceeded = Boolean(job && job.status === "completed" && (job.changedFiles || []).length && (job.checks || []).length && (job.checks || []).every((check) => check.ok));
-    if (qwenSucceeded && job) {
-      const published = await coderCli(["publish", job.id], env);
-      const publishedJob = unwrapJob(published.payload) || job;
-      const pullRequest = published.payload?.pullRequest || publishedJob.pullRequest;
-      if (!published.ok || !pullRequest?.number) throw new Error(`Validated Qwen repair could not be published as a draft PR: ${published.error || "no pull request returned"}`);
-      cycle.pullRequest = pullRequest;
-      const handoff = await ensureFallbackHandoff(env, event, publishedJob, "Qwen produced a validated draft repair. ChatGPT must review its diff, regression coverage, deployment, and live behavior before completion.");
-      const approved = await approveChatGptHandoff(env, handoff.id, "hourly-athena-standing-policy");
-      cycle.handoffId = approved.id;
-      cycle.status = "qwen-reviewed";
-      cycle.summary = `Qwen produced a validated draft PR #${pullRequest.number}; queued for top-of-hour ChatGPT review.`;
+    const repairValidated = Boolean(job && job.status === "completed" && (job.changedFiles || []).length && (job.checks || []).length && (job.checks || []).every((check) => check.ok));
+    if (repairValidated && job) {
+      const dashboardPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT || Number(env.PORT || 8080) + 2);
+      const resolution = await applyMtFixItResolutionAction(job.id, "resolve", env, dashboardPort);
+      cycle.status = resolution.status === "deploying" ? "deploying-known-fix" : "awaiting-owner-approval";
+      cycle.summary = resolution.status === "deploying"
+        ? `Athena matched a previously approved repair for ${event.appName}; deployment is running automatically.`
+        : `Athena found and validated a repair for ${event.appName}; owner approval is required before merge/deployment.`;
       cycle.finishedAt = new Date().toISOString();
       await saveCycle(env, cycle);
-      await notifyOwner(env, { message: `Athena hourly diagnostic prepared validated draft PR #${pullRequest.number} for ${event.appName}. ChatGPT will review it at the top of the hour.`, fileContent: JSON.stringify(cycle, null, 2) });
+      await notifyOwner(env, {
+        message: resolution.status === "deploying"
+          ? `Athena found an actionable ${event.appName} incident and regenerated an exact previously approved fix. Job **${job.id}** is deploying automatically and will verify GitHub Actions before being recorded as successful.`
+          : `Athena found an actionable ${event.appName} incident and produced a validated repair. Review the attached evidence, then approve to merge/deploy or deny to hold it. Job: **${job.id}**`,
+        ...(resolution.status === "awaiting_approval" ? { jobId: job.id } : {}),
+        fileContent: JSON.stringify({ cycle, resolution, job: { id: job.id, appName: job.appName, repoId: job.repoId, summary: job.summary, changedFiles: job.changedFiles, checks: job.checks } }, null, 2),
+      });
       return cycle;
     }
 
-    const failure = safe(job?.error || submitted.error || job?.summary || "Qwen did not produce a validated repair.", 6000);
-    const marker = failure.match(/awaiting-chatgpt:(chatgpt-[A-Za-z0-9_-]{8,120})/);
-    const handoff = marker ? await readChatGptHandoff(env, marker[1]) : await ensureFallbackHandoff(env, event, job, failure);
-    if (!handoff) throw new Error("ChatGPT fallback handoff could not be loaded.");
-    cycle.handoffId = handoff.id;
-    cycle.status = "awaiting-owner-approval";
-    cycle.summary = `Qwen did not produce a validated repair; ${handoff.id} awaits owner approval.`;
+    const failure = safe(job?.error || submitted.error || job?.summary || "The autonomous coder did not produce a validated repair.", 6000);
+    cycle.status = "failed";
+    cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review.`;
     cycle.finishedAt = new Date().toISOString();
     await saveCycle(env, cycle);
     await notifyOwner(env, {
-      message: `Athena's hourly diagnostic found an actionable ${event.appName} incident, but local Qwen could not produce a validated repair. Approve once to let the next hourly ChatGPT Business pass take over, or decline to hold it.`,
-      handoffId: handoff.id,
-      fileContent: JSON.stringify({ cycle, error: event.message, context: event.context || [], qwenFailure: failure }, null, 2),
+      message: `Athena found an actionable ${event.appName} incident but could not produce a validated repair automatically. No deployment was attempted. Job: **${job?.id || "none"}**`,
+      fileContent: JSON.stringify({ cycle, error: event.message, context: event.context || [], coderFailure: failure }, null, 2),
     });
     return cycle;
   } catch (error) {
