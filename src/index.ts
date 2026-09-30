@@ -9,6 +9,7 @@ import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
 import { reclaimCodexStorage } from "./publicCodexFixer.js";
 import { runCompanionDiagnosticsLoop } from "./companionDiagnostics.js";
 import { startHourlyAthenaDiagnosticLoop } from "./hourlyAthenaDiagnostic.js";
+import { startStreamContinuityWatchLoop } from "./streamContinuity.js";
 
 async function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const stackEnv = withCodexWorkerAuth(env);
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
       logMonitor,
       runCompanionDiagnosticsLoop(process.env),
       startHourlyAthenaDiagnosticLoop(process.env),
+      startStreamContinuityWatchLoop(process.env),
     ]);
     return;
   }
