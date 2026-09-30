@@ -191,6 +191,37 @@ async function coderJobStatus(id) {
   catch { throw new Error('Coder job status returned malformed JSON.'); }
 }
 
+async function streamStatus() {
+  const list = await fly(['machines', 'list', '--app', 'hmo-dj-worker', '--json']);
+  if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
+  let machines = [];
+  try { machines = JSON.parse(list.stdout || '[]'); }
+  catch { throw new Error('HearMeOut worker machine list returned malformed JSON.'); }
+  const active = Array.isArray(machines) ? machines.filter((m) => ['started', 'starting'].includes(String(m?.state))) : [];
+  const source = `
+(async()=>{
+const secret=String(process.env.HMO_WORKER_SHARED_SECRET||'').trim();
+if(!secret) throw Error('Worker authentication is not configured');
+const r=await fetch('http://127.0.0.1:3002/restream/status',{headers:{authorization:'Bearer '+secret,accept:'application/json'},signal:AbortSignal.timeout(15000)});
+const b=await r.json().catch(()=>null);
+process.stdout.write(JSON.stringify({status:r.status,body:b}));
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
+`;
+  const encoded = Buffer.from(source, 'utf8').toString('base64');
+  const rows = [];
+  for (const machine of active) {
+    const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+    const run = await fly(['ssh', 'console', '--app', 'hmo-dj-worker', '--machine', String(machine.id), '--command', command, '--quiet'], { timeout: 60000 });
+    const raw = String(run.stdout || '').trim();
+    let payload = null;
+    const jsonStart = raw.indexOf('{');
+    if (jsonStart >= 0) { try { payload = JSON.parse(raw.slice(jsonStart)); } catch {} }
+    rows.push({ machineId: machine.id, runOk: run.ok, ...(payload || {}), error: run.ok ? undefined : run.stderr });
+  }
+  const lounge = rows.find((row) => row.status && row.status !== 404);
+  return { ok: Boolean(lounge), lounge: lounge || null, machines: rows.map(r => ({ machineId:r.machineId, status:r.status ?? null })) };
+}
+
 async function streamStart() {
   const list = await fly(['machines', 'list', '--app', 'hmo-dj-worker', '--json']);
   if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
@@ -259,6 +290,7 @@ export async function execute(payload) {
   if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
   if (command === 'coderjob') return await coderJobStatus(payload.id);
+  if (command === 'streamstatus') return await streamStatus();
   if (command === 'streamstart') return await streamStart();
   throw new Error('Unsupported command.');
 }
