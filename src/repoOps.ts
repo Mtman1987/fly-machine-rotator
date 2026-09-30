@@ -35,7 +35,11 @@ export async function ensureRepoReady(config: RepoConfig, env: NodeJS.ProcessEnv
   return repoPath;
 }
 
-export async function ensureRepoDependencies(repoPath: string, installCommand: string | undefined): Promise<void> {
+export async function ensureRepoDependencies(
+  repoPath: string,
+  installCommand: string | undefined,
+  options: { timeoutMs?: number; npmCacheDir?: string } = {},
+): Promise<void> {
   if (!installCommand) return;
   const packageJsonPath = join(repoPath, "package.json");
   const lockPath = await firstExisting([
@@ -60,7 +64,15 @@ export async function ensureRepoDependencies(repoPath: string, installCommand: s
     // Install below.
   }
 
-  await runShell(installCommand, repoPath, 20 * 60 * 1000);
+  const npmCacheDir = options.npmCacheDir || process.env.CODEX_FIXER_NPM_CACHE_DIR || "/tmp/athena-coder/npm-cache";
+  await mkdir(npmCacheDir, { recursive: true });
+  await runShell(
+    installCommand,
+    repoPath,
+    options.timeoutMs ?? 20 * 60 * 1000,
+    true,
+    { npm_config_cache: npmCacheDir },
+  );
   await writeFile(markerPath, JSON.stringify(current, null, 2));
 }
 
@@ -282,10 +294,22 @@ async function runShell(
   const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-lc", command];
 
   return await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd, env: { ...process.env, ...envOverrides } });
+    const detached = process.platform !== "win32";
+    const child = spawn(executable, args, {
+      cwd,
+      env: { ...process.env, ...envOverrides },
+      detached,
+    });
     const chunks: Buffer[] = [];
+    let timedOut = false;
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      timedOut = true;
+      try {
+        if (detached && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
@@ -298,6 +322,10 @@ async function runShell(
       clearTimeout(timer);
       const output = redactCommandOutput(Buffer.concat(chunks).toString("utf8"), secretToRedact);
       const safeCommand = redactCommandOutput(command, secretToRedact);
+      if (timedOut) {
+        reject(new Error(`Command timed out after ${timeoutMs}ms: ${safeCommand}\n${output}`));
+        return;
+      }
       const exitCode = code ?? 1;
       if (rejectOnError && exitCode !== 0) {
         reject(new Error(`Command failed (${exitCode}): ${safeCommand}\n${output}`));
