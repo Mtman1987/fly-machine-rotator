@@ -37,7 +37,7 @@ async function fly(args, timeout = 120000) {
 function parsePayload(encoded) {
   const raw = Buffer.from(String(encoded || ''), 'base64').toString('utf8');
   const payload = JSON.parse(raw);
-  if (payload?.command !== 'spmtbrowser') throw new Error('Unsupported command.');
+  if (!['spmtbrowser','spmtstart'].includes(payload?.command)) throw new Error('Unsupported command.');
   return payload;
 }
 
@@ -56,6 +56,37 @@ async function ownerId() {
   const id = String(run.stdout || '').trim().split(/\r?\n/).pop()?.trim();
   if (!id) throw new Error('Owner profile lookup returned no id.');
   return id;
+}
+
+async function startRestream(uid) {
+  const source = `
+(async()=>{
+const uid=Buffer.from(process.argv[1],'base64').toString('utf8');
+const secret=String(process.env.CLOUD_XBOX_WORKER_SECRET||process.env.JWT_SECRET||'').trim();
+if(!secret) throw Error('Cloud browser worker secret is not configured');
+const headers={'x-spmt-worker-secret':secret,'x-spmt-user-id':uid,'content-type':'application/json'};
+const r=await fetch('http://127.0.0.1:3003/v1/restream/start',{method:'POST',headers,body:'{}',signal:AbortSignal.timeout(120000)});
+const b=await r.json().catch(()=>null);
+process.stdout.write(JSON.stringify({status:r.status,body:b}));
+if(!r.ok) process.exit(2);
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
+`;
+  const sourceEncoded = Buffer.from(source, 'utf8').toString('base64');
+  const uidEncoded = Buffer.from(uid, 'utf8').toString('base64');
+  const command = `node -e "eval(Buffer.from('${sourceEncoded}','base64').toString('utf8'))" '${uidEncoded}'`;
+  const run = await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',command,'--quiet'], 150000);
+  const raw = String(run.stdout || '').trim();
+  const start = raw.indexOf('{');
+  if (start >= 0) {
+    try {
+      const result = JSON.parse(raw.slice(start));
+      if (run.ok && result?.status >= 200 && result?.status < 300) return { ok:true, ...result.body };
+      throw new Error(String(result?.body?.error || ('Restream start failed (' + result?.status + ')')));
+    } catch (error) {
+      if (error instanceof Error && /Restream start failed|requires login|unrecognized|Studio/.test(error.message)) throw error;
+    }
+  }
+  throw new Error(run.stderr || 'Persistent Restream start failed.');
 }
 
 async function inspect(uid) {
@@ -106,9 +137,9 @@ process.stdout.write(JSON.stringify({
 
 async function main() {
   try {
-    parsePayload(process.argv[2]);
+    const payload = parsePayload(process.argv[2]);
     const uid = await ownerId();
-    const result = await inspect(uid);
+    const result = payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
     process.stdout.write(JSON.stringify(result, null, 2));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok:false, error:redact(error instanceof Error ? error.message : error) }, null, 2));
