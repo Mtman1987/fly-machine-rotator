@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export type StreamLiveState = {
