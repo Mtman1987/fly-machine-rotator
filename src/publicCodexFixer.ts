@@ -212,14 +212,14 @@ async function runCodexWorkspaceCoder(
   const thread = codex.startThread({
     workingDirectory: workspace,
     model: String(env.CODEX_FIXER_MODEL || "gpt-5.6-sol"),
-    modelReasoningEffort: "high",
+    modelReasoningEffort: "medium",
     sandboxMode: "workspace-write",
     networkAccessEnabled: false,
     webSearchMode: "disabled",
     approvalPolicy: "never",
   });
   const prompt = `${STELLA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${description.slice(0, 4000)}\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(300000) });
+  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(10 * 60_000) });
   return {
     threadId: thread.id || undefined,
     summary: redact(turn.finalResponse || "Codex completed without a final response."),
