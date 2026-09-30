@@ -77,16 +77,37 @@ if(!r.ok) process.exit(2);
   const run = await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',command,'--quiet'], 150000);
   const raw = String(run.stdout || '').trim();
   const start = raw.indexOf('{');
+  let result = null;
   if (start >= 0) {
-    try {
-      const result = JSON.parse(raw.slice(start));
-      if (run.ok && result?.status >= 200 && result?.status < 300) return { ok:true, ...result.body };
-      throw new Error(String(result?.body?.error || ('Restream start failed (' + result?.status + ')')));
-    } catch (error) {
-      if (error instanceof Error && /Restream start failed|requires login|unrecognized|Studio/.test(error.message)) throw error;
-    }
+    try { result = JSON.parse(raw.slice(start)); } catch {}
   }
-  throw new Error(run.stderr || 'Persistent Restream start failed.');
+  if (!run.ok || !result || result?.status < 200 || result?.status >= 300) {
+    throw new Error(String(result?.body?.error || run.stderr || ('Restream start failed (' + result?.status + ')')));
+  }
+
+  const verifySource = `
+(async()=>{
+const key=String(process.env.SPMT_API_KEY||process.env.SPMT_PLATFORM_API_KEY||'').trim();
+if(!key) throw Error('SPMT service key is unavailable for Twitch verification');
+const r=await fetch('https://discord-stream-hub-new.fly.dev/api/internal/twitch/live-status?login=spacemountainlive',{headers:{authorization:'Bearer '+key,accept:'application/json'},signal:AbortSignal.timeout(12000)});
+const b=await r.json().catch(()=>null);
+process.stdout.write(JSON.stringify({status:r.status,body:b}));
+if(!r.ok||!b?.ok||typeof b?.isLive!=='boolean') process.exit(2);
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
+`;
+  const verifyEncoded = Buffer.from(verifySource, 'utf8').toString('base64');
+  const verifyCommand = `node -e "eval(Buffer.from('${verifyEncoded}','base64').toString('utf8'))"`;
+  const verified = await fly(['ssh','console','--app',APP,'--process-group','app','--command',verifyCommand,'--quiet'], 60000);
+  const verifyRaw = String(verified.stdout || '').trim();
+  const verifyStart = verifyRaw.indexOf('{');
+  let twitch = null;
+  if (verifyStart >= 0) {
+    try { twitch = JSON.parse(verifyRaw.slice(verifyStart)); } catch {}
+  }
+  if (!verified.ok || !twitch?.body?.ok || typeof twitch?.body?.isLive !== 'boolean') {
+    throw new Error(verified.stderr || 'Twitch verification failed.');
+  }
+  return { ok:true, ...result.body, twitch:twitch.body };
 }
 
 async function inspect(uid) {
