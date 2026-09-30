@@ -100,6 +100,28 @@ export async function listCodexJobs(env: NodeJS.ProcessEnv, limit = 20): Promise
   }
 }
 
+export async function reconcileInterruptedCodexJobs(env: NodeJS.ProcessEnv): Promise<number> {
+  const dir = join(rootDir(env), "jobs");
+  const names = await readdir(dir).catch(() => []);
+  let reconciled = 0;
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const file = join(dir, name);
+      const job = JSON.parse(await readFile(file, "utf8")) as PublicCodexJob;
+      if (job.status !== "queued" && job.status !== "running") continue;
+      job.status = "failed";
+      job.error = "Coder job was interrupted by a rotator restart before completion. Safe to retry.";
+      job.updatedAt = new Date().toISOString();
+      await writeFile(file, JSON.stringify(job, null, 2));
+      reconciled += 1;
+    } catch {
+      // Ignore malformed historical job files; normal job reads already skip them.
+    }
+  }
+  return reconciled;
+}
+
 export function inferRepo(input: CreateJobInput): RepoConfig {
   const explicit = getRepoConfigForApp(String(input.appName || "").trim());
   if (explicit) return explicit;

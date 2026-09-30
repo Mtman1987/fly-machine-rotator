@@ -6,13 +6,15 @@ import { startDshMtFixItOuterGateway } from "./dshMtFixitGateway.js";
 import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
-import { reclaimCodexStorage } from "./publicCodexFixer.js";
+import { reclaimCodexStorage, reconcileInterruptedCodexJobs } from "./publicCodexFixer.js";
 import { runCompanionDiagnosticsLoop } from "./companionDiagnostics.js";
 import { startHourlyAthenaDiagnosticLoop } from "./hourlyAthenaDiagnostic.js";
 import { startStreamContinuityWatchLoop } from "./streamContinuity.js";
 
 async function startWebStack(env: NodeJS.ProcessEnv = process.env) {
   const stackEnv = withCodexWorkerAuth(env);
+  const interruptedJobs = await reconcileInterruptedCodexJobs(stackEnv);
+  if (interruptedJobs > 0) console.warn(`Reconciled ${interruptedJobs} interrupted Stella Coder job(s) after rotator restart.`);
   await reclaimCodexStorage(stackEnv);
   const publicPort = Number(stackEnv.PORT ?? stackEnv.ROTATOR_DASHBOARD_PORT ?? 8080);
   const athenaPort = Number(stackEnv.ROTATOR_ATHENA_GATEWAY_PORT ?? publicPort + 1);
