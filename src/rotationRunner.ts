@@ -24,7 +24,7 @@ export async function runRotationOnce(
     maxRetries: Number(env.API_MAX_RETRIES ?? 8)
   });
   const rotator = new MachineRotator(fly, config.rotation);
-  const continuityEnabled = env.STREAM_CONTINUITY_ENABLED !== "false";
+  const continuityEnabled = env.STREAM_CONTINUITY_ENABLED !== "false" && Boolean(String(env.SPMT_API_KEY || env.SPMT_PLATFORM_API_KEY || "").trim());
 
   // The owner retired this expensive worker. Monitoring may still include it,
   // but a scheduled/manual rotation must never start its stopped Machine.
