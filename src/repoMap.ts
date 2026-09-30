@@ -57,7 +57,7 @@ const REPOS: RepoConfig[] = [
     cloneDirName: "hearmeout-main",
     appNames: ["hearmeout-main", "hmo-dj-worker"],
     checkCommands: ["npm run typecheck"],
-    installCommand: "npm install --include=dev --no-audit --no-fund",
+    installCommand: "npm ci --include=dev --no-audit --no-fund --prefer-offline",
     branchPrefix: "rotator-fix/hearmeout"
   },
   {
