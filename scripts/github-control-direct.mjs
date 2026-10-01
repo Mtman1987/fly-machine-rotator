@@ -286,19 +286,31 @@ async function spotlightRestart() {
   const spotlight = Array.isArray(machines)
     ? machines.find((machine) => processGroup(machine) === 'spotlight')
     : null;
-  if (!spotlight?.id) {
-    const visible = Array.isArray(machines)
-      ? machines.map((machine) => ({ id: machine?.id ?? null, processGroup: processGroup(machine) || null, state: machine?.state ?? null }))
-      : [];
-    throw new Error('Could not identify the Spotlight process-group Machine: ' + redact(JSON.stringify(visible)));
-  }
+  if (!spotlight?.id) throw new Error('Could not identify the Spotlight process-group Machine.');
 
   const before = { id: spotlight.id, state: spotlight.state ?? null, processGroup: 'spotlight' };
-  const restart = await fly(['machine', 'restart', String(spotlight.id), '--app', app], { timeout: 180000 });
-  if (!restart.ok) throw new Error(restart.stderr || 'Spotlight Machine restart failed.');
+
+  const stop = await fly(['machine', 'stop', String(spotlight.id), '--app', app], { timeout: 180000 });
+  if (!stop.ok && !/already stopped/i.test(stop.stderr || '')) throw new Error(stop.stderr || 'Spotlight Machine stop failed.');
+
+  let stopped = false;
+  for (let attempt = 0; attempt < 18; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const check = await fly(['machines', 'list', '--app', app, '--json']);
+    if (!check.ok) continue;
+    try {
+      const current = JSON.parse(check.stdout || '[]');
+      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(spotlight.id)) : null;
+      if (machine && String(machine.state) === 'stopped') { stopped = true; break; }
+    } catch {}
+  }
+  if (!stopped) throw new Error('Spotlight Machine did not reach stopped state.');
+
+  const startResult = await fly(['machine', 'start', String(spotlight.id), '--app', app], { timeout: 180000 });
+  if (!startResult.ok) throw new Error(startResult.stderr || 'Spotlight Machine start failed.');
 
   let after = null;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5000));
     const check = await fly(['machines', 'list', '--app', app, '--json']);
     if (!check.ok) continue;
@@ -311,7 +323,9 @@ async function spotlightRestart() {
       }
     } catch {}
   }
-  if (!after || after.state !== 'started') throw new Error('Spotlight Machine did not return to started state after restart.');
+  if (!after || after.state !== 'started') throw new Error('Spotlight Machine did not return to started state.');
+
+  const health = await fly(['curl', '--app', app, '--machine', String(spotlight.id), 'http://127.0.0.1:3002/health'], { timeout: 60000 });
   return {
     ok: true,
     appName: app,
@@ -319,6 +333,8 @@ async function spotlightRestart() {
     preservedProcessGroups: ['lounge', 'dj'],
     before,
     after,
+    healthOk: health.ok,
+    health: health.ok ? redact(health.stdout) : redact(health.stderr),
   };
 }
 
