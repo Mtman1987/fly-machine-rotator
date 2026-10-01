@@ -267,6 +267,45 @@ process.stdout.write(JSON.stringify({ok:true,reason:'Restream is live',before:be
 }
 
 
+
+async function spotlightStatus() {
+  const app = 'hmo-dj-worker';
+  const list = await fly(['machines', 'list', '--app', app, '--json']);
+  if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
+  let machines = [];
+  try { machines = JSON.parse(list.stdout || '[]'); }
+  catch { throw new Error('HearMeOut worker machine list returned malformed JSON.'); }
+  const processGroup = (machine) => String(
+    machine?.process_group ??
+    machine?.config?.metadata?.fly_process_group ??
+    machine?.config?.metadata?.['fly_process_group'] ??
+    machine?.config?.env?.FLY_PROCESS_GROUP ??
+    ''
+  ).toLowerCase();
+  const spotlight = Array.isArray(machines) ? machines.find((m) => processGroup(m) === 'spotlight') : null;
+  if (!spotlight?.id) throw new Error('Could not identify the Spotlight process-group Machine.');
+
+  const source = `
+(async()=>{
+const secret=String(process.env.HMO_WORKER_SHARED_SECRET||'').trim();
+const headers=secret?{authorization:'Bearer '+secret,accept:'application/json'}:{accept:'application/json'};
+const r=await fetch('http://127.0.0.1:3002/spotlight/status',{headers,signal:AbortSignal.timeout(15000)});
+const b=await r.json().catch(()=>null);
+process.stdout.write(JSON.stringify({status:r.status,body:b}));
+})().catch(e=>{console.error(e?.message||e);process.exit(1)});
+`;
+  const encoded = Buffer.from(source, 'utf8').toString('base64');
+  const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+  const run = await fly(['ssh','console','--app',app,'--machine',String(spotlight.id),'--command',command,'--quiet'],{timeout:60000});
+  if (!run.ok) throw new Error(run.stderr || 'Spotlight status probe failed.');
+  const raw=String(run.stdout||'').trim();
+  const start=raw.indexOf('{');
+  if(start<0) throw new Error('Spotlight status probe returned malformed output.');
+  let payload;
+  try{payload=JSON.parse(raw.slice(start));}catch{throw new Error('Spotlight status probe returned malformed JSON.');}
+  return {ok:true,appName:app,machineId:spotlight.id,machineState:spotlight.state??null,spotlight:payload.body??null,httpStatus:payload.status??null};
+}
+
 async function spotlightRestart() {
   const app = 'hmo-dj-worker';
   const list = await fly(['machines', 'list', '--app', app, '--json']);
@@ -364,6 +403,7 @@ export async function execute(payload) {
   if (command === 'coderjob') return await coderJobStatus(payload.id);
   if (command === 'streamstatus') return await streamStatus();
   if (command === 'streamstart') return await streamStart();
+  if (command === 'spotlightstatus') return await spotlightStatus();
   if (command === 'spotlightrestart') return await spotlightRestart();
   throw new Error('Unsupported command.');
 }
