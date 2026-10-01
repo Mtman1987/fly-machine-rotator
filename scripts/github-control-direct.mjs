@@ -266,6 +266,62 @@ process.stdout.write(JSON.stringify({ok:true,reason:'Restream is live',before:be
   throw new Error('No Lounge worker completed the Restream start: ' + redact(JSON.stringify(results)));
 }
 
+
+async function spotlightRestart() {
+  const app = 'hmo-dj-worker';
+  const list = await fly(['machines', 'list', '--app', app, '--json']);
+  if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
+  let machines = [];
+  try { machines = JSON.parse(list.stdout || '[]'); }
+  catch { throw new Error('HearMeOut worker machine list returned malformed JSON.'); }
+
+  const processGroup = (machine) => String(
+    machine?.process_group ??
+    machine?.config?.metadata?.fly_process_group ??
+    machine?.config?.metadata?.['fly_process_group'] ??
+    machine?.config?.env?.FLY_PROCESS_GROUP ??
+    ''
+  ).toLowerCase();
+
+  const spotlight = Array.isArray(machines)
+    ? machines.find((machine) => processGroup(machine) === 'spotlight')
+    : null;
+  if (!spotlight?.id) {
+    const visible = Array.isArray(machines)
+      ? machines.map((machine) => ({ id: machine?.id ?? null, processGroup: processGroup(machine) || null, state: machine?.state ?? null }))
+      : [];
+    throw new Error('Could not identify the Spotlight process-group Machine: ' + redact(JSON.stringify(visible)));
+  }
+
+  const before = { id: spotlight.id, state: spotlight.state ?? null, processGroup: 'spotlight' };
+  const restart = await fly(['machine', 'restart', String(spotlight.id), '--app', app], { timeout: 180000 });
+  if (!restart.ok) throw new Error(restart.stderr || 'Spotlight Machine restart failed.');
+
+  let after = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const check = await fly(['machines', 'list', '--app', app, '--json']);
+    if (!check.ok) continue;
+    try {
+      const current = JSON.parse(check.stdout || '[]');
+      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(spotlight.id)) : null;
+      if (machine) {
+        after = { id: machine.id, state: machine.state ?? null, processGroup: processGroup(machine) || 'spotlight' };
+        if (String(machine.state) === 'started') break;
+      }
+    } catch {}
+  }
+  if (!after || after.state !== 'started') throw new Error('Spotlight Machine did not return to started state after restart.');
+  return {
+    ok: true,
+    appName: app,
+    restartedOnly: 'spotlight',
+    preservedProcessGroups: ['lounge', 'dj'],
+    before,
+    after,
+  };
+}
+
 async function repair(payload) {
   const appName = requireApp(payload.appName);
   const description = text(payload.description, 4000);
@@ -292,6 +348,7 @@ export async function execute(payload) {
   if (command === 'coderjob') return await coderJobStatus(payload.id);
   if (command === 'streamstatus') return await streamStatus();
   if (command === 'streamstart') return await streamStart();
+  if (command === 'spotlightrestart') return await spotlightRestart();
   throw new Error('Unsupported command.');
 }
 
