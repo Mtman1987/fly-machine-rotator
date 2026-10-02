@@ -308,9 +308,13 @@ const segments=lines.filter(line=>line.trim()&&!line.startsWith('#'));
 sourceProbe={status:response.status,contentType:response.headers.get('content-type'),bytes:playlist.length,segmentCount:segments.length,targetDuration:lines.find(line=>line.startsWith('#EXT-X-TARGETDURATION:')),mediaSequence:lines.find(line=>line.startsWith('#EXT-X-MEDIA-SEQUENCE:')),durations:lines.filter(line=>line.startsWith('#EXTINF:')).slice(-8),endList:lines.includes('#EXT-X-ENDLIST')};
 if(segments.length){const segment=await fetch(new URL(segments[segments.length-1],source),{signal:AbortSignal.timeout(8000)});sourceProbe.lastSegmentStatus=segment.status;sourceProbe.lastSegmentBytes=(await segment.arrayBuffer()).byteLength;}
 const {spawnSync}=require('child_process');
-const probe=options=>{const started=Date.now();const p=spawnSync('ffprobe',['-v','error',...options,'-show_entries','stream=codec_type,codec_name,width,height','-of','json',source],{encoding:'utf8',timeout:10000,maxBuffer:200000});let streams=null;try{streams=JSON.parse(p.stdout||'{}').streams||null}catch{}return {elapsedMs:Date.now()-started,status:p.status,timedOut:p.error?.code==='ETIMEDOUT',streams};};
+const probe=(options,url=source)=>{const started=Date.now();const p=spawnSync('ffprobe',['-v','error',...options,'-show_entries','stream=codec_type,codec_name,width,height','-of','json',url],{encoding:'utf8',timeout:10000,maxBuffer:200000});let streams=null;try{streams=JSON.parse(p.stdout||'{}').streams||null}catch{}return {elapsedMs:Date.now()-started,status:p.status,timedOut:p.error?.code==='ETIMEDOUT',streams};};
 sourceProbe.defaultProbe=probe([]);
 sourceProbe.boundedProbe=probe(['-analyzeduration','1000000','-probesize','262144']);
+const resolved=spawnSync('yt-dlp',['--no-warnings','--no-playlist','-g','-f','best[height<=480]/best','https://www.twitch.tv/'+b.currentLogin],{encoding:'utf8',timeout:20000,maxBuffer:256000});
+const fresh=String(resolved.stdout||'').trim().split(String.fromCharCode(10))[0];
+if(fresh.startsWith('https://')){sourceProbe.freshDefaultProbe=probe([],fresh);sourceProbe.freshBoundedProbe=probe(['-analyzeduration','1000000','-probesize','262144'],fresh);}
+
 
 }catch(e){sourceProbe={error:e?.name||'Source probe failed'};}
 }
