@@ -328,25 +328,8 @@ async function spotlightRestart() {
   if (!spotlight?.id) throw new Error('Could not identify the Spotlight process-group Machine.');
 
   const before = { id: spotlight.id, state: spotlight.state ?? null, processGroup: 'spotlight' };
-
-  const stop = await fly(['machine', 'stop', String(spotlight.id), '--app', app], { timeout: 180000 });
-  if (!stop.ok && !/already stopped/i.test(stop.stderr || '')) throw new Error(stop.stderr || 'Spotlight Machine stop failed.');
-
-  let stopped = false;
-  for (let attempt = 0; attempt < 18; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    const check = await fly(['machines', 'list', '--app', app, '--json']);
-    if (!check.ok) continue;
-    try {
-      const current = JSON.parse(check.stdout || '[]');
-      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(spotlight.id)) : null;
-      if (machine && String(machine.state) === 'stopped') { stopped = true; break; }
-    } catch {}
-  }
-  if (!stopped) throw new Error('Spotlight Machine did not reach stopped state.');
-
-  const startResult = await fly(['machine', 'start', String(spotlight.id), '--app', app], { timeout: 180000 });
-  if (!startResult.ok) throw new Error(startResult.stderr || 'Spotlight Machine start failed.');
+  const restart = await fly(['machine', 'restart', String(spotlight.id), '--app', app], { timeout: 180000 });
+  if (!restart.ok) throw new Error(restart.stderr || 'Spotlight Machine restart failed.');
 
   let after = null;
   for (let attempt = 0; attempt < 24; attempt += 1) {
@@ -363,18 +346,7 @@ async function spotlightRestart() {
     } catch {}
   }
   if (!after || after.state !== 'started') throw new Error('Spotlight Machine did not return to started state.');
-
-  const health = await fly(['curl', '--app', app, '--machine', String(spotlight.id), 'http://127.0.0.1:3002/health'], { timeout: 60000 });
-  return {
-    ok: true,
-    appName: app,
-    restartedOnly: 'spotlight',
-    preservedProcessGroups: ['lounge', 'dj'],
-    before,
-    after,
-    healthOk: health.ok,
-    health: health.ok ? redact(health.stdout) : redact(health.stderr),
-  };
+  return { ok: true, appName: app, restartedOnly: 'spotlight', preservedProcessGroups: ['lounge','dj'], before, after };
 }
 
 async function loungeRestart() {
@@ -399,25 +371,8 @@ async function loungeRestart() {
   if (!lounge?.id) throw new Error('Could not identify the Lounge process-group Machine.');
 
   const before = { id: lounge.id, state: lounge.state ?? null, processGroup: 'lounge' };
-
-  const stop = await fly(['machine', 'stop', String(lounge.id), '--app', app], { timeout: 180000 });
-  if (!stop.ok && !/already stopped/i.test(stop.stderr || '')) throw new Error(stop.stderr || 'Lounge Machine stop failed.');
-
-  let stopped = false;
-  for (let attempt = 0; attempt < 18; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    const check = await fly(['machines', 'list', '--app', app, '--json']);
-    if (!check.ok) continue;
-    try {
-      const current = JSON.parse(check.stdout || '[]');
-      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(lounge.id)) : null;
-      if (machine && String(machine.state) === 'stopped') { stopped = true; break; }
-    } catch {}
-  }
-  if (!stopped) throw new Error('Lounge Machine did not reach stopped state.');
-
-  const startResult = await fly(['machine', 'start', String(lounge.id), '--app', app], { timeout: 180000 });
-  if (!startResult.ok) throw new Error(startResult.stderr || 'Lounge Machine start failed.');
+  const restart = await fly(['machine', 'restart', String(lounge.id), '--app', app], { timeout: 180000 });
+  if (!restart.ok) throw new Error(restart.stderr || 'Lounge Machine restart failed.');
 
   let after = null;
   for (let attempt = 0; attempt < 24; attempt += 1) {
@@ -434,15 +389,36 @@ async function loungeRestart() {
     } catch {}
   }
   if (!after || after.state !== 'started') throw new Error('Lounge Machine did not return to started state.');
+  return { ok: true, appName: app, restartedOnly: 'lounge', preservedProcessGroups: ['spotlight','dj'], before, after };
+}
 
-  return {
-    ok: true,
-    appName: app,
-    restartedOnly: 'lounge',
-    preservedProcessGroups: ['spotlight', 'dj'],
-    before,
-    after,
-  };
+async function wordChainStop() {
+  const app = 'chat-tag-new';
+  const source = [
+    "(async()=>{",
+    "const secret=String(process.env.STREAMWEAVER_SECRET||process.env.STREAMWEAVER_CLIENT_SECRET||'').trim();",
+    "if(!secret) throw Error('Nebula service secret is not configured');",
+    "const base='http://127.0.0.1:3000';",
+    "const b=await fetch(base+'/api/game-hub/channel?channel=spacemountainlive',{headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});",
+    "const before=await b.json().catch(()=>null);",
+    "const r=await fetch(base+'/api/game-hub/command',{method:'POST',headers:{'content-type':'application/json',accept:'application/json','x-bot-secret':secret},body:JSON.stringify({channel:'spacemountainlive',username:'mtman1987',displayName:'mtman1987',message:'spmt wordchain stop',isBroadcaster:true,isModerator:true,source:'rotator-owner-control'}),signal:AbortSignal.timeout(15000)});",
+    "const body=await r.json().catch(()=>null);",
+    "const a=await fetch(base+'/api/game-hub/channel?channel=spacemountainlive',{headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});",
+    "const after=await a.json().catch(()=>null);",
+    "process.stdout.write(JSON.stringify({status:r.status,handled:body?.handled??null,reply:body?.reply??null,beforeGameIds:before?.gameIds??null,afterGameIds:after?.gameIds??null}));",
+    "if(!r.ok||!Array.isArray(after?.gameIds)||after.gameIds.includes('wordchain')) process.exit(2);",
+    "})().catch(e=>{console.error(e?.message||e);process.exit(1)});"
+  ].join('');
+  const encoded=Buffer.from(source,'utf8').toString('base64');
+  const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+  const run=await fly(['ssh','console','--app',app,'--command',command,'--quiet'],{timeout:120000});
+  if(!run.ok) throw new Error(run.stderr || 'Word Chain stop failed.');
+  const raw=String(run.stdout||'').trim();
+  const start=raw.indexOf('{');
+  if(start<0) throw new Error('Word Chain stop returned malformed output.');
+  let result={};
+  try { result=JSON.parse(raw.slice(start)); } catch { throw new Error('Word Chain stop returned malformed JSON.'); }
+  return {ok:true,appName:app,stopped:'wordchain',...result};
 }
 
 async function repair(payload) {
@@ -474,6 +450,7 @@ export async function execute(payload) {
   if (command === 'spotlightstatus') return await spotlightStatus();
   if (command === 'spotlightrestart') return await spotlightRestart();
   if (command === 'loungerestart') return await loungeRestart();
+  if (command === 'wordchainstop') return await wordChainStop();
   throw new Error('Unsupported command.');
 }
 
