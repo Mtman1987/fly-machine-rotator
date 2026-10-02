@@ -28,6 +28,8 @@ primary_region = "ord"
   LOG_POLL_INTERVAL_MS = "60000"
   RESTART_UNSAFE_APPS = "true"
   ROTATOR_RESTART_ONLY = "true"
+  # Twitch offline recovery owns reconnects; no separate pre-48h stop/start.
+  STREAM_SESSION_RESET_ENABLED = "false"
   ROTATOR_RUNTIME_STATE_FILE = "/data/runtime-state.json"
   MOUNTAINVIEW_AUTH_DISABLED = "false"
   CODEX_FIXER_DATA_DIR = "/data/codex-fixer"
