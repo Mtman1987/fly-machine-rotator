@@ -139,17 +139,21 @@ const status=await call('/v1/status');
 if(!status.r.ok) throw Error('Restream browser status failed ('+status.r.status+')');
 const inspect=await call('/v1/inspect');
 if(!inspect.r.ok) throw Error('Restream browser inspection failed ('+inspect.r.status+')');
-const cleanText=String(inspect.b?.bodyText||'')
-  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi,'[email]')
-  .slice(0,3500);
+// Only bounded state is emitted. Browser contents stay inside the worker.
+const labels=new Set((Array.isArray(inspect.b?.buttons)?inspect.b.buttons:[]).map(button=>String(button?.text||'').trim().toLowerCase()));
+const canStart=['go live','start stream'].some(label=>labels.has(label));
+const canStop=['end stream','stop stream'].some(label=>labels.has(label));
+const canEnterStudio=labels.has('enter studio');
+const loginRequired=/restream\.io\/login/i.test(String(inspect.b?.url||'')) || /\blog in\b/i.test(String(inspect.b?.title||''));
+const state=canStop?'live':canStart?'ready':canEnterStudio?'prestudio':loginRequired?'login_required':'unknown';
 process.stdout.write(JSON.stringify({
   ok:true,
   running:Boolean(status.b?.running),
-  mode:status.b?.mode||null,
-  url:String(inspect.b?.url||status.b?.url||'').slice(0,500),
-  title:String(inspect.b?.title||status.b?.title||'').slice(0,300),
-  buttons:Array.isArray(inspect.b?.buttons)?inspect.b.buttons.slice(0,80):[],
-  bodyText:cleanText,
+  mode:status.b?.mode==='restream'?'restream':'other',
+  state,
+  canStart,
+  canStop,
+  canEnterStudio,
   profilePersistent:Boolean(status.b?.profilePersistent),
   persistentHost:Boolean(status.b?.persistentHost)
 }));
