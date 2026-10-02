@@ -377,6 +377,74 @@ async function spotlightRestart() {
   };
 }
 
+async function loungeRestart() {
+  const app = 'hmo-dj-worker';
+  const list = await fly(['machines', 'list', '--app', app, '--json']);
+  if (!list.ok) throw new Error(list.stderr || 'Unable to list HearMeOut worker machines.');
+  let machines = [];
+  try { machines = JSON.parse(list.stdout || '[]'); }
+  catch { throw new Error('HearMeOut worker machine list returned malformed JSON.'); }
+
+  const processGroup = (machine) => String(
+    machine?.process_group ??
+    machine?.config?.metadata?.fly_process_group ??
+    machine?.config?.metadata?.['fly_process_group'] ??
+    machine?.config?.env?.FLY_PROCESS_GROUP ??
+    ''
+  ).toLowerCase();
+
+  const lounge = Array.isArray(machines)
+    ? machines.find((machine) => processGroup(machine) === 'lounge')
+    : null;
+  if (!lounge?.id) throw new Error('Could not identify the Lounge process-group Machine.');
+
+  const before = { id: lounge.id, state: lounge.state ?? null, processGroup: 'lounge' };
+
+  const stop = await fly(['machine', 'stop', String(lounge.id), '--app', app], { timeout: 180000 });
+  if (!stop.ok && !/already stopped/i.test(stop.stderr || '')) throw new Error(stop.stderr || 'Lounge Machine stop failed.');
+
+  let stopped = false;
+  for (let attempt = 0; attempt < 18; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const check = await fly(['machines', 'list', '--app', app, '--json']);
+    if (!check.ok) continue;
+    try {
+      const current = JSON.parse(check.stdout || '[]');
+      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(lounge.id)) : null;
+      if (machine && String(machine.state) === 'stopped') { stopped = true; break; }
+    } catch {}
+  }
+  if (!stopped) throw new Error('Lounge Machine did not reach stopped state.');
+
+  const startResult = await fly(['machine', 'start', String(lounge.id), '--app', app], { timeout: 180000 });
+  if (!startResult.ok) throw new Error(startResult.stderr || 'Lounge Machine start failed.');
+
+  let after = null;
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const check = await fly(['machines', 'list', '--app', app, '--json']);
+    if (!check.ok) continue;
+    try {
+      const current = JSON.parse(check.stdout || '[]');
+      const machine = Array.isArray(current) ? current.find((item) => String(item?.id) === String(lounge.id)) : null;
+      if (machine) {
+        after = { id: machine.id, state: machine.state ?? null, processGroup: processGroup(machine) || 'lounge' };
+        if (String(machine.state) === 'started') break;
+      }
+    } catch {}
+  }
+  if (!after || after.state !== 'started') throw new Error('Lounge Machine did not return to started state.');
+
+  return {
+    ok: true,
+    appName: app,
+    restartedOnly: 'lounge',
+    preservedProcessGroups: ['spotlight', 'dj'],
+    before,
+    after,
+  };
+}
+
 async function repair(payload) {
   const appName = requireApp(payload.appName);
   const description = text(payload.description, 4000);
@@ -405,6 +473,7 @@ export async function execute(payload) {
   if (command === 'streamstart') return await streamStart();
   if (command === 'spotlightstatus') return await spotlightStatus();
   if (command === 'spotlightrestart') return await spotlightRestart();
+  if (command === 'loungerestart') return await loungeRestart();
   throw new Error('Unsupported command.');
 }
 
