@@ -310,7 +310,7 @@ if(segments.length){const segment=await fetch(new URL(segments[segments.length-1
 const {spawnSync}=require('child_process');
 const probeFolder='/tmp/spotlight-relay-probe-'+Date.now();
 fs.mkdirSync(probeFolder,{recursive:true});
-const args=argv.slice(1).map(arg=>arg.startsWith(folder+'/')?arg.replace(folder,probeFolder):arg);
+const args=argv.slice(1).filter(Boolean).map(arg=>arg.startsWith(folder+'/')?arg.replace(folder,probeFolder):arg);
 args.splice(args.lastIndexOf('-f'),0,'-t','8');
 const started=Date.now();
 const relay=spawnSync('ffmpeg',args,{encoding:'utf8',timeout:15000,maxBuffer:200000});
