@@ -121,52 +121,15 @@ if(!r.ok||!Array.isArray(b?.data)) process.exit(2);
 }
 
 async function inspect(uid) {
-  const source = `
-(async()=>{
-const uid=Buffer.from(process.argv[1],'base64').toString('utf8');
-const secret=String(process.env.CLOUD_XBOX_WORKER_SECRET||process.env.JWT_SECRET||'').trim();
-if(!secret) throw Error('Cloud browser worker secret is not configured');
-const headers={'x-spmt-worker-secret':secret,'x-spmt-user-id':uid,'content-type':'application/json'};
-async function call(path,init={}) {
-  const r=await fetch('http://127.0.0.1:3003'+path,{...init,headers:{...headers,...(init.headers||{})},signal:AbortSignal.timeout(45000)});
-  const type=r.headers.get('content-type')||'';
-  const b=type.includes('application/json')?await r.json().catch(()=>null):null;
-  return {r,b};
-}
-const opened=await call('/v1/session',{method:'POST',body:JSON.stringify({mode:'restream'})});
-if(!opened.r.ok) throw Error(String(opened.b?.error||('Restream browser open failed ('+opened.r.status+')')));
-const status=await call('/v1/status');
-if(!status.r.ok) throw Error('Restream browser status failed ('+status.r.status+')');
-const inspect=await call('/v1/inspect');
-if(!inspect.r.ok) throw Error('Restream browser inspection failed ('+inspect.r.status+')');
-// Only bounded state is emitted. Browser contents stay inside the worker.
-const labels=new Set((Array.isArray(inspect.b?.buttons)?inspect.b.buttons:[]).map(button=>String(button?.text||'').trim().toLowerCase()));
-const canStart=['go live','start stream'].some(label=>labels.has(label));
-const canStop=['end stream','stop stream'].some(label=>labels.has(label));
-const canEnterStudio=labels.has('enter studio');
-const loginRequired=/restream\\.io\\/login/i.test(String(inspect.b?.url||'')) || /\\blog in\\b/i.test(String(inspect.b?.title||''));
-const state=canStop?'live':canStart?'ready':canEnterStudio?'prestudio':loginRequired?'login_required':'unknown';
-process.stdout.write(JSON.stringify({
-  ok:true,
-  running:Boolean(status.b?.running),
-  mode:status.b?.mode==='restream'?'restream':'other',
-  state,
-  canStart,
-  canStop,
-  canEnterStudio,
-  profilePersistent:Boolean(status.b?.profilePersistent),
-  persistentHost:Boolean(status.b?.persistentHost)
-}));
-})().catch(e=>{console.error(e?.message||e);process.exit(1)});
-`;
+  const source = "\n(async()=>{\nconst uid=Buffer.from(process.argv[1],'base64').toString('utf8');\nconst secret=String(process.env.CLOUD_XBOX_WORKER_SECRET||process.env.JWT_SECRET||'').trim();\nif(!secret)throw Error('Worker authentication unavailable');\nconst response=await fetch('http://127.0.0.1:3003/v1/status',{headers:{'x-spmt-worker-secret':secret,'x-spmt-user-id':uid},signal:AbortSignal.timeout(15000)});\nconst status=await response.json();\nif(!response.ok||!status.running||status.mode!=='restream')throw Error('Existing Restream session unavailable');\nconst fs=require('fs'),path=require('path'),crypto=require('crypto'),WebSocket=require('ws');\nconst profile=path.join(process.env.CLOUD_XBOX_PROFILE_ROOT||'/var/lib/spmt-xbox/profiles',crypto.createHash('sha256').update(uid).digest('hex').slice(0,24));\nlet port;\nfor(const pid of fs.readdirSync('/proc').filter(x=>/^\\d+$/.test(x))){\n let args;try{args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\\0')}catch{continue}\n if(!args.includes('--user-data-dir='+profile))continue;\n const flag=args.find(x=>x.startsWith('--remote-debugging-port='));\n if(flag)port=Number(flag.split('=')[1]);\n}\nif(!port)throw Error('Existing owner browser debug port unavailable');\nconst targets=await (await fetch('http://127.0.0.1:'+port+'/json/list',{signal:AbortSignal.timeout(5000)})).json();\nconst pages=targets.filter(t=>t.type==='page');\nconst stateExpression=\"(()=>{const matches=[...document.querySelectorAll('button,[role=button]')].map(el=>({el,text:(el.textContent||el.getAttribute('aria-label')||'').trim().toLowerCase()})).filter(x=>['go live','start stream','end stream','stop stream','enter studio'].includes(x.text)).filter(x=>!x.el.disabled&&x.el.getBoundingClientRect().width>0);const labels=matches.map(x=>x.text);return {canStart:labels.some(x=>['go live','start stream'].includes(x)),canStop:labels.some(x=>['end stream','stop stream'].includes(x)),canEnterStudio:labels.includes('enter studio')};})()\";\nconst probes=[];\nfor(const target of pages.slice(0,5)){\nconst item={selectedByWorker:target.id===pages[pages.length-1]?.id,isStudio:/^https:\\/\\/studio\\.restream\\.io\\//i.test(target.url),titleLive:/\\[LIVE\\]/i.test(target.title),isLogin:/restream\\.io\\/login/i.test(target.url)};\nconst socket=new WebSocket(target.webSocketDebuggerUrl,{origin:'http://127.0.0.1'});\nlet id=0;const pending=new Map();\nsocket.on('message',raw=>{let m;try{m=JSON.parse(String(raw))}catch{return}const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);m.error?p.reject(Error('CDP command failed')):p.resolve(m.result)}});\nsocket.on('error',()=>{});\ntry{\nawait new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Connect timeout')),3000);socket.once('open',()=>{clearTimeout(timer);resolve()});socket.once('error',()=>{clearTimeout(timer);reject(Error('Connect failed'))})});\nasync function call(expression){return new Promise((resolve,reject)=>{const current=++id;const timer=setTimeout(()=>{pending.delete(current);reject(Error('Evaluate timeout'))},3000);pending.set(current,{resolve,reject,timer});socket.send(JSON.stringify({id:current,method:'Runtime.evaluate',params:{expression,returnByValue:true}}))})}\nconst started=Date.now();\ntry{const result=await call('1');item.simpleEvaluateOk=result?.result?.value===1}catch{item.simpleEvaluateOk=false}\nitem.simpleEvaluateMs=Date.now()-started;\nif(item.simpleEvaluateOk){const controlsStarted=Date.now();try{const result=await call(stateExpression);item.controls=result?.result?.value||null;item.controlsEvaluateOk=Boolean(item.controls)}catch{item.controlsEvaluateOk=false}item.controlsEvaluateMs=Date.now()-controlsStarted}\n}catch{item.connectionOk=false}finally{socket.terminate()}\nprobes.push(item);\n}\nprocess.stdout.write(JSON.stringify({ok:true,running:true,profilePersistent:status.profilePersistent===true,persistentHost:status.persistentHost===true,resources:status.resources,probes}));\n})().catch(()=>{console.error('Bounded existing-browser probe failed');process.exit(1)});\n";
   const sourceEncoded = Buffer.from(source, 'utf8').toString('base64');
   const uidEncoded = Buffer.from(uid, 'utf8').toString('base64');
   const command = `node -e "eval(Buffer.from('${sourceEncoded}','base64').toString('utf8'))" '${uidEncoded}'`;
-  const run = await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',command,'--quiet'], 120000);
-  if (!run.ok) throw new Error(run.stderr || 'Persistent Restream browser inspection failed.');
+  const run = await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',command,'--quiet'], 90000);
+  if (!run.ok) throw new Error('Bounded existing-browser probe failed.');
   const raw = String(run.stdout || '').trim();
   const start = raw.indexOf('{');
-  if (start < 0) throw new Error('Persistent Restream browser inspection returned malformed output.');
+  if (start < 0) throw new Error('Browser probe returned malformed output.');
   return JSON.parse(raw.slice(start));
 }
 
