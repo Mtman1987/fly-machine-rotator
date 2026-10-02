@@ -147,13 +147,61 @@ async function signalHistory(requestedLimit) {
   return { ok: true, appName: STREAMWEAVER_APP, machineId: machine.id, readAt: new Date().toISOString(), limit: count, ...payload };
 }
 
-function parseJsonLines(raw) {
+export function parseFlyJsonRecords(raw) {
+  const source = String(raw || '');
   const rows = [];
-  for (const line of String(raw || '').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try { rows.push(JSON.parse(trimmed)); }
-    catch { rows.push({ message: redact(trimmed) }); }
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let plainStart = 0;
+
+  const flushPlain = (end) => {
+    for (const line of source.slice(plainStart, end).split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed) rows.push({ message: redact(trimmed) });
+    }
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (start < 0) {
+      if (char === '{' || char === '[') {
+        flushPlain(index);
+        start = index;
+        depth = 1;
+        inString = false;
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === '{' || char === '[') depth += 1;
+    else if (char === '}' || char === ']') depth -= 1;
+
+    if (depth === 0) {
+      const record = source.slice(start, index + 1);
+      try { rows.push(JSON.parse(record)); }
+      catch { rows.push({ message: redact(record.trim()) }); }
+      start = -1;
+      plainStart = index + 1;
+    }
+  }
+
+  if (start >= 0) {
+    for (const line of source.slice(start).split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed) rows.push({ message: redact(trimmed) });
+    }
+  } else {
+    flushPlain(source.length);
   }
   return rows;
 }
@@ -166,7 +214,7 @@ async function logs(appName, requestedLimit, errorsOnly) {
   for (const app of apps) {
     const read = await fly(['logs', '--app', app, '--json', '--no-tail'], { timeout: 60000 });
     if (!read.ok) { result.push({ appName: app, ok: false, error: read.stderr || 'fly logs failed' }); continue; }
-    const entries = parseJsonLines(read.stdout).map((entry) => ({
+    const entries = parseFlyJsonRecords(read.stdout).map((entry) => ({
       timestamp: entry.timestamp || entry.time || entry.ts || null,
       machineId: entry.machine_id || entry.machine || entry.instance || null,
       region: entry.region || null,
