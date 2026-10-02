@@ -296,7 +296,20 @@ const safeRead=p=>{try{return fs.readFileSync(p,'utf8')}catch{return ''}};
 const folder=b?.generation?'/tmp/spotlight-hls/'+b.generation:'';
 const files=folder&&fs.existsSync(folder)?fs.readdirSync(folder).slice(0,25).map(name=>({name,bytes:fs.statSync(folder+'/'+name).size})):[];
 const processes=fs.readdirSync('/proc').filter(id=>/^\\d+$/.test(id)&&safeRead('/proc/'+id+'/comm').trim()==='ffmpeg').map(id=>({pid:Number(id),wait:safeRead('/proc/'+id+'/wchan').trim(),io:safeRead('/proc/'+id+'/io'),stat:safeRead('/proc/'+id+'/stat')}));
-process.stdout.write(JSON.stringify({status:r.status,body:{...b,encoderDiagnostics:{files,processes}}}));
+let sourceProbe=null;
+if(processes[0]){
+const argv=safeRead('/proc/'+processes[0].pid+'/cmdline').split(String.fromCharCode(0));
+const source=argv[argv.indexOf('-i')+1];
+try{
+const response=await fetch(source,{signal:AbortSignal.timeout(8000)});
+const playlist=await response.text();
+const lines=playlist.split(String.fromCharCode(10));
+const segments=lines.filter(line=>line.trim()&&!line.startsWith('#'));
+sourceProbe={status:response.status,contentType:response.headers.get('content-type'),bytes:playlist.length,segmentCount:segments.length,targetDuration:lines.find(line=>line.startsWith('#EXT-X-TARGETDURATION:')),mediaSequence:lines.find(line=>line.startsWith('#EXT-X-MEDIA-SEQUENCE:')),durations:lines.filter(line=>line.startsWith('#EXTINF:')).slice(-8),endList:lines.includes('#EXT-X-ENDLIST')};
+if(segments.length){const segment=await fetch(new URL(segments[segments.length-1],source),{signal:AbortSignal.timeout(8000)});sourceProbe.lastSegmentStatus=segment.status;sourceProbe.lastSegmentBytes=(await segment.arrayBuffer()).byteLength;}
+}catch(e){sourceProbe={error:e?.name||'Source probe failed'};}
+}
+process.stdout.write(JSON.stringify({status:r.status,body:{...b,encoderDiagnostics:{files,processes,sourceProbe}}}));
 })().catch(e=>{console.error(e?.message||e);process.exit(1)});
 `;
   const encoded = Buffer.from(source, 'utf8').toString('base64');
