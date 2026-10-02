@@ -307,6 +307,11 @@ const lines=playlist.split(String.fromCharCode(10));
 const segments=lines.filter(line=>line.trim()&&!line.startsWith('#'));
 sourceProbe={status:response.status,contentType:response.headers.get('content-type'),bytes:playlist.length,segmentCount:segments.length,targetDuration:lines.find(line=>line.startsWith('#EXT-X-TARGETDURATION:')),mediaSequence:lines.find(line=>line.startsWith('#EXT-X-MEDIA-SEQUENCE:')),durations:lines.filter(line=>line.startsWith('#EXTINF:')).slice(-8),endList:lines.includes('#EXT-X-ENDLIST')};
 if(segments.length){const segment=await fetch(new URL(segments[segments.length-1],source),{signal:AbortSignal.timeout(8000)});sourceProbe.lastSegmentStatus=segment.status;sourceProbe.lastSegmentBytes=(await segment.arrayBuffer()).byteLength;}
+const {spawnSync}=require('child_process');
+const probe=options=>{const started=Date.now();const p=spawnSync('ffprobe',['-v','error',...options,'-show_entries','stream=codec_type,codec_name,width,height','-of','json',source],{encoding:'utf8',timeout:10000,maxBuffer:200000});let streams=null;try{streams=JSON.parse(p.stdout||'{}').streams||null}catch{}return {elapsedMs:Date.now()-started,status:p.status,timedOut:p.error?.code==='ETIMEDOUT',streams};};
+sourceProbe.defaultProbe=probe([]);
+sourceProbe.boundedProbe=probe(['-analyzeduration','1000000','-probesize','262144']);
+
 }catch(e){sourceProbe={error:e?.name||'Source probe failed'};}
 }
 process.stdout.write(JSON.stringify({status:r.status,body:{...b,encoderDiagnostics:{files,processes,sourceProbe}}}));
