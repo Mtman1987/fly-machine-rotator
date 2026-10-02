@@ -30,7 +30,7 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|coderjob|spmtbrowser|spmtstart|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|coderjob|spmtbrowser|spmtstart|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|wordchainstop|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
@@ -58,7 +58,7 @@ jobs:
             } else if (command === 'coderjob') {
               if (!rest) core.setFailed('coderjob requires: /rotator coderjob <job-id>');
               payload.id = rest.split(/\s+/)[0].slice(0, 120);
-            } else if (command === 'spmtbrowser' || command === 'spmtstart' || command === 'twitchstatus' || command === 'streamstatus' || command === 'streamstart' || command === 'spotlightstatus' || command === 'spotlightrestart' || command === 'loungerestart') {
+            } else if (command === 'spmtbrowser' || command === 'spmtstart' || command === 'twitchstatus' || command === 'streamstatus' || command === 'streamstart' || command === 'spotlightstatus' || command === 'spotlightrestart' || command === 'loungerestart' || command === 'wordchainstop') {
               if (rest) core.setFailed(`${command} does not accept arguments.`);
             } else if (command === 'chatqueue') {
               if (rest) payload.limit = Number(rest.split(/\s+/)[0]);
