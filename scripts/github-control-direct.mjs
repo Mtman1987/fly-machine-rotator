@@ -298,8 +298,15 @@ const files=folder&&fs.existsSync(folder)?fs.readdirSync(folder).slice(0,25).map
 const processes=fs.readdirSync('/proc').filter(id=>/^\\d+$/.test(id)&&safeRead('/proc/'+id+'/comm').trim()==='ffmpeg').map(id=>({pid:Number(id),wait:safeRead('/proc/'+id+'/wchan').trim(),io:safeRead('/proc/'+id+'/io'),stat:safeRead('/proc/'+id+'/stat')}));
 let sourceProbe=null;
 const relayProcess=processes.find(process=>safeRead('/proc/'+process.pid+'/cmdline').split(String.fromCharCode(0)).includes(folder+'/index.m3u8'));
-if(relayProcess){
-const argv=safeRead('/proc/'+relayProcess.pid+'/cmdline').split(String.fromCharCode(0));
+let argv;
+if(relayProcess)argv=safeRead('/proc/'+relayProcess.pid+'/cmdline').split(String.fromCharCode(0));
+else if(/^[a-z0-9_]{1,25}$/.test(b?.currentLogin||'')){
+  const {execFile}=require('child_process');
+  const url=await new Promise((resolve,reject)=>execFile('yt-dlp',['--no-warnings','--no-playlist','-g','-f','best[height<=480]/best','https://www.twitch.tv/'+b.currentLogin],{timeout:20000,maxBuffer:262144},(error,stdout)=>error?reject(Error('Source resolution failed')):resolve(String(stdout).trim().split(/\\r?\\n/)[0])));
+  const {spotlightTimestampFilter}=require('/app/src/spotlight-hls.js');
+  argv=['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-rw_timeout','15000000','-i',url,'-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','copy','-bsf:v',spotlightTimestampFilter(),'-bsf:a',spotlightTimestampFilter(true),'-f','hls','-hls_time','4','-hls_list_size','24','-hls_flags','delete_segments+independent_segments+temp_file','-hls_segment_filename',folder+'/seg_%06d.ts',folder+'/index.m3u8'];
+}
+if(argv){
 const source=argv[argv.indexOf('-i')+1];
 try{
 const response=await fetch(source,{signal:AbortSignal.timeout(8000)});
@@ -319,10 +326,10 @@ sourceProbe.relay={elapsedMs:Date.now()-started,status:relay.status,timedOut:rel
 fs.rmSync(probeFolder,{recursive:true,force:true});
 sourceProbe.liveTrials=[];
 const {spawn}=require('child_process');
-for(const mode of ['current','preserve-start-clock','original-clocks']){
+for(const mode of ['current','pts-only','original-clocks']){
   const trialFolder=probeFolder+'-'+mode;fs.mkdirSync(trialFolder,{recursive:true});
   let trialArgs=argv.slice(1).filter(Boolean).map(arg=>arg.startsWith(folder+'/')?arg.replace(folder,trialFolder):arg);
-  if(mode==='preserve-start-clock')trialArgs=trialArgs.map(arg=>arg.startsWith('setts=')?arg.replaceAll('if(eq(N,0),0,','if(eq(N,0),DTS,'):arg);
+  if(mode==='pts-only')trialArgs=trialArgs.map(arg=>arg.startsWith('setts=')?"setts=pts='DTS+if(between(PTS-DTS,-1/TB,1/TB),PTS-DTS,0)'":arg);
   if(mode==='original-clocks'){
     for(const flag of ['-bsf:v','-bsf:a']){const at=trialArgs.indexOf(flag);if(at>=0)trialArgs.splice(at,2);}
   }
@@ -341,7 +348,7 @@ process.stdout.write(JSON.stringify({status:r.status,body:{...b,encoderDiagnosti
 `;
   const encoded = Buffer.from(source, 'utf8').toString('base64');
   const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
-  const run = await fly(['ssh','console','--app',app,'--machine',String(spotlight.id),'--command',command,'--quiet'],{timeout:60000});
+  const run = await fly(['ssh','console','--app',app,'--machine',String(spotlight.id),'--command',command,'--quiet'],{timeout:90000});
   if (!run.ok) throw new Error(run.stderr || 'Spotlight status probe failed.');
   const raw=String(run.stdout||'').trim();
   const start=raw.indexOf('{');
