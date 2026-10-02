@@ -297,8 +297,9 @@ const folder=b?.generation?'/tmp/spotlight-hls/'+b.generation:'';
 const files=folder&&fs.existsSync(folder)?fs.readdirSync(folder).slice(0,25).map(name=>({name,bytes:fs.statSync(folder+'/'+name).size})):[];
 const processes=fs.readdirSync('/proc').filter(id=>/^\\d+$/.test(id)&&safeRead('/proc/'+id+'/comm').trim()==='ffmpeg').map(id=>({pid:Number(id),wait:safeRead('/proc/'+id+'/wchan').trim(),io:safeRead('/proc/'+id+'/io'),stat:safeRead('/proc/'+id+'/stat')}));
 let sourceProbe=null;
-if(processes[0]){
-const argv=safeRead('/proc/'+processes[0].pid+'/cmdline').split(String.fromCharCode(0));
+const relayProcess=processes.find(process=>safeRead('/proc/'+process.pid+'/cmdline').split(String.fromCharCode(0)).includes(folder+'/index.m3u8'));
+if(relayProcess){
+const argv=safeRead('/proc/'+relayProcess.pid+'/cmdline').split(String.fromCharCode(0));
 const source=argv[argv.indexOf('-i')+1];
 try{
 const response=await fetch(source,{signal:AbortSignal.timeout(8000)});
