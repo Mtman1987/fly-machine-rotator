@@ -173,7 +173,18 @@ async function logs(appName, requestedLimit, errorsOnly) {
       level: entry.level || null,
       message: redact(entry.message || entry.msg || entry.log || entry.event || JSON.stringify(entry)),
     })).filter((entry) => app !== 'spmt-live' || /\[StreamAutoStart\]|\[RestreamRecovery\]/.test(entry.message)).filter((entry) => !errorsOnly || pattern.test(entry.message)).slice(-max);
-    result.push({ appName: app, ok: true, count: entries.length, logs: entries });
+    const safeEntries = app === 'spmt-live' ? entries.map((entry) => ({
+      timestamp: entry.timestamp,
+      event: /Watching Twitch/.test(entry.message) ? 'watch_started'
+        : /Twitch recovered/.test(entry.message) ? 'twitch_recovered'
+        : /replacing unresponsive host/.test(entry.message) ? 'offline_host_replaced'
+        : /status unavailable/.test(entry.message) ? 'twitch_probe_failed'
+        : /could not be resolved/.test(entry.message) ? 'owner_missing'
+        : /did not verify live/.test(entry.message) ? 'verification_pending'
+        : /timed out|timeout/i.test(entry.message) ? 'control_timeout'
+        : /failed/i.test(entry.message) ? 'recovery_failed' : 'recovery_event',
+    })) : entries;
+    result.push({ appName: app, ok: true, count: safeEntries.length, logs: safeEntries });
   }
   return { ok: result.every((row) => row.ok), sampledAt: new Date().toISOString(), errorsOnly: Boolean(errorsOnly), apps: result };
 }
