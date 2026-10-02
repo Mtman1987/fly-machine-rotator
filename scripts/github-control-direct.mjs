@@ -172,7 +172,7 @@ async function logs(appName, requestedLimit, errorsOnly) {
       region: entry.region || null,
       level: entry.level || null,
       message: redact(entry.message || entry.msg || entry.log || entry.event || JSON.stringify(entry)),
-    })).filter((entry) => !errorsOnly || pattern.test(entry.message)).slice(-max);
+    })).filter((entry) => app !== 'spmt-live' || /\[StreamAutoStart\]|\[RestreamRecovery\]/.test(entry.message)).filter((entry) => !errorsOnly || pattern.test(entry.message)).slice(-max);
     result.push({ appName: app, ok: true, count: entries.length, logs: entries });
   }
   return { ok: result.every((row) => row.ok), sampledAt: new Date().toISOString(), errorsOnly: Boolean(errorsOnly), apps: result };
@@ -533,7 +533,7 @@ export async function execute(payload) {
   if (command === 'states') return { ok: true, ...(await readStates(requireApp(payload.appName))) };
   if (command === 'rotate') return await rotate();
   if (command === 'signal') return await signalHistory(payload.limit);
-  if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
+  if (command === 'logs') return await logs(text(payload.appName) === 'spmt-live' ? 'spmt-live' : requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
   if (command === 'coderjob') return await coderJobStatus(payload.id);
   if (command === 'loungeviewerrefresh') return await loungeViewerRefresh();
