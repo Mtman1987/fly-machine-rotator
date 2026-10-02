@@ -117,7 +117,7 @@ if(!r.ok||!Array.isArray(b?.data)) process.exit(2);
   if (!verified.ok || !twitch?.body?.ok || typeof twitch?.body?.isLive !== 'boolean') {
     throw new Error(verified.stderr || 'Twitch verification failed.');
   }
-  return { ok:true, ...result.body, twitch:twitch.body };
+  return { ok:true, action:'start-only', alreadyLive:result.body?.alreadyLive===true, state:['live','ready','prestudio','login_required'].includes(result.body?.state)?result.body.state:'unknown', twitch:{ok:twitch.body.ok,isLive:twitch.body.isLive,startedAt:twitch.body.startedAt,streamId:twitch.body.streamId} };
 }
 
 async function inspect(uid) {
