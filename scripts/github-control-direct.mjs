@@ -319,10 +319,10 @@ sourceProbe.relay={elapsedMs:Date.now()-started,status:relay.status,timedOut:rel
 fs.rmSync(probeFolder,{recursive:true,force:true});
 sourceProbe.liveTrials=[];
 const {spawn}=require('child_process');
-for(const mode of ['current','short-interleave','original-clocks']){
+for(const mode of ['current','preserve-start-clock','original-clocks']){
   const trialFolder=probeFolder+'-'+mode;fs.mkdirSync(trialFolder,{recursive:true});
   let trialArgs=argv.slice(1).filter(Boolean).map(arg=>arg.startsWith(folder+'/')?arg.replace(folder,trialFolder):arg);
-  if(mode==='short-interleave')trialArgs.splice(trialArgs.lastIndexOf('-f'),0,'-max_interleave_delta','1000000');
+  if(mode==='preserve-start-clock')trialArgs=trialArgs.map(arg=>arg.startsWith('setts=')?arg.replaceAll('if(eq(N,0),0,','if(eq(N,0),DTS,'):arg);
   if(mode==='original-clocks'){
     for(const flag of ['-bsf:v','-bsf:a']){const at=trialArgs.indexOf(flag);if(at>=0)trialArgs.splice(at,2);}
   }
