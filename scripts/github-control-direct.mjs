@@ -316,6 +316,23 @@ const started=Date.now();
 const relay=spawnSync('ffmpeg',args,{encoding:'utf8',timeout:15000,maxBuffer:200000});
 sourceProbe.relay={elapsedMs:Date.now()-started,status:relay.status,timedOut:relay.error?.code==='ETIMEDOUT',files:fs.readdirSync(probeFolder).map(name=>({name,bytes:fs.statSync(probeFolder+'/'+name).size})),errors:String(relay.stderr||'').split(String.fromCharCode(10)).filter(line=>!line.includes('http')).slice(-8)};
 fs.rmSync(probeFolder,{recursive:true,force:true});
+sourceProbe.liveTrials=[];
+const {spawn}=require('child_process');
+for(const mode of ['current','short-interleave','original-clocks']){
+  const trialFolder=probeFolder+'-'+mode;fs.mkdirSync(trialFolder,{recursive:true});
+  let trialArgs=argv.slice(1).filter(Boolean).map(arg=>arg.startsWith(folder+'/')?arg.replace(folder,trialFolder):arg);
+  if(mode==='short-interleave')trialArgs.splice(trialArgs.lastIndexOf('-f'),0,'-max_interleave_delta','1000000');
+  if(mode==='original-clocks'){
+    for(const flag of ['-bsf:v','-bsf:a']){const at=trialArgs.indexOf(flag);if(at>=0)trialArgs.splice(at,2);}
+  }
+  const child=spawn('ffmpeg',trialArgs,{stdio:['ignore','ignore','ignore']});
+  await new Promise(resolve=>setTimeout(resolve,10000));
+  const manifest=(()=>{try{return fs.readFileSync(trialFolder+'/index.m3u8','utf8')}catch{return ''}})();
+  sourceProbe.liveTrials.push({mode,active:child.exitCode===null,segmentCount:(manifest.match(/^seg_\\d+\\.ts$/gm)||[]).length,files:fs.readdirSync(trialFolder).map(name=>({name,bytes:fs.statSync(trialFolder+'/'+name).size})),durations:(manifest.match(/^#EXTINF:[^\\n]+/gm)||[]).slice(-6)});
+  child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('close',resolve);setTimeout(()=>{child.kill('SIGKILL');resolve()},1000)});
+  fs.rmSync(trialFolder,{recursive:true,force:true});
+}
+
 }catch(e){sourceProbe={error:e?.name||'Source probe failed'};}
 }
 process.stdout.write(JSON.stringify({status:r.status,body:{...b,encoderDiagnostics:{files,processes,sourceProbe}}}));
