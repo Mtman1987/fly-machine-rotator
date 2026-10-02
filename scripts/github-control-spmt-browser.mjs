@@ -144,7 +144,7 @@ const labels=new Set((Array.isArray(inspect.b?.buttons)?inspect.b.buttons:[]).ma
 const canStart=['go live','start stream'].some(label=>labels.has(label));
 const canStop=['end stream','stop stream'].some(label=>labels.has(label));
 const canEnterStudio=labels.has('enter studio');
-const loginRequired=/restream\.io\/login/i.test(String(inspect.b?.url||'')) || /\blog in\b/i.test(String(inspect.b?.title||''));
+const loginRequired=/restream\\.io\\/login/i.test(String(inspect.b?.url||'')) || /\\blog in\\b/i.test(String(inspect.b?.title||''));
 const state=canStop?'live':canStart?'ready':canEnterStudio?'prestudio':loginRequired?'login_required':'unknown';
 process.stdout.write(JSON.stringify({
   ok:true,
