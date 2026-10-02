@@ -489,6 +489,45 @@ async function repair(payload) {
   return { ok: true, source: 'rotator-athena-cli', appName, result };
 }
 
+
+async function loungeViewerRefresh() {
+  const list=await fly(['machines','list','--app',STREAMWEAVER_APP,'--json']);
+  if(!list.ok)throw Error(list.stderr||'Unable to list StreamWeaver machines.');
+  const machines=JSON.parse(list.stdout||'[]');
+  const machine=machines.find(item=>item.state==='started');
+  if(!machine?.id)throw Error('No active StreamWeaver machine.');
+  const source=`
+(async()=>{
+const fs=require('fs'),path=require('path');
+const root=process.env.PERSIST_ROOT||path.resolve(process.cwd(),'data','runtime');
+const target=path.join(root,'tenants','spacemountainlive','data','lounge','lounge-browser-refresh.json');
+const read=async()=>{const r=await fetch('http://127.0.0.1:3000/api/lounge/browser-refresh',{signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Lounge refresh status unavailable');return r.json()};
+const before=await read();
+const previous=fs.existsSync(target)?fs.readFileSync(target,'utf8'):null;
+const disk=previous?JSON.parse(previous):{requestedAt:0};
+if(Number(disk.requestedAt||0)!==Number(before.requestedAt||0))throw Error('Lounge refresh storage did not match the service');
+const requestedAt=Date.now();
+if(requestedAt-Number(before.requestedAt||0)<120000){process.stdout.write(JSON.stringify({ok:true,accepted:false,requestedAt:before.requestedAt}));return;}
+if(!fs.existsSync(path.dirname(target)))throw Error('Lounge storage directory not found');
+const temporary=target+'.owner-control.tmp';
+fs.writeFileSync(temporary,JSON.stringify({requestedAt,requestedBy:'rotator-owner-control'}));
+fs.renameSync(temporary,target);
+try{
+const after=await read();
+if(Number(after.requestedAt)!==requestedAt)throw Error('Lounge refresh request did not reach the service');
+process.stdout.write(JSON.stringify({ok:true,accepted:true,requestedAt,preservedWorkers:['movie','spotlight','restream']}));
+}catch(error){if(previous!==null)fs.writeFileSync(target,previous);else fs.unlinkSync(target);throw error;}
+})().catch(error=>{console.error(error.message);process.exit(1)});
+`;
+  const encoded=Buffer.from(source).toString('base64');
+  const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+  const run=await fly(['ssh','console','--app',STREAMWEAVER_APP,'--machine',String(machine.id),'--command',command,'--quiet'],{timeout:60000});
+  if(!run.ok)throw Error(run.stderr||'Lounge viewer refresh failed');
+  const raw=String(run.stdout||'').trim();const at=raw.indexOf('{');
+  if(at<0)throw Error('Lounge viewer refresh returned malformed output');
+  return {...JSON.parse(raw.slice(at)),machineId:machine.id};
+}
+
 export async function execute(payload) {
   const command = text(payload.command, 40).toLowerCase();
   if (command === 'states') return { ok: true, ...(await readStates(requireApp(payload.appName))) };
@@ -497,6 +536,7 @@ export async function execute(payload) {
   if (command === 'logs') return await logs(requireApp(payload.appName), payload.limit, payload.errorsOnly === true);
   if (command === 'repair') return await repair(payload);
   if (command === 'coderjob') return await coderJobStatus(payload.id);
+  if (command === 'loungeviewerrefresh') return await loungeViewerRefresh();
   if (command === 'streamstatus') return await streamStatus();
   if (command === 'streamstart') return await streamStart();
   if (command === 'spotlightstatus') return await spotlightStatus();
