@@ -147,6 +147,17 @@ async function twitchStateForRecovery() {
   return result.body;
 }
 
+
+async function freshStudioTab(uid) {
+  const source = "\n(async()=>{\nconst fs=require('fs'),path=require('path'),crypto=require('crypto');\nconst uid=Buffer.from(process.argv[1],'base64').toString('utf8');\nconst profile=path.join(process.env.CLOUD_XBOX_PROFILE_ROOT||'/var/lib/spmt-xbox/profiles',crypto.createHash('sha256').update(uid).digest('hex').slice(0,24));\nlet port;\nfor(const pid of fs.readdirSync('/proc').filter(x=>/^\\d+$/.test(x))){\nlet argv;try{argv=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\\0')}catch{continue}\nif(!argv.includes('--user-data-dir='+profile))continue;\nconst flag=argv.find(x=>x.startsWith('--remote-debugging-port='));\nif(flag)port=Number(flag.split('=')[1]);\n}\nif(!port)throw Error('Saved owner browser unavailable');\nconst base='http://127.0.0.1:'+port;\nconst targets=await(await fetch(base+'/json/list',{signal:AbortSignal.timeout(5000)})).json();\nconst studio=targets.filter(t=>t.type==='page'&&/^https:\\/\\/studio\\.restream\\.io\\//i.test(t.url));\nif(!studio.length)throw Error('No existing Restream studio tab; no tab replaced');\nconst made=await fetch(base+'/json/new?'+encodeURIComponent('https://studio.restream.io/'),{method:'PUT',signal:AbortSignal.timeout(10000)});\nif(!made.ok)throw Error('Fresh studio tab could not be opened');\nconst target=await made.json();\nif(!target.id)throw Error('Fresh studio tab returned no target');\nfor(const old of studio)await fetch(base+'/json/close/'+encodeURIComponent(old.id),{signal:AbortSignal.timeout(5000)});\nprocess.stdout.write(JSON.stringify({ok:true,replacedStudioTabs:studio.length,preservedProfile:true}));\n})().catch(e=>{console.error(e?.message||e);process.exit(1)});\n";
+  const encoded=Buffer.from(source,'utf8').toString('base64');
+  const user=Buffer.from(uid,'utf8').toString('base64');
+  const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))" '${user}'`;
+  const run=await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',command,'--quiet'],60000);
+  if(!run.ok)throw Error(run.stderr||'Fresh studio tab recovery failed');
+  await new Promise(resolve=>setTimeout(resolve,8000));
+}
+
 async function restartOfflineHost(uid) {
   const before = await twitchStateForRecovery();
   if (before.isLive) return {ok:true,alreadyLive:true,twitch:before,restarted:false};
@@ -163,7 +174,15 @@ async function restartOfflineHost(uid) {
   const restarted = await fly(['machine','restart',String(host.id),'--app',APP],180000);
   if (!restarted.ok) throw Error(restarted.stderr || 'Browser host restart failed');
   await new Promise(resolve => setTimeout(resolve,8000));
-  const start = await startRestream(uid);
+  let start;
+  try { start = await startRestream(uid); }
+  catch (error) {
+    if (!/Runtime.evaluate timed out/.test(String(error?.message || ''))) throw error;
+    const offline = await twitchStateForRecovery();
+    if (offline.isLive) return {ok:true,restarted:true,twitch:offline,machineId:host.id};
+    await freshStudioTab(uid);
+    start = await startRestream(uid);
+  }
   let twitch = start.twitch;
   for (let attempt = 0; !twitch?.isLive && attempt < 6; attempt++) {
     await new Promise(resolve => setTimeout(resolve,5000));
