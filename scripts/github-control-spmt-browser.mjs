@@ -171,7 +171,10 @@ async function restartOfflineHost(uid) {
   if (!(host.config?.mounts || []).some(m => m.path === '/var/lib/spmt-xbox')) throw Error('Saved browser profile volume missing; no restart performed.');
   const finalGuard = await twitchStateForRecovery();
   if (finalGuard.isLive) return {ok:true,alreadyLive:true,twitch:finalGuard,restarted:false};
-  const restarted = await fly(['machine','restart',String(host.id),'--app',APP],180000);
+  const cpus = Number(host.config?.guest?.cpus || 0);
+  const restarted = cpus > 0 && cpus < 4
+    ? await fly(['machine','update',String(host.id),'--app',APP,'--vm-cpus','4','--yes'],180000)
+    : await fly(['machine','restart',String(host.id),'--app',APP],180000);
   if (!restarted.ok) throw Error(restarted.stderr || 'Browser host restart failed');
   await new Promise(resolve => setTimeout(resolve,8000));
   let start;
