@@ -37,7 +37,7 @@ async function fly(args, timeout = 120000) {
 function parsePayload(encoded) {
   const raw = Buffer.from(String(encoded || ''), 'base64').toString('utf8');
   const payload = JSON.parse(raw);
-  if (!['spmtbrowser','spmtstart'].includes(payload?.command)) throw new Error('Unsupported command.');
+  if (!['spmtbrowser','spmtstart','spmthostrestart'].includes(payload?.command)) throw new Error('Unsupported command.');
   return payload;
 }
 
@@ -133,11 +133,51 @@ async function inspect(uid) {
   return JSON.parse(raw.slice(start));
 }
 
+
+async function twitchStateForRecovery() {
+  const source = "\n(async()=>{\nconst clientId=String(process.env.TWITCH_CLIENT_ID||'').trim();\nconst clientSecret=String(process.env.TWITCH_CLIENT_SECRET||'').trim();\nlet token=String(process.env.TWITCH_ACCESS_TOKEN||'').trim();\nif(!clientId) throw Error('Twitch client id is unavailable for verification');\nif(clientSecret){\n  const tr=await fetch('https://id.twitch.tv/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:'client_credentials'}),signal:AbortSignal.timeout(8000)});\n  const tb=await tr.json().catch(()=>null);\n  if(!tr.ok||!tb?.access_token) throw Error('Twitch app token request failed');\n  token=String(tb.access_token);\n}\nif(!token) throw Error('Twitch access token is unavailable for verification');\nconst r=await fetch('https://api.twitch.tv/helix/streams?user_login=spacemountainlive',{headers:{'client-id':clientId,authorization:'Bearer '+token,accept:'application/json'},signal:AbortSignal.timeout(12000)});\nconst b=await r.json().catch(()=>null);\nconst isLive=Boolean(r.ok&&Array.isArray(b?.data)&&b.data.length);\nprocess.stdout.write(JSON.stringify({status:r.status,body:{ok:r.ok,isLive,startedAt:b?.data?.[0]?.started_at||null,streamId:b?.data?.[0]?.id||null}}));\nif(!r.ok||!Array.isArray(b?.data)) process.exit(2);\n})().catch(e=>{console.error(e?.message||e);process.exit(1)});";
+  const encoded = Buffer.from(source, 'utf8').toString('base64');
+  const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+  const run = await fly(['ssh','console','--app',APP,'--process-group','app','--command',command,'--quiet'],60000);
+  const raw = String(run.stdout || '').trim();
+  const at = raw.indexOf('{');
+  let result = null;
+  if (at >= 0) { try { result = JSON.parse(raw.slice(at)); } catch {} }
+  if (!run.ok || !result?.body?.ok || typeof result.body.isLive !== 'boolean') throw Error('Twitch verification failed; browser host was not restarted.');
+  return result.body;
+}
+
+async function restartOfflineHost(uid) {
+  const before = await twitchStateForRecovery();
+  if (before.isLive) return {ok:true,alreadyLive:true,twitch:before,restarted:false};
+  const list = await fly(['machines','list','--app',APP,'--json'],60000);
+  if (!list.ok) throw Error(list.stderr || 'Browser host inventory failed');
+  const machines = JSON.parse(list.stdout || '[]');
+  const group = m => String(m.process_group || m.config?.metadata?.fly_process_group || m.config?.env?.FLY_PROCESS_GROUP || '');
+  const hosts = machines.filter(m => group(m) === 'xbox' && m.state === 'started');
+  if (hosts.length !== 1) throw Error('Expected exactly one started Xbox browser host; no restart performed.');
+  const host = hosts[0];
+  if (!(host.config?.mounts || []).some(m => m.path === '/var/lib/spmt-xbox')) throw Error('Saved browser profile volume missing; no restart performed.');
+  const finalGuard = await twitchStateForRecovery();
+  if (finalGuard.isLive) return {ok:true,alreadyLive:true,twitch:finalGuard,restarted:false};
+  const restarted = await fly(['machine','restart',String(host.id),'--app',APP],180000);
+  if (!restarted.ok) throw Error(restarted.stderr || 'Browser host restart failed');
+  await new Promise(resolve => setTimeout(resolve,8000));
+  const start = await startRestream(uid);
+  let twitch = start.twitch;
+  for (let attempt = 0; !twitch?.isLive && attempt < 6; attempt++) {
+    await new Promise(resolve => setTimeout(resolve,5000));
+    twitch = await twitchStateForRecovery();
+  }
+  if (!twitch?.isLive) throw Error('Browser host restarted but Twitch has not confirmed live.');
+  return {ok:true,action:'restart-offline-browser-host',machineId:host.id,preservedProfile:true,preservedProcessGroups:['app'],twitch};
+}
+
 async function main() {
   try {
     const payload = parsePayload(process.argv[2]);
     const uid = await ownerId();
-    const result = payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
+    const result = payload.command === 'spmthostrestart' ? await restartOfflineHost(uid) : payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
     process.stdout.write(JSON.stringify(result, null, 2));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok:false, error:redact(error instanceof Error ? error.message : error) }, null, 2));
