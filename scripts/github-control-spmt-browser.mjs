@@ -223,7 +223,8 @@ async function scaleSharedBrowserHost(uid) {
   if(afterGuest?.cpu_kind!=='shared'||Number(afterGuest.cpus)!==6||Number(afterGuest.memory_mb)!==Number(guest.memory_mb))throw Error('Scaled host resources did not match six shared CPUs with unchanged memory');
   let twitch=await twitchStateForRecovery();
   let lastError=null;
-  for(let attempt=0;!twitch.isLive&&attempt<3;attempt++){
+  let browserReady=false;
+  for(let attempt=0;(!twitch.isLive||!browserReady)&&attempt<3;attempt++){
     await new Promise(resolve=>setTimeout(resolve,8000));
     try{await startRestream(uid)}catch(error){
       lastError=String(error?.message||error);
@@ -231,11 +232,13 @@ async function scaleSharedBrowserHost(uid) {
     }
     await new Promise(resolve=>setTimeout(resolve,8000));
     twitch=await twitchStateForRecovery();
+    const studio=await inspect(uid);
+    browserReady=studio.running===true&&studio.probes?.some(p=>p.isStudio&&p.titleLive&&p.simpleEvaluateOk&&p.controls?.canStop===true)===true;
     if(!twitch.isLive&&lastError&&/Runtime.evaluate timed out/.test(lastError)){
       await freshStudioTab(uid);
     }
   }
-  if(!twitch.isLive)throw Error('Shared CPU scale applied but Twitch is not confirmed live: '+String(lastError||'start pending'));
+  if(!twitch.isLive||!browserReady)throw Error('Shared CPU scale applied but studio and Twitch are not both confirmed live: '+String(lastError||'start pending'));
   return {ok:true,action:'owner-approved-shared-cpu-scale',changed,before,after:{machineId:host.id,cpuKind:afterGuest.cpu_kind,cpus:afterGuest.cpus,memoryMb:afterGuest.memory_mb,state:afterMachine.state},preservedProfile:true,beforeTwitch,twitch};
 }
 
