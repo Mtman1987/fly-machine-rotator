@@ -37,7 +37,7 @@ async function fly(args, timeout = 120000) {
 function parsePayload(encoded) {
   const raw = Buffer.from(String(encoded || ''), 'base64').toString('utf8');
   const payload = JSON.parse(raw);
-  if (!['spmtbrowser','spmtstart','spmthostrestart'].includes(payload?.command)) throw new Error('Unsupported command.');
+  if (!['spmtbrowser','spmtstart','spmthostrestart','spmtsharedscale'].includes(payload?.command)) throw new Error('Unsupported command.');
   return payload;
 }
 
@@ -195,11 +195,55 @@ async function restartOfflineHost(uid) {
   return {ok:true,action:'restart-offline-browser-host',machineId:host.id,preservedProfile:true,preservedProcessGroups:['app'],twitch};
 }
 
+
+async function scaleSharedBrowserHost(uid) {
+  const listing = await fly(['machines','list','--app',APP,'--json'],60000);
+  if (!listing.ok) throw Error(listing.stderr || 'Browser host inventory failed');
+  const machines = JSON.parse(listing.stdout || '[]');
+  const group = m => String(m.process_group || m.config?.metadata?.fly_process_group || m.config?.env?.FLY_PROCESS_GROUP || '');
+  const hosts = machines.filter(m => group(m) === 'xbox' && m.state === 'started');
+  if (hosts.length !== 1) throw Error('Expected exactly one started browser host; no scale performed.');
+  const host = hosts[0];
+  const guest = host.config?.guest;
+  if (guest?.cpu_kind !== 'shared') throw Error('Browser host is not shared CPU; no scale performed.');
+  if (!(host.config?.mounts || []).some(m => m.path === '/var/lib/spmt-xbox')) throw Error('Saved browser profile volume missing; no scale performed.');
+  if (![2,4,6].includes(Number(guest.cpus))) throw Error('Unexpected shared CPU count; no scale performed.');
+  const before={machineId:host.id,cpuKind:guest.cpu_kind,cpus:guest.cpus,memoryMb:guest.memory_mb};
+  const beforeTwitch=await twitchStateForRecovery();
+  let changed=false;
+  if(Number(guest.cpus)<6){
+    const update=await fly(['machine','update',String(host.id),'--app',APP,'--vm-cpu-kind','shared','--vm-cpus','6','--yes'],180000);
+    if(!update.ok)throw Error(update.stderr||'Shared CPU scale failed');
+    changed=true;
+  }
+  const check=await fly(['machines','list','--app',APP,'--json'],60000);
+  if(!check.ok)throw Error('Unable to verify scaled browser host');
+  const afterMachine=JSON.parse(check.stdout||'[]').find(m=>m.id===host.id);
+  const afterGuest=afterMachine?.config?.guest;
+  if(afterGuest?.cpu_kind!=='shared'||Number(afterGuest.cpus)!==6||Number(afterGuest.memory_mb)!==Number(guest.memory_mb))throw Error('Scaled host resources did not match six shared CPUs with unchanged memory');
+  let twitch=await twitchStateForRecovery();
+  let lastError=null;
+  for(let attempt=0;!twitch.isLive&&attempt<3;attempt++){
+    await new Promise(resolve=>setTimeout(resolve,8000));
+    try{await startRestream(uid)}catch(error){
+      lastError=String(error?.message||error);
+      if(/requires login|LOGIN_REQUIRED/i.test(lastError))throw error;
+    }
+    await new Promise(resolve=>setTimeout(resolve,8000));
+    twitch=await twitchStateForRecovery();
+    if(!twitch.isLive&&lastError&&/Runtime.evaluate timed out/.test(lastError)){
+      await freshStudioTab(uid);
+    }
+  }
+  if(!twitch.isLive)throw Error('Shared CPU scale applied but Twitch is not confirmed live: '+String(lastError||'start pending'));
+  return {ok:true,action:'owner-approved-shared-cpu-scale',changed,before,after:{machineId:host.id,cpuKind:afterGuest.cpu_kind,cpus:afterGuest.cpus,memoryMb:afterGuest.memory_mb,state:afterMachine.state},preservedProfile:true,beforeTwitch,twitch};
+}
+
 async function main() {
   try {
     const payload = parsePayload(process.argv[2]);
     const uid = await ownerId();
-    const result = payload.command === 'spmthostrestart' ? await restartOfflineHost(uid) : payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
+    const result = payload.command === 'spmtsharedscale' ? await scaleSharedBrowserHost(uid) : payload.command === 'spmthostrestart' ? await restartOfflineHost(uid) : payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
     process.stdout.write(JSON.stringify(result, null, 2));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok:false, error:redact(error instanceof Error ? error.message : error) }, null, 2));
