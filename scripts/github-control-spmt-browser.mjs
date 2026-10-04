@@ -117,7 +117,18 @@ if(!r.ok||!Array.isArray(b?.data)) process.exit(2);
   if (!verified.ok || !twitch?.body?.ok || typeof twitch?.body?.isLive !== 'boolean') {
     throw new Error(verified.stderr || 'Twitch verification failed.');
   }
-  return { ok:true, action:'start-only', alreadyLive:result.body?.alreadyLive===true, state:['live','ready','prestudio','login_required'].includes(result.body?.state)?result.body.state:'unknown', twitch:{ok:twitch.body.ok,isLive:twitch.body.isLive,startedAt:twitch.body.startedAt,streamId:twitch.body.streamId} };
+  let localPreviewRecovery = { requested:false, applied:false };
+  try {
+    if (await localPreviewPolicyRequested(uid)) {
+      localPreviewRecovery.requested = true;
+      for (let attempt=0;attempt<3;attempt++) {
+        const restored=await setLocalPreview(uid,'spmtpreviewoff');
+        if(restored.ok&&restored.localPreviewDisabled){localPreviewRecovery.applied=true;break}
+        if(attempt<2)await new Promise(resolve=>setTimeout(resolve,3000));
+      }
+    }
+  } catch { localPreviewRecovery.retryNeeded = true; }
+  return { ok:true, action:'start-only', localPreviewRecovery, alreadyLive:result.body?.alreadyLive===true, state:['live','ready','prestudio','login_required'].includes(result.body?.state)?result.body.state:'unknown', twitch:{ok:twitch.body.ok,isLive:twitch.body.isLive,startedAt:twitch.body.startedAt,streamId:twitch.body.streamId} };
 }
 
 async function inspect(uid) {
@@ -276,6 +287,15 @@ async function testLocalPreviewUnload(uid) {
 }
 
 
+
+
+async function localPreviewPolicyRequested(uid) {
+ const source="const fs=require('fs'),path=require('path'),crypto=require('crypto');const uid=Buffer.from(process.argv[1],'base64').toString('utf8');const profile=path.join(process.env.CLOUD_XBOX_PROFILE_ROOT||'/var/lib/spmt-xbox/profiles',crypto.createHash('sha256').update(uid).digest('hex').slice(0,24));let enabled=false;try{enabled=JSON.parse(fs.readFileSync(path.join(profile,'spmt-local-preview-policy.json'),'utf8')).enabled===true}catch{}process.stdout.write(JSON.stringify({enabled}));";
+ const encoded=Buffer.from(source,'utf8').toString('base64'),user=Buffer.from(uid,'utf8').toString('base64');
+ const run=await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))" '${user}'`,'--quiet'],60000);
+ const raw=String(run.stdout||'');const at=raw.indexOf('{');
+ return Boolean(run.ok&&at>=0&&JSON.parse(raw.slice(at)).enabled===true);
+}
 
 async function setLocalPreview(uid,command) {
  const twitchBefore=await twitchStateForRecovery();
