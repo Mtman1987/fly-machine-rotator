@@ -37,7 +37,7 @@ async function fly(args, timeout = 120000) {
 function parsePayload(encoded) {
   const raw = Buffer.from(String(encoded || ''), 'base64').toString('utf8');
   const payload = JSON.parse(raw);
-  if (!['spmtbrowser','spmtstart','spmthostrestart','spmtsharedscale','spmtpreviewtest','spmtpreviewunloadtest'].includes(payload?.command)) throw new Error('Unsupported command.');
+  if (!['spmtbrowser','spmtstart','spmthostrestart','spmtsharedscale','spmtpreviewtest','spmtpreviewunloadtest','spmtpreviewoff','spmtpreviewon'].includes(payload?.command)) throw new Error('Unsupported command.');
   return payload;
 }
 
@@ -276,11 +276,25 @@ async function testLocalPreviewUnload(uid) {
 }
 
 
+
+async function setLocalPreview(uid,command) {
+ const twitchBefore=await twitchStateForRecovery();
+ if(!twitchBefore.isLive)throw Error('Twitch is offline; preview policy not applied');
+ const source="(async()=>{\nconst fs=require('fs'),path=require('path'),crypto=require('crypto'),WebSocket=require('ws');\nconst uid=Buffer.from(process.argv[1],'base64').toString('utf8');\nconst profile=path.join(process.env.CLOUD_XBOX_PROFILE_ROOT||'/var/lib/spmt-xbox/profiles',crypto.createHash('sha256').update(uid).digest('hex').slice(0,24));\nlet port;for(const pid of fs.readdirSync('/proc').filter(x=>/^\\d+$/.test(x))){let a;try{a=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\\0')}catch{continue}if(a.includes('--user-data-dir='+profile)){const f=a.find(x=>x.startsWith('--remote-debugging-port='));if(f)port=Number(f.split('=')[1])}}\nif(!port)throw Error('Existing owner browser unavailable');\nconst base='http://127.0.0.1:'+port;\nconst list=()=>fetch(base+'/json/list',{signal:AbortSignal.timeout(5000)}).then(r=>r.json());\nconst targets=await list();\nconst isLounge=url=>{try{const u=new URL(url);return u.hostname==='spmt.live'&&u.pathname==='/tenant/mtman1987/lounge'}catch{return false}};\nif(targets.filter(t=>isLounge(t.url)).length!==1)throw Error('Expected one existing local Lounge preview');\nconst studio=targets.find(t=>t.type==='page'&&/^https:\\/\\/studio\\.restream\\.io\\//.test(t.url));\nif(!studio)throw Error('Studio unavailable');\nasync function connect(target){\n const socket=new WebSocket(target.webSocketDebuggerUrl,{origin:'http://127.0.0.1'});socket.on('error',()=>{});\n await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('Connect timeout')),5000);socket.once('open',()=>{clearTimeout(t);resolve()});socket.once('error',()=>{clearTimeout(t);reject(Error('Connect failed'))})});\n let id=0;const pending=new Map();\n socket.on('message',raw=>{let m;try{m=JSON.parse(String(raw))}catch{return}const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);m.error?p.reject(Error('CDP failed')):p.resolve(m.result)}});\n const call=(method,params={})=>new Promise((resolve,reject)=>{const current=++id;const timer=setTimeout(()=>{pending.delete(current);reject(Error('CDP timeout'))},8000);pending.set(current,{resolve,reject,timer});socket.send(JSON.stringify({id:current,method,params}))});\n return {socket,call,evaluate:async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true}))?.result?.value};\n}\n\nconst enabled=process.argv[2]==='off';\nconst policyFile=path.join(profile,'spmt-local-preview-policy.json');\nlet saved;try{saved=JSON.parse(fs.readFileSync(policyFile,'utf8'))}catch{}\nconst root=await connect(studio);\ntry{\n if(saved?.identifier)await root.call('Page.removeScriptToEvaluateOnNewDocument',{identifier:saved.identifier}).catch(()=>{});\n let identifier=null;\n if(enabled){\n  const installed=await root.call('Page.addScriptToEvaluateOnNewDocument',{source:\"(()=>{try{if(window.top===window||location.hostname!=='spmt.live'||location.pathname!=='/tenant/mtman1987/lounge')return;const u=new URL(location.href);if(u.searchParams.get('localControllerPreview')==='off'&&!u.searchParams.has('previewRestoreMs'))return;u.searchParams.set('localControllerPreview','off');u.searchParams.delete('previewRestoreMs');location.replace(u.href)}catch{}})()\"});\n  identifier=installed.identifier;\n }\n fs.writeFileSync(policyFile,JSON.stringify({enabled,identifier}),{mode:0o600});\n const local=targets.find(t=>isLounge(t.url));\n if(!local)throw Error('Local Lounge preview unavailable');\n const frame=await connect(local);\n try{\n const applied=await frame.evaluate(\"(()=>{const u=new URL(location.href);\"+(enabled?\"u.searchParams.set('localControllerPreview','off');\":\"u.searchParams.delete('localControllerPreview');\")+\"u.searchParams.delete('previewRestoreMs');setTimeout(()=>location.replace(u.href),0);return true})()\");\n await new Promise(r=>setTimeout(r,5000));\n const confirmed=await frame.evaluate(\"document.documentElement.dataset.localControllerPreview==='off'\");\n process.stdout.write(JSON.stringify({ok:enabled?confirmed===true:confirmed===false,action:enabled?'disable-duplicate-local-preview':'restore-duplicate-local-preview',applied,localPreviewDisabled:confirmed===true,reapplyOnStudioReload:Boolean(identifier),scope:'existing Chromium session; browser restart requires reapplication'}));\n }finally{frame.socket.terminate()}\n}finally{root.socket.terminate()}\n})().catch(()=>{process.stdout.write(JSON.stringify({ok:false,errorCode:'Local preview policy failed'}));process.exitCode=1});\n";
+ const encoded=Buffer.from(source,'utf8').toString('base64');
+ const user=Buffer.from(uid,'utf8').toString('base64');
+ const mode=command==='spmtpreviewoff'?'off':'on';
+ const run=await fly(['ssh','console','--app',APP,'--process-group','xbox','--command',`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))" '${user}' '${mode}'`,'--quiet'],60000);
+ const raw=String(run.stdout||'');const at=raw.indexOf('{');
+ if(!run.ok||at<0)throw Error('Local preview policy failed');
+ return {...JSON.parse(raw.slice(at)),twitchBefore,twitchAfter:await twitchStateForRecovery()};
+}
+
 async function main() {
   try {
     const payload = parsePayload(process.argv[2]);
     const uid = await ownerId();
-    const result = payload.command === 'spmtpreviewunloadtest' ? await testLocalPreviewUnload(uid) : payload.command === 'spmtpreviewtest' ? await testLocalPreview(uid) : payload.command === 'spmtsharedscale' ? await scaleSharedBrowserHost(uid) : payload.command === 'spmthostrestart' ? await restartOfflineHost(uid) : payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
+    const result = ['spmtpreviewoff','spmtpreviewon'].includes(payload.command) ? await setLocalPreview(uid,payload.command) : payload.command === 'spmtpreviewunloadtest' ? await testLocalPreviewUnload(uid) : payload.command === 'spmtpreviewtest' ? await testLocalPreview(uid) : payload.command === 'spmtsharedscale' ? await scaleSharedBrowserHost(uid) : payload.command === 'spmthostrestart' ? await restartOfflineHost(uid) : payload.command === 'spmtstart' ? await startRestream(uid) : await inspect(uid);
     process.stdout.write(JSON.stringify(result, null, 2));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok:false, error:redact(error instanceof Error ? error.message : error) }, null, 2));
