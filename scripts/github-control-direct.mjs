@@ -147,14 +147,41 @@ async function signalHistory(requestedLimit) {
   return { ok: true, appName: STREAMWEAVER_APP, machineId: machine.id, readAt: new Date().toISOString(), limit: count, ...payload };
 }
 
-function parseJsonLines(raw) {
+export function parseJsonLines(raw) {
   const rows = [];
+  let buffer = '';
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  const append = (value) => {
+    if (Array.isArray(value)) value.forEach(append);
+    else if (value && typeof value === 'object') rows.push(value);
+  };
+  // flyctl may emit consecutive pretty-printed objects, not just JSONL.
+  // Count complete records before applying the log limit or error filter.
   for (const line of String(raw || '').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try { rows.push(JSON.parse(trimmed)); }
-    catch { rows.push({ message: redact(trimmed) }); }
+    if (!buffer && !/^[\s]*[\[{]/.test(line)) {
+      if (line.trim()) rows.push({ message: redact(line.trim()) });
+      continue;
+    }
+    for (const char of line + '\n') {
+      if (!buffer && /\s/.test(char)) continue;
+      buffer += char;
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === '{' || char === '[') depth++;
+      else if (char === '}' || char === ']') depth--;
+      if (depth === 0 && !quoted && buffer.trim()) {
+        try { append(JSON.parse(buffer)); }
+        catch { rows.push({ message: '[Fly log record could not be decoded]' }); }
+        buffer = '';
+      }
+    }
   }
+  if (buffer.trim()) rows.push({ message: '[Incomplete Fly log record skipped]' });
   return rows;
 }
 
