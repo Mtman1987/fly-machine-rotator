@@ -222,8 +222,8 @@ async function scaleSharedBrowserHost(uid) {
   const before={machineId:host.id,cpuKind:guest.cpu_kind,cpus:guest.cpus,memoryMb:guest.memory_mb};
   const beforeTwitch=await twitchStateForRecovery();
   let changed=false;
-  if(Number(guest.cpus)<6){
-    const update=await fly(['machine','update',String(host.id),'--app',APP,'--vm-cpu-kind','shared','--vm-cpus','6','--yes'],180000);
+  if(Number(guest.cpus)!==4){
+    const update=await fly(['machine','update',String(host.id),'--app',APP,'--vm-cpu-kind','shared','--vm-cpus','4','--yes'],180000);
     if(!update.ok)throw Error(update.stderr||'Shared CPU scale failed');
     changed=true;
   }
@@ -231,7 +231,7 @@ async function scaleSharedBrowserHost(uid) {
   if(!check.ok)throw Error('Unable to verify scaled browser host');
   const afterMachine=JSON.parse(check.stdout||'[]').find(m=>m.id===host.id);
   const afterGuest=afterMachine?.config?.guest;
-  if(afterGuest?.cpu_kind!=='shared'||Number(afterGuest.cpus)!==6||Number(afterGuest.memory_mb)!==Number(guest.memory_mb))throw Error('Scaled host resources did not match six shared CPUs with unchanged memory');
+  if(afterGuest?.cpu_kind!=='shared'||Number(afterGuest.cpus)!==4||Number(afterGuest.memory_mb)!==Number(guest.memory_mb))throw Error('Scaled host resources did not match four shared CPUs with unchanged memory');
   let twitch=await twitchStateForRecovery();
   let lastError=null;
   let browserReady=false;
