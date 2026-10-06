@@ -1,10 +1,11 @@
-import { CreateMachineRequest, FlyClient, FlyMachine, Lease, StopMachineRequest } from "./types.js";
+import type { CreateMachineRequest, FlyClient, FlyMachine, Lease, StopMachineRequest } from "./types.js";
 
 interface FlyApiClientOptions {
   token: string;
   hostname?: string;
   minIntervalMs?: number;
   maxRetries?: number;
+  requestTimeoutMs?: number;
 }
 
 export class FlyApiClient implements FlyClient {
@@ -12,6 +13,7 @@ export class FlyApiClient implements FlyClient {
   private readonly hostname: string;
   private readonly minIntervalMs: number;
   private readonly maxRetries: number;
+  private readonly requestTimeoutMs: number;
   private nextRequestAt = 0;
 
   constructor(options: FlyApiClientOptions) {
@@ -19,6 +21,7 @@ export class FlyApiClient implements FlyClient {
     this.hostname = (options.hostname ?? "https://api.machines.dev").replace(/\/$/, "");
     this.minIntervalMs = options.minIntervalMs ?? 400;
     this.maxRetries = options.maxRetries ?? 4;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
   }
 
   listMachines(appName: string): Promise<FlyMachine[]> {
@@ -72,15 +75,27 @@ export class FlyApiClient implements FlyClient {
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       await this.throttle();
-      const response = await fetch(`${this.hostname}${path}`, {
-        method,
-        headers: {
-          "Authorization": `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-          ...(leaseNonce ? { "fly-machine-lease-nonce": leaseNonce } : {})
-        },
-        body: body === undefined ? undefined : JSON.stringify(body)
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${this.hostname}${path}`, {
+          method,
+          headers: {
+            "Authorization": `Bearer ${this.token}`,
+            "Content-Type": "application/json",
+            ...(leaseNonce ? { "fly-machine-lease-nonce": leaseNonce } : {})
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(path.includes("/wait?") ? 75_000 : this.requestTimeoutMs),
+          redirect: "error"
+        });
+      } catch {
+        lastError = new Error(`${method} ${path} failed with network_or_timeout`);
+        // A mutation may have succeeded before its response was lost. Never
+        // replay machine creation/start/stop or lease acquisition blindly.
+        if (!isReplaySafe(method) || attempt === this.maxRetries) break;
+        await sleep(backoffMs(attempt));
+        continue;
+      }
 
       if (ignoreStatuses.includes(response.status)) {
         return undefined as T;
@@ -93,26 +108,30 @@ export class FlyApiClient implements FlyClient {
       }
 
       const retryAfterMs = retryAfterToMs(response.headers.get("retry-after"));
-      const text = await response.text().catch(() => "");
-      lastError = new Error(`${method} ${path} failed with ${response.status}: ${text}`);
+      await response.body?.cancel();
+      lastError = new Error(`${method} ${path} failed with ${response.status}`);
 
-      if (!shouldRetry(response.status) || attempt === this.maxRetries) break;
-      await sleep(retryAfterMs ?? backoffMs(attempt));
+      if (!shouldRetry(method, response.status) || attempt === this.maxRetries) break;
+      await sleep(retryAfterMs === undefined ? backoffMs(attempt) : Math.min(30_000, Math.max(0, retryAfterMs)));
     }
     throw lastError;
   }
 
   private async throttle(): Promise<void> {
     const now = Date.now();
-    if (now < this.nextRequestAt) {
-      await sleep(this.nextRequestAt - now);
-    }
-    this.nextRequestAt = Date.now() + this.minIntervalMs;
+    const reservedAt = Math.max(now, this.nextRequestAt);
+    // Reserve the slot before awaiting; concurrent callers cannot share it.
+    this.nextRequestAt = reservedAt + this.minIntervalMs;
+    if (reservedAt > now) await sleep(reservedAt - now);
   }
 }
 
-function shouldRetry(status: number): boolean {
-  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+function isReplaySafe(method: string): boolean { return method === "GET" || method === "DELETE"; }
+
+function shouldRetry(method: string, status: number): boolean {
+  // These responses explicitly reject the operation; ambiguous 408/5xx
+  // responses can only be retried for reads and idempotent lease release.
+  return status === 409 || status === 425 || status === 429 || (isReplaySafe(method) && (status === 408 || status >= 500));
 }
 
 function backoffMs(attempt: number): number {
