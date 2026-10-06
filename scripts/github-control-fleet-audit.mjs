@@ -33,8 +33,11 @@ async function machine(app,m) {
   const guest=m.config?.guest||m.guest||{};
   const out={id:m.id,state:m.state,region:m.region,processGroup:m.config?.metadata?.fly_process_group||m.process_group||null,cpus:guest.cpus??null,cpuKind:guest.cpu_kind??null,ramAllocatedMb:guest.memory_mb??null,checks:(m.checks||[]).map(c=>({name:c.name,status:c.status})),usage:null};
   if(m.state==='started') {
-    const r=await fly(['machine','exec','--app',app,m.id,'node','-e',probe],20000);
-    const p=r.ok?json(r.text.trim()):null;
+    const encoded=Buffer.from(probe,'utf8').toString('base64');
+    const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+    const r=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',command,'--quiet'],30000);
+    const match=r.ok?r.text.match(/\{\"cpuUsedPercent\"[^\n]*\}/):null;
+    const p=match?json(match[0]):null;
     out.usage=p&&typeof p.cpuUsedPercent==='number'?p:{unavailable:true};
   }
   return out;
