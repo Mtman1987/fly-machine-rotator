@@ -205,6 +205,37 @@ async function logs(appName, requestedLimit, errorsOnly) {
   return { ok: result.every((row) => row.ok), sampledAt: new Date().toISOString(), errorsOnly: Boolean(errorsOnly), apps: result };
 }
 
+export function safeCoderJob(payload) {
+  const job = payload?.job || payload || {};
+  const checks = Array.isArray(job.checks) ? job.checks : [];
+  const baseline = Array.isArray(job.baselineChecks) ? job.baselineChecks : [];
+  const error = String(job.error || '');
+  const rules = [
+    ['disk_full', /ENOSPC|no space left/i],
+    ['interrupted_restart', /interrupted.{0,80}restart/i],
+    ['timeout', /timed? out|timeout/i],
+    ['provider_failure', /HTTP (401|403|429|5\d\d)|provider|OpenAI|Qwen|Eden/i],
+    ['validation_failure', /baseline|validation|typecheck|test|build|check/i],
+    ['dependency_failure', /dependency|dependencies|npm|install/i]
+  ];
+  return {
+    id: String(job.id || '').slice(0,120),
+    appName: String(job.appName || '').slice(0,120),
+    repoId: String(job.repoId || '').slice(0,120),
+    status: String(job.status || 'unknown').slice(0,40),
+    createdAt: job.createdAt || null,
+    updatedAt: job.updatedAt || null,
+    changedFileCount: Array.isArray(job.changedFiles) ? job.changedFiles.length : 0,
+    checkCount: checks.length,
+    passingCheckCount: checks.filter(c => c.ok === true).length,
+    failingCheckCount: checks.filter(c => c.ok === false).length,
+    baselineCheckCount: baseline.length,
+    failingBaselineCheckCount: baseline.filter(c => c.ok === false).length,
+    errorCategory: error ? (rules.find(([,rule]) => rule.test(error))?.[0] || 'generic_failure') : null,
+    pullRequestNumber: Number(job.pullRequest?.number) || null
+  };
+}
+
 async function coderJobStatus(id) {
   const jobId = text(id, 120);
   if (!/^mtfix_[a-zA-Z0-9_-]{8,100}$/.test(jobId)) throw new Error('Invalid coder job id.');
@@ -214,7 +245,7 @@ async function coderJobStatus(id) {
   const raw = run.stdout.trim();
   const start = raw.indexOf('{');
   if (start < 0) throw new Error('Coder job status returned malformed output.');
-  try { return { ok: true, job: JSON.parse(raw.slice(start)) }; }
+  try { return { ok: true, job: safeCoderJob(JSON.parse(raw.slice(start))) }; }
   catch { throw new Error('Coder job status returned malformed JSON.'); }
 }
 
