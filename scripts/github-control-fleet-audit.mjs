@@ -6,6 +6,7 @@ const EXPECTED = new Set(['chat-tag-bot-new','chat-tag-new','discord-stream-hub-
 // process arguments, environment variables, health output, or command stderr.
 export function classify(message) {
   const s=String(message||'');
+  if (s.includes('Optional EventSub integration is off; this is not a bot authentication error.')) return null;
   const rules=[['out_of_memory',/out of memory|oom.kill|oom-kill|oomkilled/i],['disk_full',/ENOSPC|no space left on device/i],['auth_failure',/invalid.{0,20}token|token.{0,20}(expired|invalid)|unauthori[sz]ed|invalid_grant/i],['health_failure',/health check.{0,200}fail/i],['lease_conflict',/lease currently held|lease.{0,40}conflict/i],['fetch_failure',/fetch failed|UND_ERR_SOCKET|ECONNRESET|ECONNREFUSED/i],['timeout',/timed? out|timeout|ETIMEDOUT/i],['rate_limit',/rate.limit|too many requests/i],['unhandled_failure',/unhandled|uncaught|panic|fatal/i],['playback_failure',/stopped advancing|buffer.{0,40}(fail|timeout)|ffmpeg.{0,40}(error|failed)/i],['generic_failure',/\berror\b|\bexception\b|\bfailed\b|\brejection\b/i],['warning',/\bwarn(?:ing)?\b/i]];
   return rules.find(([,r])=>r.test(s))?.[0]||null;
 }
