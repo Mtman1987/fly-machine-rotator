@@ -1,0 +1,23 @@
+name: Agents service discovery
+on:
+  push:
+    branches: [fix/agents-service-discovery-20261006]
+permissions:
+  contents: read
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Inspect source metadata and listener metrics without configuration or logs
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl machines list --app spmt-agents --json > "$RUNNER_TEMP/agents-machines.json"
+          python3 - "$RUNNER_TEMP/agents-machines.json" <<'PY'
+          import json,sys
+          m=json.load(open(sys.argv[1]))
+          print(json.dumps({"machineCount":len(m),"sharedCpuCount":sum(x.get("config",{}).get("guest",{}).get("cpu_kind")=="shared" for x in m),"configuredCheckCount":sum(len(x.get("config",{}).get("checks",{})) for x in m)}))
+          PY
+          flyctl ssh console --app spmt-agents --quiet --command 'node -e "const fs=require(\"node:fs\");const repos=[];let manifests=0;for(const p of [\"/app/package.json\",\"/app/agent/package.json\",\"/app/server/package.json\"]){try{const j=JSON.parse(fs.readFileSync(p,\"utf8\"));manifests++;const r=String(j.repository?.url||j.repository||\"\");const m=r.match(/^https:\/\/github.com\/(Mtman1987\/[A-Za-z0-9_.-]+)(?:\\.git)?$/);if(m)repos.push(m[1])}catch{}}const ports=[];for(const p of [\"/proc/net/tcp\",\"/proc/net/tcp6\"]){try{for(const line of fs.readFileSync(p,\"utf8\").trim().split(\"\\n\").slice(1)){const f=line.trim().split(/\\s+/);if(f[3]===\"0A\")ports.push(parseInt(f[1].split(\":\").at(-1),16))}}catch{}}console.log(JSON.stringify({manifestCount:manifests,sourceRepositoryCount:repos.length,sourceRepositories:repos,listeningPorts:[...new Set(ports)].sort((a,b)=>a-b)}))"'
