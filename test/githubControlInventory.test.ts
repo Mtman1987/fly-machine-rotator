@@ -59,7 +59,9 @@ describe("github-control-inventory runner", () => {
     expect(inventory).not.toContain("process.env[");
     expect(inventory).not.toContain("payload.path");
     expect(inventory).not.toContain("payload.commandLine");
-    const managedApps = direct.match(/const MANAGED_APPS = \\[([\\s\\S]*?)\\];/)?.[1] || "";
+    const managedStart = direct.indexOf("const MANAGED_APPS = [");
+    const managedApps = direct.slice(managedStart, direct.indexOf("];", managedStart));
+    expect(managedApps).toContain("'chat-tag-new'");
     expect(managedApps).not.toContain("'spmt-live'");
     expect(direct).toContain("[...MANAGED_APPS, 'spmt-live', ROTATOR_APP].includes(appName)");
     expect(workflow).toContain("github-control-inventory.mjs");
