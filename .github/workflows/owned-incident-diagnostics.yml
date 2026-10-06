@@ -1,0 +1,21 @@
+name: Chat Tag and agents incident diagnostics
+on:
+  push:
+    branches: [diagnose/chat-tag-fleet-20261006]
+permissions:
+  contents: read
+jobs:
+  diagnostics:
+    if: github.actor == 'Mtman1987'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Export numerical probes and fixed error categories only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/owned-incident-diagnostics.mjs
