@@ -30,13 +30,15 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|repair|coderjob|spmtbrowser|spmtstart|spmthostrestart|spmtsharedscale|spmtpreviewtest|spmtpreviewunloadtest|spmtpreviewoff|spmtpreviewon|spmtmedia|spmtidleoff|spmtidleon|spmtidlekeep|spmtplaceholderoff|spmtplaceholderon|spmtplaceholderkeep|spmtpreviewrestore|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|loungeviewerrefresh|wordchainstop|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|audit|inventory|signal|logs|repair|coderjob|spmtbrowser|spmtstart|spmthostrestart|spmtsharedscale|spmtpreviewtest|spmtpreviewunloadtest|spmtpreviewoff|spmtpreviewon|spmtmedia|spmtidleoff|spmtidleon|spmtidlekeep|spmtplaceholderoff|spmtplaceholderon|spmtplaceholderkeep|spmtpreviewrestore|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|loungeviewerrefresh|wordchainstop|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
             const payload = { command };
 
-            if (command === 'states') {
+            if (command === 'audit') {
+              if (rest) core.setFailed('audit does not accept arguments.');
+            } else if (command === 'states') {
               if (rest) payload.appName = rest.split(/\s+/)[0].slice(0, 120);
             } else if (command === 'inventory') {
               if (!rest) core.setFailed('inventory requires: /rotator inventory <hearmeout-main|hmo-dj-worker|spmt-live>');
@@ -115,6 +117,8 @@ jobs:
             node scripts/github-control-twitch-status.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "signal" ]; then
             node scripts/github-control-signal.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
+          elif [ "$COMMAND_NAME" = "audit" ]; then
+            node scripts/github-control-fleet-audit.mjs > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "inventory" ]; then
             node scripts/github-control-inventory.mjs "$CONTROL_PAYLOAD" > control-result.txt 2>&1
           elif [ "$COMMAND_NAME" = "hmocopy" ]; then
