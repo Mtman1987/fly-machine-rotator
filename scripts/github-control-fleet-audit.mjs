@@ -34,11 +34,16 @@ async function machine(app,m) {
   const guest=m.config?.guest||m.guest||{};
   const out={id:m.id,state:m.state,region:m.region,processGroup:m.config?.metadata?.fly_process_group||m.process_group||null,cpus:guest.cpus??null,cpuKind:guest.cpu_kind??null,ramAllocatedMb:guest.memory_mb??null,checks:(m.checks||[]).map(c=>({name:c.name,status:c.status})),usage:null};
   if(m.state==='started') {
-    const encoded=Buffer.from(probe,'utf8').toString('base64');
-    const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
-    const r=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',command,'--quiet'],30000);
-    const match=r.ok?r.text.match(/\{\"cpuUsedPercent\"[^\n]*\}/):null;
-    let p=match?json(match[0]):null;
+    let p=null;
+    // This image lacks Node. Use its existing awk probe without creating
+    // Fly exec failure records for an unavailable diagnostic executable.
+    if(app!=='spmt-agents') {
+      const encoded=Buffer.from(probe,'utf8').toString('base64');
+      const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
+      const r=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',command,'--quiet'],30000);
+      const match=r.ok?r.text.match(/\{"cpuUsedPercent"[^\n]*\}/):null;
+      p=match?json(match[0]):null;
+    }
     if(!p || typeof p.cpuUsedPercent!=='number') {
       const fallback=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',fallbackProbe,'--quiet'],30000);
       const row=fallback.ok?fallback.text.match(/\{\"cpuUsedPercent\"[^\n]*\}/):null;
