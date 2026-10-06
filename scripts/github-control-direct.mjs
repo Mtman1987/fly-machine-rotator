@@ -501,7 +501,8 @@ async function wordChainStop() {
 }
 
 async function repair(payload) {
-  const appName = requireApp(payload.appName);
+  const appName = text(payload.appName);
+  if (![...MANAGED_APPS, 'spmt-live', ROTATOR_APP].includes(appName)) throw new Error('Repair app is not in the bounded allowlist.');
   const description = text(payload.description, 4000);
   if (!appName || !description) throw new Error('repair requires an allowlisted app and a problem description.');
   const encoded = Buffer.from(JSON.stringify({ appName, description }), 'utf8').toString('base64');
