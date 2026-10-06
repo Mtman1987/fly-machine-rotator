@@ -28,6 +28,7 @@ function records(s) {
   }
   return rows;
 }
+const fallbackProbe="awk 'BEGIN {getline line < \"/proc/stat\"; close(\"/proc/stat\"); split(line,a,\" \"); total=0; for(i=2;i<=9;i++) total+=a[i]; idle=a[5]+a[6]; system(\"sleep 2\"); getline line < \"/proc/stat\"; close(\"/proc/stat\"); split(line,b,\" \"); t=0; for(i=2;i<=9;i++) t+=b[i]; d=t-total; used=d?100*(1-((b[5]+b[6]-idle)/d)):0; while((getline line < \"/proc/meminfo\")>0) {split(line,m,\" \"); if(m[1]==\"MemTotal:\") mt=m[2]; if(m[1]==\"MemAvailable:\") ma=m[2]} if(mt>0) printf \"{\\\"cpuUsedPercent\\\":%.1f,\\\"cpuIdlePercent\\\":%.1f,\\\"ramTotalMb\\\":%.0f,\\\"ramUsedMb\\\":%.0f,\\\"ramAvailableMb\\\":%.0f,\\\"ramUsedPercent\\\":%.1f,\\\"sampleSeconds\\\":2}\\n\",used,100-used,mt/1024,(mt-ma)/1024,ma/1024,100*(1-ma/mt); else exit 1;}'";
 const probe=String.raw`const fs=require('fs');const read=p=>fs.readFileSync(p,'utf8');const cpu=()=>read('/proc/stat').split('\n')[0].trim().split(/\s+/).slice(1,9).map(Number);const a=cpu();setTimeout(()=>{const b=cpu(),d=b.map((v,i)=>v-a[i]),total=d.reduce((x,y)=>x+y,0),idle=d[3]+d[4];const mem=Object.fromEntries(read('/proc/meminfo').split('\n').map(l=>{const m=l.match(/^(\w+):\s+(\d+)/);return m?[m[1],Number(m[2])]:[]}).filter(x=>x.length));const totalMb=mem.MemTotal/1024,availableMb=mem.MemAvailable/1024;console.log(JSON.stringify({cpuUsedPercent:total?Math.round((1-idle/total)*1000)/10:null,cpuIdlePercent:total?Math.round(idle/total*1000)/10:null,ramTotalMb:Math.round(totalMb),ramUsedMb:Math.round(totalMb-availableMb),ramAvailableMb:Math.round(availableMb),ramUsedPercent:Math.round((1-availableMb/totalMb)*1000)/10,sampleSeconds:2}));},2000);`;
 async function machine(app,m) {
   const guest=m.config?.guest||m.guest||{};
@@ -37,7 +38,12 @@ async function machine(app,m) {
     const command=`node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`;
     const r=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',command,'--quiet'],30000);
     const match=r.ok?r.text.match(/\{\"cpuUsedPercent\"[^\n]*\}/):null;
-    const p=match?json(match[0]):null;
+    let p=match?json(match[0]):null;
+    if(!p || typeof p.cpuUsedPercent!=='number') {
+      const fallback=await fly(['ssh','console','--app',app,'--machine',m.id,'--command',fallbackProbe,'--quiet'],30000);
+      const row=fallback.ok?fallback.text.match(/\{\"cpuUsedPercent\"[^\n]*\}/):null;
+      p=row?json(row[0]):null;
+    }
     out.usage=p&&typeof p.cpuUsedPercent==='number'?p:{unavailable:true};
   }
   return out;
@@ -49,7 +55,7 @@ async function appAudit(name) {
   const logRows=lr.ok?records(lr.text):[];
   const counts={};for(const row of logRows){const c=classify(row.message||row.msg||row.log||'');if(c)counts[c]=(counts[c]||0)+1;}
   const times=logRows.map(r=>r.timestamp||r.time||r.ts).filter(t=>typeof t==='string'&&/^\d{4}-\d\d-\d\dT/.test(t)).sort();
-  return {app:name,expectedRunning:EXPECTED.has(name),inventoryOk:Array.isArray(machinesRaw),machines,logs:{readOk:lr.ok,recordCount:logRows.length,firstAt:times[0]||null,lastAt:times.at(-1)||null,counts},findings:[...(EXPECTED.has(name)&&!machines.some(m=>m.state==='started')?['no_running_machine']:[]),...(machines.some(m=>m.state==='started'&&m.checks.some(c=>['critical','failing','fail'].includes(c.status)))?['failing_health_checks']:[]),...(machines.some(m=>m.usage?.ramUsedPercent>=85)?['high_ram']:[]),...(machines.some(m=>m.usage?.cpuUsedPercent>=85)?['high_cpu_sample']:[]),...(!lr.ok?['logs_unavailable']:[]),...(!Array.isArray(machinesRaw)?['inventory_unavailable']:[]),...(machines.some(m=>m.usage?.unavailable)?['usage_unavailable']:[])]};
+  return {app:name,expectedRunning:EXPECTED.has(name),inventoryOk:Array.isArray(machinesRaw),machines,logs:{readOk:lr.ok,recordCount:logRows.length,firstAt:times[0]||null,lastAt:times.at(-1)||null,counts},findings:[...(machines.some(m=>m.cpuKind==='performance')?['performance_cpu']:[]),...(machines.some(m=>m.cpus>4)?['cpu_above_four']:[]),...(machines.some(m=>m.state==='started'&&!m.checks.length)?['health_checks_not_configured']:[]),...(EXPECTED.has(name)&&!machines.some(m=>m.state==='started')?['no_running_machine']:[]),...(machines.some(m=>m.state==='started'&&m.checks.some(c=>['critical','failing','fail'].includes(c.status)))?['failing_health_checks']:[]),...(machines.some(m=>m.usage?.ramUsedPercent>=85)?['high_ram']:[]),...(machines.some(m=>m.usage?.cpuUsedPercent>=85)?['high_cpu_sample']:[]),...(!lr.ok?['logs_unavailable']:[]),...(!Array.isArray(machinesRaw)?['inventory_unavailable']:[]),...(machines.some(m=>m.usage?.unavailable)?['usage_unavailable']:[])]};
 }
 export async function audit() {
   const r=await fly(['apps','list','--json']);const all=r.ok?json(r.text):null;
