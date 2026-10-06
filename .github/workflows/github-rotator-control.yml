@@ -30,7 +30,7 @@ jobs:
         with:
           script: |
             const body = String(context.payload.comment.body || '').trim();
-            const match = body.match(/^\/rotator\s+(rotate|states|audit|inventory|signal|logs|repair|coderjob|spmtbrowser|spmtstart|spmthostrestart|spmtsharedscale|spmtpreviewtest|spmtpreviewunloadtest|spmtpreviewoff|spmtpreviewon|spmtmedia|spmtidleoff|spmtidleon|spmtidlekeep|spmtplaceholderoff|spmtplaceholderon|spmtplaceholderkeep|spmtpreviewrestore|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|loungeviewerrefresh|wordchainstop|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
+            const match = body.match(/^\/rotator\s+(rotate|states|inventory|signal|logs|audit|repair|coderjob|spmtbrowser|spmtstart|spmthostrestart|spmtsharedscale|spmtpreviewtest|spmtpreviewunloadtest|spmtpreviewoff|spmtpreviewon|spmtmedia|spmtidleoff|spmtidleon|spmtidlekeep|spmtplaceholderoff|spmtplaceholderon|spmtplaceholderkeep|spmtpreviewrestore|twitchstatus|streamstatus|streamstart|spotlightstatus|spotlightrestart|loungerestart|loungeviewerrefresh|wordchainstop|chatqueue|chatjob|chatdone|hmocopy|hmocanary|hmoav)(?:\s+([\s\S]*))?$/i);
             if (!match) core.setFailed('Unsupported Rotator command syntax.');
             const command = String(match?.[1] || '').toLowerCase();
             const rest = String(match?.[2] || '').trim();
