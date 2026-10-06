@@ -1,0 +1,31 @@
+name: Fleet audit excluding partner apps
+on:
+  push:
+    branches: [diagnose/chat-tag-fleet-20261006]
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: github.actor == 'Mtman1987'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Audit owned apps only with fixed categories and numerical metrics
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const path='scripts/github-control-fleet-audit.mjs';
+          let source=fs.readFileSync(path,'utf8');
+          const marker=".filter(n=>typeof n==='string'&&/^[a-z0-9-]+$/.test(n))";
+          if(!source.includes(marker))throw Error('audit_filter_missing');
+          source=source.replace(marker,".filter(n=>typeof n==='string'&&/^[a-z0-9-]+$/.test(n)&&!['aetherra','mika-bot'].includes(n))");
+          fs.writeFileSync(path,source);
+          JS
+          node scripts/github-control-fleet-audit.mjs
