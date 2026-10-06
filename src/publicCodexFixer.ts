@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRepoConfigForApp, listRepoConfigs, type RepoConfig } from "./repoMap.js";
 import { buildRepositoryContext } from "./coderContext.js";
+import { writeAtomicJson } from "./atomicJson.js";
 import { ensureRepoDependencies, ensureRepoReady, pushRepoBranch } from "./repoOps.js";
 import { requireSpmtAdmin } from "./spmtAuth.js";
 
@@ -75,7 +76,7 @@ async function jobFile(env: NodeJS.ProcessEnv, id: string) {
 async function saveJob(env: NodeJS.ProcessEnv, job: PublicCodexJob) {
   const file = await jobFile(env, job.id);
   await mkdir(join(rootDir(env), "jobs"), { recursive: true });
-  await writeFile(file, JSON.stringify(job, null, 2));
+  await writeAtomicJson(file, job);
 }
 
 export async function readCodexJob(env: NodeJS.ProcessEnv, id: string): Promise<PublicCodexJob | null> {
@@ -113,7 +114,7 @@ export async function reconcileInterruptedCodexJobs(env: NodeJS.ProcessEnv): Pro
       job.status = "failed";
       job.error = "Coder job was interrupted by a rotator restart before completion. Safe to retry.";
       job.updatedAt = new Date().toISOString();
-      await writeFile(file, JSON.stringify(job, null, 2));
+      await writeAtomicJson(file, job);
       reconciled += 1;
     } catch {
       // Ignore malformed historical job files; normal job reads already skip them.
@@ -596,7 +597,10 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
       checks: [],
     };
     await saveJob(env, job);
-    void executeJob(job, input, repo, env);
+    void executeJob(job, input, repo, env).catch((error: unknown) => {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      console.error("[Coder] Durable job save failed", { category: code === "ENOSPC" ? "disk_full" : "persistence_failure" });
+    });
     return sendJson(response, 202, { ok: true, job, dashboardUrl: String(env.PUBLIC_DASHBOARD_URL || "https://mtman-machine-rotator.fly.dev/"), coderUrl: "/athena/coder" }), true;
   }
 
