@@ -62,3 +62,18 @@ jobs:
                   status = 0
               print(json.dumps({'url':url,'status':status,'elapsedMs':round((time.monotonic()-started)*1000)}))
           PY
+      - name: Increase Chat Tag web RAM headroom on its existing shared CPU machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import json, subprocess
+          app='chat-tag-new'
+          rows=json.loads(subprocess.check_output(['flyctl','machines','list','--app',app,'--json']))
+          assert len(rows)==1 and rows[0]['id']=='d892e7ec137ed8'
+          g=rows[0]['config']['guest']
+          assert g['cpu_kind']=='shared' and g['cpus']==2
+          if g['memory_mb']<2048:
+              subprocess.run(['flyctl','machine','update',rows[0]['id'],'--app',app,'--memory','2048','--cpus','2','--vm-cpu-kind','shared','--yes'],check=True,timeout=240)
+          print('Chat Tag web now has 2 GB RAM on two shared CPUs.')
+          PY
