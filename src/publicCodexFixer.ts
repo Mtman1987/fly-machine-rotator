@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRepoConfigForApp, listRepoConfigs, type RepoConfig } from "./repoMap.js";
 import { buildRepositoryContext } from "./coderContext.js";
 import { writeAtomicJson } from "./atomicJson.js";
+import { readFreeCoderPolicy, generateFreeGeminiCode } from "./freeGeminiCoder.js";
 import { ensureRepoDependencies, ensureRepoReady, pushRepoBranch } from "./repoOps.js";
 import { requireSpmtAdmin } from "./spmtAuth.js";
 
@@ -177,9 +178,13 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
   if (!response.ok) throw new Error(`Qwen Coder HTTP ${response.status}: ${redact(JSON.stringify(body))}`);
   const content = String(body.choices?.[0]?.message?.content || "").trim();
   const result = parseQwenCoderResult(content);
+  return applyCoderResult(result, workspace, env);
+}
+
+async function applyCoderResult(result: { summary: string; patch: string }, workspace: string, env: NodeJS.ProcessEnv): Promise<string> {
   if (result.patch) {
-    if (result.patch.length > 120_000) throw new Error("Qwen Coder patch exceeded the safety limit.");
-    const patchFile = join(rootDir(env), "tmp", `qwen-${randomUUID()}.patch`);
+    if (result.patch.length > 120_000) throw new Error("Coder patch exceeded the safety limit.");
+    const patchFile = join(rootDir(env), "tmp", `coder-${randomUUID()}.patch`);
     await mkdir(join(rootDir(env), "tmp"), { recursive: true });
     await writeFile(patchFile, result.patch);
     try {
@@ -335,7 +340,19 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     const reset = await runCommand("git reset --hard HEAD && git clean -fd", workspace);
     if (!reset.ok) throw new Error("Could not reset baseline validation side effects.");
 
-    if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim()) {
+    const freePolicy = await readFreeCoderPolicy(env);
+    if (freePolicy) {
+      const description = redact(String(input.description || "").slice(0, 4000));
+      const context = redact(await buildRepositoryContext(description, workspace));
+      const content = await generateFreeGeminiCode(env, description, context, freePolicy, { repoUrl: repo.repoUrl, commit: job.baseCommit! });
+      let decoded: unknown;
+      try { decoded = JSON.parse(content); } catch { throw new Error("Free Gemini Coder JSON invalid."); }
+      if (!decoded || typeof decoded !== "object" || typeof (decoded as any).summary !== "string" || typeof (decoded as any).patch !== "string") {
+        throw new Error("Free Gemini Coder result schema invalid.");
+      }
+      const result = parseQwenCoderResult(content);
+      job.summary = await applyCoderResult(result, workspace, env);
+    } else if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim()) {
       job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);
     } else {
       if (!hasRealOpenAiKey(env)) throw new Error("Codex requires a real OpenAI key.");
