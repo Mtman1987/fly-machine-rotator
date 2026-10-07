@@ -1,0 +1,58 @@
+name: Recover SDK dependency and verify bot API
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/sdk-dependency-recovery.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Recover existing SDK web process if dependency is unavailable
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import json, subprocess, urllib.request
+          url='https://spmt.live/sdk/spmt-sdk-0.1.4.tgz'
+          try:
+              with urllib.request.urlopen(url,timeout=15) as r: status=r.status
+          except urllib.error.HTTPError as e: status=e.code
+          except Exception: status=0
+          if status != 200:
+              rows=json.loads(subprocess.check_output(['flyctl','machines','list','--app','spmt-live','--json']))
+              matches=[m for m in rows if m['id']=='8d0274ce21e918' and m['config']['metadata'].get('fly_process_group')=='app']
+              assert len(matches)==1, 'Expected SDK web process only'
+              guest=matches[0]['config']['guest']
+              assert guest['cpu_kind']=='shared'
+              subprocess.run(['flyctl','machine','restart',matches[0]['id'],'--app','spmt-live'],capture_output=True,check=True,timeout=180)
+              print('sdk_web_process_restarted')
+          else: print('sdk_dependency_available')
+          PY
+      - name: Verify bot outbound APIs without publishing configuration or responses
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import base64,subprocess
+          source="""(async()=>{const base=process.env.API_BASE||'https://chat-tag-new.fly.dev';const paths=['/api/health','/api/tag','/api/bot/blacklist','/api/bot/muted'];const out=[];for(const p of paths){const t=Date.now();try{const r=await fetch(base+p,{headers:{'x-bot-secret':process.env.BOT_SECRET_KEY||''},signal:AbortSignal.timeout(10000)});await r.arrayBuffer();out.push({target:paths.indexOf(p),status:r.status,elapsedMs:Date.now()-t})}catch{out.push({target:paths.indexOf(p),status:0,elapsedMs:Date.now()-t})}}console.log(JSON.stringify({apiBaseIsExpected:base==='https://chat-tag-new.fly.dev',results:out}));})().catch(()=>process.exit(1));"""
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          r=subprocess.run(['flyctl','ssh','console','--app','chat-tag-bot-new','--machine','48ee03ea331e08','--command',command,'--quiet'],capture_output=True,text=True,timeout=90)
+          for line in r.stdout.splitlines():
+              if line.startswith('{'):print(line)
+          if r.returncode:raise SystemExit('bot_api_probe_failed')
+          PY
+      - name: Check dependency recovery
+        run: |
+          python3 <<'PY'
+          import urllib.request
+          with urllib.request.urlopen('https://spmt.live/sdk/spmt-sdk-0.1.4.tgz',timeout=30) as r:
+              assert r.status==200
+              assert len(r.read())>0
+          print('sdk_dependency_verified')
+          PY
