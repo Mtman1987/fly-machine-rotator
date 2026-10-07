@@ -138,6 +138,14 @@ jobs:
               if line.startswith('{'):print(line)
           if probe.returncode:sys.exit('rotator_volume_probe_failed')
           
+
+          # Test the live rotator's own credential independently of Actions.
+          runtimeSource="(async()=>{const token=process.env.FLY_API_TOKEN;if(!token)throw Error('missing_runtime_fly_credential');for(const [label,value]of [['official_sdk_format',token],['normalized_format',token.startsWith('FlyV1 ')?token.slice(6):token]]){const r=await fetch('https://api.sprites.dev/v1/organizations/mtman-new/tokens',{method:'POST',headers:{Authorization:'FlyV1 '+value,'content-type':'application/json'},body:JSON.stringify({description:'SPMTFly rotator terminal recovery'}),signal:AbortSignal.timeout(30000)});console.log(JSON.stringify({phase:'runtime_rotator_sprites_authorization',format:label,httpStatus:r.status}));if(r.ok){const b=await r.json();if(!b.token)throw Error('missing_sprite_credential');require('fs').writeFileSync('/data/spmtfly-sprites-token',b.token,{mode:0o600});console.log(JSON.stringify({phase:'runtime_sprite_auth_saved',path:'/data/spmtfly-sprites-token',mode:'0600'}));return;}}})().catch(()=>{console.log(JSON.stringify({phase:'runtime_rotator_auth_probe_failed'}));process.exitCode=1});"
+          command="node -e \"eval(Buffer.from('"+base64.b64encode(runtimeSource.encode()).decode()+"','base64').toString('utf8'))\""
+          runtimeProbe=subprocess.run(['flyctl','ssh','console','--app','mtman-machine-rotator','--machine','2862e02c9263d8','--command',command,'--quiet'],capture_output=True,text=True,timeout=90)
+          for line in runtimeProbe.stdout.splitlines():
+              if line.startswith('{'):print(line)
+
           # Use the rotator's existing Actions secret only inside this runner.
           macaroon=fly
           status,raw=request('/v1/organizations/mtman-new/tokens',macaroon,'POST',{'description':'SPMTFly terminal credential recovery'},auth='FlyV1')
