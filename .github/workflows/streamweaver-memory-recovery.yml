@@ -26,7 +26,7 @@ jobs:
           guest = machine['config']['guest']
           assert guest['cpu_kind'] == 'shared' and guest['cpus'] == 2
           if guest['memory_mb'] < 4096:
-              subprocess.run(['flyctl','machine','update',machine['id'],'--app',app,'--memory','4096','--cpus','2','--cpu-kind','shared','--yes'],check=True,timeout=240)
+              subprocess.run(['flyctl','machine','update',machine['id'],'--app',app,'--memory','4096','--cpus','2','--vm-cpu-kind','shared','--yes'],check=True,timeout=240)
           current = json.loads(subprocess.check_output(['flyctl','machines','list','--app',app,'--json']))
           g = current[0]['config']['guest']
           assert g['cpu_kind'] == 'shared' and g['cpus'] == 2 and g['memory_mb'] >= 4096
