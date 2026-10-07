@@ -1,3 +1,4 @@
+import { readRecentFlyLogs } from "./recentFlyLogs.js";
 import { getFixStoreFile } from "./fixStore.js";
 import { mkdir, readFile, readdir, chmod, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ export async function collectOperationsEvidence(latestResults?: AppRotationResul
       jobs.push({ job, resolution, diff: await artifact("diff.patch"), checks: await artifact("checks.txt"), response: await artifact("response.txt") });
     }
   } catch { /* No coder jobs yet is an empty comparison, not a successful fix. */ }
+  if (!logs.logs?.length) { logs.logs = await readRecentFlyLogs(env,window?.startedAt); (logs as any).source="fly-retained-recent-log-ring"; }
   const cutoff = window?.startedAt || new Date(Date.now()-86400000).toISOString();
   const withinWindow = (rows: any, field: string) => Array.isArray(rows) ? rows.filter(r => String(r?.[field] || "") >= cutoff) : [];
   const actualRepairs = withinWindow(await json(join(evidenceRoot(env),"actual-repairs.json")),"recordedAt");

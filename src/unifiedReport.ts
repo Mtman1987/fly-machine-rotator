@@ -470,7 +470,7 @@ class DiscordUnifiedReportState {
     try {
       const content = await readFile(path, "utf8");
       const parsed = JSON.parse(content) as Partial<UnifiedReportState> & { updatedAt?: string };
-      if (typeof parsed.messageId === "string" && parsed.messageId.trim()) {
+      if (typeof parsed.messageId === "string" && /^\d{17,20}$/.test(parsed.messageId)) {
         return new DiscordUnifiedReportState(path, {
           messageId: parsed.messageId,
           createdAt: parsed.createdAt ?? parsed.updatedAt ?? new Date().toISOString(),

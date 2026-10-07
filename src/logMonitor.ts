@@ -1,3 +1,4 @@
+import { rememberRecentFlyLog } from "./recentFlyLogs.js";
 import { withObservationStateLock } from "./observationWindow.js";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
@@ -223,6 +224,7 @@ async function handleLogLineInner(
   entry.message = redactSensitiveText(entry.message);
   entry.machineId ??= subject?.machineId;
   entry.region ??= subject?.region;
+  rememberRecentFlyLog({appName, machineId:entry.machineId,region:entry.region,level:entry.level,timestamp:entry.timestamp,message:entry.message});
   if (stats) stats.entries += 1;
   pushContext(context, entry, options.contextLines);
 

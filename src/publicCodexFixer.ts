@@ -1,3 +1,4 @@
+import { validationEnvironment } from "./validationEnvironment.js";
 import { Codex } from "@openai/codex-sdk";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -241,7 +242,7 @@ function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string
 
 async function runCommand(command: string, cwd: string) {
   try {
-    const { stdout, stderr } = await execFileAsync("/bin/sh", ["-lc", command], { cwd, timeout: 20 * 60_000, maxBuffer: 5 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync("/bin/sh", ["-lc", command], { cwd, env: await validationEnvironment(cwd), timeout: 20 * 60_000, maxBuffer: 5 * 1024 * 1024 });
     return { command, ok: true, output: redact(`${stdout}${stderr}`) };
   } catch (error: any) {
     return { command, ok: false, output: redact(`${error?.stdout || ""}${error?.stderr || ""}${error?.message || error}`) };

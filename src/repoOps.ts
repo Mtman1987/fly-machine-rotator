@@ -1,3 +1,4 @@
+import { validationEnvironment } from "./validationEnvironment.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -72,6 +73,7 @@ export async function ensureRepoDependencies(
     options.timeoutMs ?? 20 * 60 * 1000,
     true,
     { npm_config_cache: npmCacheDir },
+    undefined, true,
   );
   await writeFile(markerPath, JSON.stringify(current, null, 2));
 }
@@ -79,7 +81,7 @@ export async function ensureRepoDependencies(
 export async function runCheckCommands(repoPath: string, commands: string[]): Promise<Array<{ command: string; exitCode: number; output: string }>> {
   const results: Array<{ command: string; exitCode: number; output: string }> = [];
   for (const command of commands) {
-    const result = await runShell(command, repoPath, 20 * 60 * 1000, false);
+    const result = await runShell(command, repoPath, 20 * 60 * 1000, false, {}, undefined, true);
     results.push({ command, ...result });
     if (result.exitCode !== 0) break;
   }
@@ -289,15 +291,17 @@ async function runShell(
   rejectOnError = true,
   envOverrides: NodeJS.ProcessEnv = {},
   secretToRedact?: string,
+  isolatedValidation = false,
 ): Promise<{ exitCode: number; output: string }> {
   const executable = process.platform === "win32" ? "cmd.exe" : "sh";
   const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-lc", command];
 
+  const commandEnv = isolatedValidation ? { ...await validationEnvironment(cwd), ...envOverrides } : { ...process.env, ...envOverrides };
   return await new Promise((resolve, reject) => {
     const detached = process.platform !== "win32";
     const child = spawn(executable, args, {
       cwd,
-      env: { ...process.env, ...envOverrides },
+      env: commandEnv,
       detached,
     });
     const chunks: Buffer[] = [];
