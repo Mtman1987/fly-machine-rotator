@@ -1,0 +1,27 @@
+name: Stage verified free coder credential
+on:
+  push:
+    branches: [diagnose/chat-tag-fleet-20261006]
+    paths:
+      - scripts/stage-verified-free-coder-key.mjs
+      - .github/workflows/stage-verified-free-coder-key.yml
+permissions:
+  contents: read
+concurrency:
+  group: verified-free-coder-key
+  cancel-in-progress: false
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: node --check scripts/stage-verified-free-coder-key.mjs
+      - name: Stage owner-authorized verified key without logs or restart
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/stage-verified-free-coder-key.mjs
