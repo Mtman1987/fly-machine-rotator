@@ -1,13 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
+const PARTNER_APP = /(?:^|[-_])(?:mika|miniature|atherea|atheria)(?:[-_]|$)/i;
 const EXPECTED = new Set(['chat-tag-bot-new','chat-tag-new','discord-stream-hub-new','dsh-clip-worker','hearmeout-main','hmo-dj-worker','streamweaver-new','spmt-live','mtman-machine-rotator']);
 // Publish only fixed classifications and numeric measurements. Never publish log text,
 // process arguments, environment variables, health output, or command stderr.
 export function classify(message) {
   const s=String(message||'');
   if (s.includes('Optional EventSub integration is off; this is not a bot authentication error.')) return null;
-  const rules=[['out_of_memory',/out of memory|oom.kill|oom-kill|oomkilled/i],['disk_full',/ENOSPC|no space left on device/i],['auth_failure',/invalid.{0,20}token|token.{0,20}(expired|invalid)|unauthori[sz]ed|invalid_grant/i],['health_failure',/health check.{0,200}fail/i],['lease_conflict',/lease currently held|lease.{0,40}conflict/i],['fetch_failure',/fetch failed|UND_ERR_SOCKET|ECONNRESET|ECONNREFUSED/i],['timeout',/timed? out|timeout|ETIMEDOUT/i],['rate_limit',/rate.limit|too many requests/i],['unhandled_failure',/unhandled|uncaught|panic|fatal/i],['playback_failure',/stopped advancing|buffer.{0,40}(fail|timeout)|ffmpeg.{0,40}(error|failed)/i],['generic_failure',/\berror\b|\bexception\b|\bfailed\b|\brejection\b/i],['warning',/\bwarn(?:ing)?\b/i]];
+  const rules=[['json_corruption',/SyntaxError.*JSON|Unexpected.*JSON/i],['ai_provider_failure',/Gemini.{0,80}(?:unavailable|failed|404|429)|RESOURCE_EXHAUSTED|no eligible.{0,30}model/i],['out_of_memory',/out of memory|oom.kill|oom-kill|oomkilled/i],['disk_full',/ENOSPC|no space left on device/i],['auth_failure',/invalid.{0,20}token|token.{0,20}(expired|invalid)|unauthori[sz]ed|invalid_grant/i],['health_failure',/health check.{0,200}fail/i],['lease_conflict',/lease currently held|lease.{0,40}conflict/i],['fetch_failure',/fetch failed|UND_ERR_SOCKET|ECONNRESET|ECONNREFUSED/i],['timeout',/timed? out|timeout|ETIMEDOUT/i],['rate_limit',/rate.limit|too many requests/i],['unhandled_failure',/unhandled|uncaught|panic|fatal/i],['playback_failure',/stopped advancing|buffer.{0,40}(fail|timeout)|ffmpeg.{0,40}(error|failed)/i],['generic_failure',/\berror\b|\bexception\b|\bfailed\b|\brejection\b/i],['warning',/\bwarn(?:ing)?\b/i]];
   return rules.find(([,r])=>r.test(s))?.[0]||null;
 }
 async function fly(args,timeout=60000) {
@@ -58,15 +59,17 @@ async function appAudit(name) {
   const machinesRaw=mr.ok?json(mr.text):null;
   const machines=Array.isArray(machinesRaw)?await Promise.all(machinesRaw.map(m=>machine(name,m))):[];
   const logRows=lr.ok?records(lr.text):[];
-  const counts={};for(const row of logRows){const c=classify(row.message||row.msg||row.log||'');if(c)counts[c]=(counts[c]||0)+1;}
+  const counts={},recentCounts={},details={};const since=Date.now()-10*60*1000;for(const row of logRows){const c=classify(row.message||row.msg||row.log||'');if(c){counts[c]=(counts[c]||0)+1;const at=row.timestamp||row.time||row.ts||null;const entry=details[c]||{count:0,firstAt:at,lastAt:at};entry.count++;if(at&&(!entry.firstAt||at<entry.firstAt))entry.firstAt=at;if(at&&(!entry.lastAt||at>entry.lastAt))entry.lastAt=at;details[c]=entry;if(Date.parse(at)>=since)recentCounts[c]=(recentCounts[c]||0)+1;}}
   const times=logRows.map(r=>r.timestamp||r.time||r.ts).filter(t=>typeof t==='string'&&/^\d{4}-\d\d-\d\dT/.test(t)).sort();
-  return {app:name,expectedRunning:EXPECTED.has(name),inventoryOk:Array.isArray(machinesRaw),machines,logs:{readOk:lr.ok,recordCount:logRows.length,firstAt:times[0]||null,lastAt:times.at(-1)||null,counts},findings:[...(machines.some(m=>m.cpuKind==='performance')?['performance_cpu']:[]),...(machines.some(m=>m.cpus>4)?['cpu_above_four']:[]),...(machines.some(m=>m.state==='started'&&!m.checks.length)?['health_checks_not_configured']:[]),...(EXPECTED.has(name)&&!machines.some(m=>m.state==='started')?['no_running_machine']:[]),...(machines.some(m=>m.state==='started'&&m.checks.some(c=>['critical','failing','fail'].includes(c.status)))?['failing_health_checks']:[]),...(machines.some(m=>m.usage?.ramUsedPercent>=85)?['high_ram']:[]),...(machines.some(m=>m.usage?.cpuUsedPercent>=85)?['high_cpu_sample']:[]),...(!lr.ok?['logs_unavailable']:[]),...(!Array.isArray(machinesRaw)?['inventory_unavailable']:[]),...(machines.some(m=>m.usage?.unavailable)?['usage_unavailable']:[])]};
+  return {app:name,expectedRunning:EXPECTED.has(name),inventoryOk:Array.isArray(machinesRaw),machines,logs:{readOk:lr.ok,recordCount:logRows.length,firstAt:times[0]||null,lastAt:times.at(-1)||null,counts,recentWindowMinutes:10,recentCounts,details},findings:[...(machines.some(m=>m.cpuKind==='performance')?['performance_cpu']:[]),...(machines.some(m=>m.cpus>4)?['cpu_above_four']:[]),...(machines.some(m=>m.state==='started'&&!m.checks.length)?['health_checks_not_configured']:[]),...(EXPECTED.has(name)&&!machines.some(m=>m.state==='started')?['no_running_machine']:[]),...(machines.some(m=>m.state==='started'&&m.checks.some(c=>['critical','failing','fail'].includes(c.status)))?['failing_health_checks']:[]),...(machines.some(m=>m.usage?.ramUsedPercent>=85)?['high_ram']:[]),...(machines.some(m=>m.usage?.cpuUsedPercent>=85)?['high_cpu_sample']:[]),...(!lr.ok?['logs_unavailable']:[]),...(!Array.isArray(machinesRaw)?['inventory_unavailable']:[]),...(machines.some(m=>m.usage?.unavailable)?['usage_unavailable']:[])]};
 }
 export async function audit() {
   const r=await fly(['apps','list','--json']);const all=r.ok?json(r.text):null;
   if(!Array.isArray(all))throw Error('App inventory unavailable');
   const names=all.map(a=>a.Name||a.name).filter(n=>typeof n==='string'&&/^[a-z0-9-]+$/.test(n));
-  const rows=[];for(let i=0;i<names.length;i+=3)rows.push(...await Promise.all(names.slice(i,i+3).map(appAudit)));
-  return {ok:rows.every(r=>r.inventoryOk&&r.logs.readOk),capturedAt:new Date().toISOString(),readOnly:true,usageNote:'CPU is a two-second sample; RAM used excludes available memory. Stopped Machines have no usage sample. Log counts classify retained records, not distinct incidents. Raw logs are not exported.',apps:rows};
+  const excludedApps=names.filter(name=>PARTNER_APP.test(name));
+  const included=names.filter(name=>!PARTNER_APP.test(name));
+  const rows=[];for(let i=0;i<included.length;i+=3)rows.push(...await Promise.all(included.slice(i,i+3).map(appAudit)));
+  return {ok:rows.every(r=>r.inventoryOk&&r.logs.readOk),capturedAt:new Date().toISOString(),readOnly:true,excludedApps,usageNote:'CPU is a two-second sample; RAM used excludes available memory. Stopped Machines have no usage sample. Log counts classify retained records, not distinct incidents. Raw logs are not exported.',apps:rows};
 }
 if(process.argv[1]&&import.meta.url.endsWith('/'+process.argv[1].split('/').at(-1)))audit().then(r=>console.log(JSON.stringify(r,null,2))).catch(()=>{console.log(JSON.stringify({ok:false,error:'Fleet audit failed; inspect credential availability and Fly control access.'}));process.exitCode=1;});
