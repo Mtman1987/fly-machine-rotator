@@ -1,3 +1,6 @@
+import { collectOperationsEvidence } from "./operationsEvidence.js";
+import { renderMachineLoads, type MachineLoad } from "./machineLoads.js";
+import { type ObservationWindow } from "./observationWindow.js";
 import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { RotatorRuntimeState, getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
@@ -42,7 +45,15 @@ type UnifiedReportState = {
   updatedAt: string;
 };
 
-export async function upsertUnifiedDiscordReport(
+let reportChain: Promise<void> = Promise.resolve();
+export async function upsertUnifiedDiscordReport(webhookUrl: string | undefined, latestRotationResults?: AppRotationResult[]): Promise<void> {
+  if (!webhookUrl) return;
+  const report = reportChain.catch(() => undefined).then(() => updateUnifiedDiscordReport(webhookUrl, latestRotationResults));
+  reportChain = report;
+  return report;
+}
+
+async function updateUnifiedDiscordReport(
   webhookUrl: string | undefined,
   latestRotationResults?: AppRotationResult[]
 ): Promise<void> {
@@ -63,15 +74,30 @@ export async function upsertUnifiedDiscordReport(
     RotatorRuntimeStateStore.load(getRuntimeStateFile()).then((store) => store.snapshot()),
   ]);
 
-  const payload = buildUnifiedPayload(rotationHistory, errorHistory, runtimeState, latestRotationResults, dashboardUrl, observationHistory, athenaAttempts.at(-1));
+  const evidence = await collectOperationsEvidence(latestRotationResults);
+  const cutoff = evidence.window?.startedAt;
+  const currentErrors = cutoff ? errorHistory.filter(event => event.recordedAt >= cutoff) : errorHistory;
+  const currentObservations = cutoff ? observationHistory.filter(event => event.recordedAt >= cutoff) : observationHistory;
+  const payload = buildUnifiedPayload(rotationHistory, currentErrors, runtimeState, latestRotationResults, dashboardUrl, currentObservations, athenaAttempts.filter(attempt => !cutoff || attempt.attemptedAt >= cutoff).at(-1), evidence.machines, evidence.window);
+  const files = [
+    { name: "rotator-run-readout.json", content: JSON.stringify(evidence, null, 2) },
+    { name: "rotator-log-snapshot.json", content: JSON.stringify(evidence.logSnapshot, null, 2) },
+  ];
+  // Replace previous attachments on edits; every embed and its evidence agree.
+  const multipartBody = () => {
+    const form = new FormData();
+    form.set("payload_json", JSON.stringify({ ...payload, allowed_mentions: { parse: [] }, attachments: files.map((file, id) => ({ id, filename: file.name })) }));
+    files.forEach((file,id) => form.set(`files[${id}]`, new Blob([file.content], { type: "application/json" }), file.name));
+    return form;
+  };
   const webhook = parseDiscordWebhookUrl(webhookUrl);
   const currentMessage = currentState.get();
 
   if (currentMessage) {
     const editResponse = await fetch(`${webhook.messagesUrl}/${currentMessage.messageId}`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: multipartBody(),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (editResponse.ok) {
@@ -95,8 +121,8 @@ export async function upsertUnifiedDiscordReport(
 
   const createResponse = await fetch(`${webhook.baseUrl}?wait=true`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    body: multipartBody(),
+    signal: AbortSignal.timeout(20000)
   });
 
   if (!createResponse.ok) {
@@ -118,7 +144,9 @@ export function buildUnifiedPayload(
   latestRotationResults: AppRotationResult[] | undefined,
   dashboardUrl: string,
   observationHistory: StoredErrorEvent[] = [],
-  latestAthenaAttempt?: AthenaIncidentAttempt
+  latestAthenaAttempt?: AthenaIncidentAttempt,
+  machines: MachineLoad[] = [],
+  window?: ObservationWindow
 ): object {
   const prunedErrors = pruneErrorHistory(errorHistory);
   const observations = pruneRecentHistory(observationHistory, 7 * 24 * 60 * 60 * 1000);
@@ -146,13 +174,14 @@ export function buildUnifiedPayload(
     `${latestRotation.failed} failed`
   ].join("\n");
   const summaryText = [
+    ...(window ? [`Observation start: ${formatTimestamp(window.startedAt)}`, `Observation end: ${formatTimestamp(window.endsAt)}`] : []),
     `Latest run: ${latestRunStatus}`,
     `Started: ${formatTimestamp(startedAt)}`,
     `Finished: ${formatTimestamp(finishedAt)}`,
     `Next run: ${formatTimestamp(runtimeState.nextRunAt)}`,
     `Total runs: ${totalRuns}`,
     `Athena queue (24h): ${prunedErrors.length}`,
-    `Observed only (7d): ${observations.length}`
+    `Observed only (${window ? "current window" : "7d"}): ${observations.length}`
   ].join("\n");
   const baseUrl = dashboardUrl.replace(/\/$/, "");
   const athenaText = latestAthenaAttempt
@@ -168,6 +197,12 @@ export function buildUnifiedPayload(
     `[Athena repair queue](${baseUrl}/#fixes) • [Observation ledger](${baseUrl}/#observations)`,
     `[Repair queue Markdown](${baseUrl}/logs/errors.md) • [Observation Markdown](${baseUrl}/logs/observations.md)`
   ].join("\n");
+  const resourceLines = renderMachineLoads(machines);
+  const resourceChunks: string[] = [];
+  for (const line of resourceLines) {
+    if (!resourceChunks.length || resourceChunks.at(-1)!.length + line.length > 850) resourceChunks.push(line);
+    else resourceChunks[resourceChunks.length - 1] += "\n" + line;
+  }
   const footerParts = [
     startedAt ? `rotation start ${formatTimestamp(startedAt)}` : undefined,
     finishedAt ? `last finished ${formatTimestamp(finishedAt)}` : undefined
@@ -218,10 +253,14 @@ export function buildUnifiedPayload(
           },
           {
             name: "Logs and Incident Lists",
-            value: queueLinks,
+            value: queueLinks + "\nAttached: complete run readout + live log snapshot. CPU measurements are one-second samples; load averages span 1/5/15 minutes.",
             inline: false
-          }
-        ],
+          },
+          ...resourceChunks.map((value, i) => ({ name: `Machine loads & CPU steal ${i+1}`, value: codeBlock(value), inline: false }))
+        ].map((field, index, fields) => {
+          const previous = fields.slice(0,index).reduce((n,f) => n + f.name.length + Math.min(960,f.value.length),0);
+          return { ...field, value: field.value.slice(0,Math.max(30,Math.min(960,5000-previous))) };
+        }),
         footer: footerParts.length > 0 ? { text: footerParts.join(" | ") } : undefined,
         timestamp: new Date().toISOString()
       }
@@ -334,7 +373,7 @@ function pruneRecentHistory(events: StoredErrorEvent[], retentionMs: number): St
 }
 
 function codeBlock(text: string): string {
-  return ["```text", text, "```"].join("\n");
+  return ["```text", text.replace(/```/g, "'''").slice(0, 900), "```"].join("\n");
 }
 
 function getUnifiedReportStateFile(): string {
@@ -459,4 +498,12 @@ class DiscordUnifiedReportState {
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(this.path, JSON.stringify({}, null, 2));
   }
+}
+
+export function startOperationsReportLoop(env: NodeJS.ProcessEnv = process.env) {
+  if (!env.DISCORD_WEBHOOK_URL) return;
+  const tick = () => void upsertUnifiedDiscordReport(env.DISCORD_WEBHOOK_URL).catch(() => console.error("Operations report update failed; durable evidence retained"));
+  tick();
+  const timer = setInterval(tick, Math.max(60000, Number(env.ROTATOR_REPORT_INTERVAL_MS || 3600000)));
+  timer.unref();
 }

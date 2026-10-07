@@ -1,3 +1,4 @@
+import { withObservationStateLock } from "./observationWindow.js";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -200,7 +201,11 @@ async function handleLogOutput(
   return stats;
 }
 
-async function handleLogLine(
+async function handleLogLine(...args: Parameters<typeof handleLogLineInner>): Promise<void> {
+  return withObservationStateLock(() => handleLogLineInner(...args));
+}
+
+async function handleLogLineInner(
   appName: string,
   line: string,
   context: LogEntry[],
@@ -226,6 +231,7 @@ async function handleLogLine(
   const baseline = await observationBaseline.inspect(entry.timestamp);
   if (baseline.changed) {
     history.reset();
+    observations.reset();
     dedupe.reset();
   }
   if (baseline.excludes) return;

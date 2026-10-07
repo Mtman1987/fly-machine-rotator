@@ -62,6 +62,7 @@ type RotationHistoryEntry = {
   finishedAt?: string;
   durationMs?: number;
   trigger?: string;
+  details?: AppRotationResult[];
   results: Array<{ appName: string; success: boolean; mode: string; from?: string; to?: string; warnings?: number; error?: string }>;
 };
 
@@ -82,6 +83,7 @@ class RotationHistory {
     this.values.push({
       at: finishedAt,
       finishedAt,
+      details: results,
       results: results.map((result) => {
         const mode = result.previousActiveId && result.newActiveId && result.previousActiveId !== result.newActiveId
           ? "handoff"

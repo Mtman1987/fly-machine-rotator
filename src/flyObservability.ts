@@ -15,7 +15,7 @@ export type SampledFlyLog = {
 };
 
 export function getManagedFlyApps(env: NodeJS.ProcessEnv = process.env): string[] {
-  return parseAppNames(env.FLY_ROTATOR_APPS ?? env.MANAGED_FLY_APPS ?? "");
+  return parseAppNames(env.FLY_MONITOR_APPS ?? env.FLY_ROTATOR_APPS ?? env.MANAGED_FLY_APPS ?? "").filter(app => !/(?:^|[-_])(?:mika|miniature|atherea|atheria|aetherra)(?:[-_]|$)/i.test(app));
 }
 
 function positiveInt(value: unknown, fallback: number, max: number): number {

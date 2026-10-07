@@ -1,8 +1,10 @@
 import "./spmtLlmRuntime.js";
+import { startOperationsReportLoop } from "./unifiedReport.js";
 import { startAthenaSpmtGateway } from "./athenaSpmtGateway.js";
 import { startAutoRotationLoop } from "./autoRotate.js";
 import { startDashboardServer } from "./dashboardServer.js";
 import { startDshMtFixItOuterGateway } from "./dshMtFixitGateway.js";
+import { getManagedFlyApps } from "./flyObservability.js";
 import { runLogMonitor } from "./logMonitor.js";
 import { executeTrackedRotation } from "./rotationControl.js";
 import { withCodexWorkerAuth } from "./codexWorkerAuth.js";
@@ -42,8 +44,9 @@ async function main(): Promise<void> {
     const config = loadConfig(process.argv.slice(3));
     await startWebStack(process.env);
     void startAutoRotationLoop(process.argv.slice(3));
+    startOperationsReportLoop(process.env);
     const logMonitor = runLogMonitor({
-      appNames: config.appNames,
+      appNames: getManagedFlyApps(process.env),
       token: process.env.FLY_LOG_TOKEN ?? config.flyApiToken,
       orgSlug: process.env.FLY_ORG ?? process.env.ORG ?? "mtman-new",
       discordWebhookUrl: config.discordWebhookUrl,

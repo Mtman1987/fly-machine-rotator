@@ -22,6 +22,7 @@ LABEL GH_SHA=$GH_SHA
 LABEL BUILD_SHA=$BUILD_SHA
 WORKDIR /app
 ENV NODE_ENV=production
+ENV BUILD_SHA=$BUILD_SHA
 ENV FLYCTL_INSTALL=/root/.fly
 ENV PATH=/root/.fly/bin:$PATH
 RUN apk add --no-cache bash ca-certificates curl git && curl -L https://fly.io/install.sh | sh

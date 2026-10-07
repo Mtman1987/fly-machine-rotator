@@ -592,7 +592,7 @@ export async function handlePublicCodexRequest(request: IncomingMessage, respons
   }
 
   if (method === "POST" && url.pathname === "/api/codex/jobs") {
-    if (env.CODEX_FIXER_PROVIDER === "qwen" ? !String(env.SPMT_LLM_BASE_URL || "").trim() : !hasRealOpenAiKey(env)) return sendJson(response, 503, { error: "The selected Stella Coder provider is not configured" }), true;
+    if (!(await readFreeCoderPolicy(env)) && (env.CODEX_FIXER_PROVIDER === "qwen" ? !String(env.SPMT_LLM_BASE_URL || "").trim() : !hasRealOpenAiKey(env))) return sendJson(response, 503, { error: "The selected Stella Coder provider is not configured" }), true;
     const input = await readJson(request);
     const description = String(input.description || "").trim();
     if (!description) return sendJson(response, 400, { error: "description is required" }), true;

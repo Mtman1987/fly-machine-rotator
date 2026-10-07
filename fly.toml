@@ -5,6 +5,9 @@ primary_region = "ord"
   dockerfile = "Dockerfile"
 
 [env]
+  # Monitoring includes the fleet; rotation keeps its existing separate allowlist.
+  FLY_MONITOR_APPS = "chat-tag-bot-new,chat-tag-new,discord-stream-hub-new,dsh-clip-worker,hearmeout-main,hmo-dj-worker,streamweaver-new,spmt-live,spacemountain-live,spmt-agents,mtman-machine-rotator"
+  ROTATOR_REPORT_INTERVAL_MS = "3600000"
   FLY_API_HOSTNAME = "https://api.machines.dev"
   FLY_ORG = "mtman-new"
   PUBLIC_DASHBOARD_URL = "https://mtman-machine-rotator.fly.dev/"

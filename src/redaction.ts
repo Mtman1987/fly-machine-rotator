@@ -6,6 +6,9 @@ const JSON_SECRET_PATTERN = /(["']?(?:access_token|refresh_token|id_token|api_ke
 
 export function redactSensitiveText(value: unknown): string {
   return String(value ?? "")
+    .replace(/\b(?:github_pat_|gh[pousr]_|sk-|fm[12]_)[A-Za-z0-9._-]{12,}\b/g, "[REDACTED]")
+    .replace(/\bFlyV1\s+[A-Za-z0-9._~+\/=-]{12,}/g, "FlyV1 [REDACTED]")
+    .replace(/oauth:[A-Za-z0-9]{12,}/gi, "oauth:[REDACTED]")
     .replace(QUERY_SECRET_PATTERN, "$1[REDACTED]")
     .replace(BEARER_PATTERN, "$1[REDACTED]")
     .replace(HEADER_SECRET_PATTERN, "$1[REDACTED]")

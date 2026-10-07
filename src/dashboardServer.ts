@@ -1,3 +1,6 @@
+import { recordActualRepair } from "./repairComparison.js";
+import { evidenceRoot } from "./operationsEvidence.js";
+import { clearObservationWindow } from "./observationWindow.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -58,8 +61,16 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     response.writeHead(missingSecrets.length ? 503 : 200, { "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({
       ok: missingSecrets.length === 0,
+      buildSha: env.BUILD_SHA || "unknown",
       ...(missingSecrets.length ? { missingSecrets } : {}),
     }));
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/logs/run-readout.json") {
+    authorizeAction(request, env);
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "private, no-store" });
+    response.end(await readFile(join(evidenceRoot(env), "latest.json"), "utf8"));
     return;
   }
 
@@ -111,6 +122,14 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     return;
   }
 
+  if (method === "POST" && url.pathname === "/actions/repairs/record") {
+    authorizeAction(request, env);
+    const input = JSON.parse(await readBody(request) || "{}");
+    const repair = await recordActualRepair(input, env);
+    await refreshUnifiedReport(env);
+    return json(response, { ok: true, repair });
+  }
+
   if (method === "POST" && url.pathname === "/actions/rotate") {
     await readBody(request);
     authorizeAction(request, env);
@@ -122,9 +141,9 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   if (method === "POST" && url.pathname === "/actions/errors/clear") {
     await readBody(request);
     authorizeAction(request, env);
-    const cleared = await clearErrorState(env);
+    const cleared = await clearObservationWindow(env);
     await refreshUnifiedReport(env);
-    return json(response, { ok: true, message: `Archived the prior baseline and cleared ${cleared.events} error event(s) plus ${cleared.proposals} proposal record(s).` });
+    return json(response, { ok: true, message: `Archived and cleared ${cleared.clearedEvents} repair incident(s) and ${cleared.clearedObservations} observation(s). Repair proposals and outcomes are preserved. Observation ends ${cleared.endsAt}.` });
   }
 
   if (method === "POST" && url.pathname === "/actions/errors/ignore-fingerprint") {
@@ -1691,53 +1710,6 @@ function isTrustedRepairContext(record: FixRecord): boolean {
   return record.status === "handled" && record.attempts.some((attempt) => attempt.action === "reconcile" && attempt.ok);
 }
 
-async function clearErrorState(env: NodeJS.ProcessEnv): Promise<{ events: number; proposals: number; archiveDir: string }> {
-  const historyFile = env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
-  const observationFile = env.LOG_OBSERVATION_HISTORY_FILE ?? "/data/observed-incidents.json";
-  const dedupeFile = env.LOG_ERROR_DEDUPE_FILE ?? "/data/error-fingerprints.json";
-  const fixesFile = getFixStoreFile(env);
-  const ignoreFile = getIgnoreRulesFile(env);
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const archiveDir = join(env.ROTATOR_ERROR_ARCHIVE_DIR ?? "/data/error-archives", stamp);
-  await mkdir(archiveDir, { recursive: true });
-
-  const archiveFiles = [
-    [historyFile, "error-history.redacted.json"],
-    [observationFile, "observed-incidents.redacted.json"],
-    [dedupeFile, "error-fingerprints.redacted.json"],
-    [fixesFile, "fix-proposals.redacted.json"],
-    [ignoreFile, "ignore-rules.redacted.json"]
-  ] as const;
-  for (const [source, target] of archiveFiles) {
-    try {
-      const raw = await readFile(source, "utf8");
-      let redacted = redactSensitiveText(raw);
-      try {
-        redacted = JSON.stringify(redactSensitiveValue(JSON.parse(raw)), null, 2);
-      } catch {
-        // Keep a text audit if a legacy state file is not valid JSON.
-      }
-      await writeFile(join(archiveDir, target), redacted);
-    } catch {
-      await writeFile(join(archiveDir, target), "[]");
-    }
-  }
-
-  const history = await readErrorHistory(env);
-  const proposals = await FixStore.load(fixesFile);
-  for (const file of [historyFile, dedupeFile, fixesFile]) {
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, "[]");
-  }
-  await writeFile(env.ROTATOR_ERROR_BASELINE_FILE ?? "/data/error-baseline.json", JSON.stringify({
-    startedAt: new Date().toISOString(),
-    archiveDir,
-    clearedEvents: history.length,
-    clearedProposals: proposals.list().length,
-    purpose: "Fresh 24-hour post-hardening observation baseline"
-  }, null, 2));
-  return { events: history.length, proposals: proposals.list().length, archiveDir };
-}
 
 async function removeMatchingIgnoredEvents(env: NodeJS.ProcessEnv, ignoreStore: IgnoreRuleStore): Promise<void> {
   const historyFile = env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";

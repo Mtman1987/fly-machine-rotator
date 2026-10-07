@@ -1,3 +1,4 @@
+import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -72,6 +73,7 @@ async function saveCycle(env: NodeJS.ProcessEnv, cycle: HourlyRepairCycle) {
   const rows = (await readCycles(env)).filter((row) => row.id !== cycle.id);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify([...rows, cycle].slice(-MAX_CYCLES), null, 2));
+  await upsertUnifiedDiscordReport(env.DISCORD_WEBHOOK_URL).catch(() => console.error("Hourly repair evidence report update failed"));
 }
 
 function parseCliJson(stdout: string): any {

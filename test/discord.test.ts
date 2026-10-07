@@ -10,6 +10,7 @@ describe("sendDiscordReport", () => {
     vi.restoreAllMocks();
     delete process.env.DISCORD_ROTATION_REPORT_MESSAGE_FILE;
     delete process.env.ROTATION_HISTORY_FILE;
+    delete process.env.ROTATOR_EVIDENCE_DIR;
   });
 
   it("reposts the rolling message when Discord refuses edits to an old message", async () => {
@@ -18,6 +19,7 @@ describe("sendDiscordReport", () => {
     const historyFile = join(dir, "rotation-history.json");
     process.env.DISCORD_ROTATION_REPORT_MESSAGE_FILE = stateFile;
     process.env.ROTATION_HISTORY_FILE = historyFile;
+    process.env.ROTATOR_EVIDENCE_DIR = join(dir,"evidence");
 
     await writeJson(stateFile, { messageId: "old-message", updatedAt: "2026-05-19T16:08:42.562Z" });
 
@@ -45,6 +47,14 @@ describe("sendDiscordReport", () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "DELETE" });
     expect(fetchMock.mock.calls[2]?.[0]).toBe("https://discord.com/api/webhooks/123/token?wait=true");
     expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
+    const form = fetchMock.mock.calls[2]?.[1]?.body as FormData;
+    const payload = JSON.parse(String(form.get("payload_json")));
+    expect(payload.attachments.map((item: any) => item.filename)).toEqual(["rotator-run-readout.json", "rotator-log-snapshot.json"]);
+    const evidence = JSON.parse(await (form.get("files[0]") as Blob).text());
+    expect(evidence.latestRun[0].previousActiveId).toBe("old-machine");
+    expect(evidence.latestRun[0].newActiveId).toBe("new-machine");
+    expect(evidence.comparison).toHaveProperty("coderProposals");
+    expect(JSON.parse(await readFile(historyFile,"utf8"))[0].details[0].previousActiveId).toBe("old-machine");
     await expect(readFile(stateFile, "utf8")).resolves.toContain('"messageId": "new-message"');
   });
 });

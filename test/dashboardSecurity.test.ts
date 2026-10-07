@@ -33,7 +33,7 @@ describe("rotator protected error baseline", () => {
     const server = startDashboardServer({
       NODE_ENV: "test", PORT: "0",
       FLY_API_TOKEN: "placeholder-for-test-config",
-      LOG_ERROR_HISTORY_FILE: historyFile, LOG_ERROR_DEDUPE_FILE: dedupeFile,
+      LOG_ERROR_HISTORY_FILE: historyFile, LOG_ERROR_DEDUPE_FILE: dedupeFile, LOG_OBSERVATION_HISTORY_FILE: join(directory,"observations.json"),
       ROTATOR_FIXES_FILE: fixesFile, ROTATOR_IGNORE_RULES_FILE: ignoreFile,
       ROTATOR_ERROR_ARCHIVE_DIR: archives, ROTATOR_ERROR_BASELINE_FILE: baselineFile,
       ROTATOR_RUNTIME_STATE_FILE: join(directory, "runtime-state.json"),
@@ -61,9 +61,9 @@ describe("rotator protected error baseline", () => {
       expect(clear.status).toBe(200);
       expect(JSON.parse(await readFile(historyFile, "utf8"))).toEqual([]);
       expect(JSON.parse(await readFile(dedupeFile, "utf8"))).toEqual([]);
-      expect(JSON.parse(await readFile(fixesFile, "utf8"))).toEqual([]);
+      expect(JSON.parse(await readFile(fixesFile, "utf8"))[0]).toMatchObject({ id: "one", status: "generated" });
       const baseline = JSON.parse(await readFile(baselineFile, "utf8"));
-      expect(baseline).toMatchObject({ clearedEvents: 1, clearedProposals: 1 });
+      expect(baseline).toMatchObject({ clearedEvents: 1, clearedObservations: 0 });
       const archived = await readFile(join(baseline.archiveDir, "error-history.redacted.json"), "utf8");
       expect(archived).not.toContain(sensitiveValue);
     } finally {
