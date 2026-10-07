@@ -41,3 +41,21 @@ jobs:
               except Exception: status=0
               print(json.dumps({'target':urls.index(url),'status':status,'elapsedMs':round((time.monotonic()-t)*1000)}))
           PY
+
+      - name: Restore web service if health remains unavailable after replay repair
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import urllib.request,subprocess
+          statuses=[]
+          for _ in range(2):
+              try:
+                  with urllib.request.urlopen('https://streamweaver-new.fly.dev/api/health',timeout=10) as r: statuses.append(r.status)
+              except Exception: statuses.append(0)
+          if statuses==[0,0]:
+              r=subprocess.run(['flyctl','machine','restart','080e967ea95558','--app','streamweaver-new'],capture_output=True,timeout=180)
+              if r.returncode: raise SystemExit('web_restart_failed')
+              print('streamweaver_web_restarted')
+          else: print('streamweaver_health_reachable')
+          PY
