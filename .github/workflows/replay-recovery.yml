@@ -1,0 +1,43 @@
+name: Bounded StreamWeaver replay recovery
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/replay-recovery.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Preserve malformed replay and restore replay availability
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import base64, subprocess
+          source="\n(async()=>{\nconst fs=require('fs'),path=require('path'),crypto=require('crypto');\nconst root=process.env.PERSIST_ROOT||path.resolve(process.cwd(),'data/runtime');\nconst dir=path.join(root,'tenants');\nlet checked=0,repaired=0,changed=0;\nfor(const tenant of fs.readdirSync(dir)){\n const f=path.join(dir,tenant,'data/shared-chat/replay.json');\n if(!fs.existsSync(f))continue;\n checked++;\n const raw=fs.readFileSync(f);\n try{JSON.parse(raw.toString());continue}catch(e){if(!(e instanceof SyntaxError))throw e;}\n if(raw.length>20*1024*1024)throw Error('Replay exceeds repair bound');\n const hash=crypto.createHash('sha256').update(raw).digest('hex');\n const backup=f+'.corrupt-'+hash.slice(0,16)+'.bak';\n if(!fs.existsSync(backup))fs.writeFileSync(backup,raw,{flag:'wx',mode:0o600});\n if(!fs.readFileSync(backup).equals(raw))throw Error('Backup verification failed');\n if(!fs.readFileSync(f).equals(raw)){changed++;continue;}\n const temp=f+'.recovery-'+process.pid+'.tmp';\n fs.writeFileSync(temp,'[]\\n',{flag:'wx',mode:0o600});\n fs.renameSync(temp,f);repaired++;\n}\nconsole.log(JSON.stringify({replayFilesChecked:checked,repaired,concurrentChangesSkipped:changed}));\n})().catch(()=>{console.error('bounded_replay_repair_failed');process.exit(1)});\n"
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          result=subprocess.run(['flyctl','ssh','console','--app','streamweaver-new','--machine','080e967ea95558','--command',command,'--quiet'],capture_output=True,text=True,timeout=90)
+          for line in result.stdout.splitlines():
+              if line.startswith('{'): print(line)
+          if result.returncode: raise SystemExit('bounded_replay_repair_failed')
+          PY
+      - name: Verify status and latency without response content
+        run: |
+          python3 <<'PY'
+          import time, json, urllib.request
+          urls=['https://streamweaver-new.fly.dev/api/health','https://streamweaver-new.fly.dev/api/shared-chat/featured?tenant=spacemountainlive&fallback=latest','https://chat-tag-new.fly.dev/api/tag','https://spmt.live/sdk/spmt-sdk-0.1.4.tgz']
+          for url in urls:
+              t=time.monotonic()
+              try:
+                  with urllib.request.urlopen(url,timeout=15) as r:
+                      r.read()
+                      status=r.status
+              except urllib.error.HTTPError as e: status=e.code
+              except Exception: status=0
+              print(json.dumps({'target':urls.index(url),'status':status,'elapsedMs':round((time.monotonic()-t)*1000)}))
+          PY
