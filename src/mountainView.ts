@@ -4,6 +4,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEq
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
+import { readFreeCoderPolicy } from "./freeGeminiCoder.js";
 
 type JsonRecord = Record<string, unknown>;
 type MountainViewUser = { id: string; email: string; role: string };
@@ -1376,6 +1377,8 @@ class MountainViewContext {
     const systemPrompt = String(body.systemPrompt ?? "").trim();
     const messages = Array.isArray(body.messages) ? body.messages as Array<{ role: string; content: string }> : [];
     const tenantId = String(body.tenantId ?? OWNER_TENANT_ID);
+
+    if (await readFreeCoderPolicy(env)) return { ok: false, error: "Private chat requires explicit authorization for Google Gemini. Paid providers are disabled." };
 
     // Inject MountainView context: recent memory + recent logs
     const recentMemory = this.searchMemory(user.id, "", "").slice(0, 6)

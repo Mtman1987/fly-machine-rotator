@@ -1,4 +1,5 @@
 import { requestOpenAiRepairPlanJson } from "./openAiRepairPlanner.js";
+import { readFreeCoderPolicy } from "./freeGeminiCoder.js";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
@@ -173,7 +174,7 @@ function baseRecord(
   };
 }
 
-async function requestFixPlan(
+export async function requestFixPlan(
   repoLabel: string,
   repoPath: string,
   event: StoredErrorEvent,
@@ -190,6 +191,9 @@ async function requestFixPlan(
     };
   }
 ): Promise<ModelFixPlan> {
+  if (await readFreeCoderPolicy(env)) {
+    return buildLocalFallbackPlan(event, contextFiles, ["Paid and raw-incident planner routes are disabled by owner policy; use the verified free public-source coder."]);
+  }
   const prompt = buildPrompt(repoLabel, repoPath, event, contextFiles, options);
   const failures: string[] = [];
   if (env.OPENAI_API_KEY) {
