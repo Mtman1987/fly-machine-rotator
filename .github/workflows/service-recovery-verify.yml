@@ -9,7 +9,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@v1
       - name: Numeric resource sample
@@ -48,3 +48,57 @@ jobs:
           for r in results:print(json.dumps(r))
           assert all(r['status']==200 for r in results), 'service_verification_failed'
           PY
+
+      - name: Wait for the exact repaired release
+        run: |
+          python3 <<'PY'
+          import urllib.request,json,time
+          expected='52caf190f40200187ab53fb635c6154dd3c99044'
+          for attempt in range(24):
+              try:
+                  with urllib.request.urlopen('https://streamweaver-new.fly.dev/api/health',timeout=10) as r:
+                      body=json.loads(r.read())
+                      if r.status==200 and body.get('buildSha')==expected:
+                          print('repaired_release_verified')
+                          break
+              except Exception: pass
+              time.sleep(10)
+          else:raise SystemExit('repaired_release_not_active')
+          PY
+      - name: Verify authenticated command handling from the bot host
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import base64,subprocess
+          source="""(async()=>{const t=Date.now();const r=await fetch((process.env.API_BASE||'https://chat-tag-new.fly.dev')+'/api/game-hub/command',{method:'POST',headers:{'content-type':'application/json','x-bot-secret':process.env.BOT_SECRET_KEY||''},body:JSON.stringify({channel:'spacemountainlive',username:'mtman1987',displayName:'mtman1987',message:'spmt quackdex',source:'owner-recovery-verification'}),signal:AbortSignal.timeout(10000)});const b=await r.json();console.log(JSON.stringify({status:r.status,elapsedMs:Date.now()-t,handled:b.handled===true,replyPresent:typeof b.reply==='string'&&b.reply.length>0}));if(!r.ok||b.handled!==true||!b.reply)process.exit(2);})().catch(()=>{console.error('command_verification_failed');process.exit(1)});"""
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          r=subprocess.run(['flyctl','ssh','console','--app','chat-tag-bot-new','--machine','48ee03ea331e08','--command',command,'--quiet'],capture_output=True,text=True,timeout=60)
+          for line in r.stdout.splitlines():
+              if line.startswith('{'): print(line)
+          if r.returncode:raise SystemExit('command_verification_failed')
+          PY
+      - uses: actions/checkout@v4
+      - name: Count recent failure categories without exporting logs
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { parseJsonLines } from './scripts/github-control-direct.mjs';
+          const since=Date.now()-120000;
+          for(const app of ['streamweaver-new','chat-tag-new','chat-tag-bot-new']){
+            const raw=execFileSync('flyctl',['logs','--app',app,'--json','--no-tail'],{encoding:'utf8',timeout:60000,maxBuffer:4*1024*1024});
+            const entries=parseJsonLines(raw).filter(e=>Date.parse(e.timestamp||e.time||e.ts||'')>=since);
+            const counts={jsonErrors:0,apiTimeouts:0,healthFailures:0,uncaughtExceptions:0};
+            for(const e of entries){
+              const message=String(e.message||e.msg||e.log||'');
+              if(/SyntaxError.*JSON|Unexpected.*JSON/.test(message))counts.jsonErrors++;
+              if(/API Error.*timeout/.test(message))counts.apiTimeouts++;
+              if(/Health check.*has failed/.test(message))counts.healthFailures++;
+              if(/uncaughtException/.test(message))counts.uncaughtExceptions++;
+            }
+            console.log(JSON.stringify({app,recentRecordCount:entries.length,sampleWindowSeconds:120,counts}));
+          }
+          NODE
