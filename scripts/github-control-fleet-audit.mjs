@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
-const PARTNER_APP = /(?:^|[-_])(?:mika|miniature|atherea|atheria)(?:[-_]|$)/i;
+const PARTNER_APP = /(?:^|[-_])(?:mika|miniature|atherea|atheria|aetherra)(?:[-_]|$)/i;
 const EXPECTED = new Set(['chat-tag-bot-new','chat-tag-new','discord-stream-hub-new','dsh-clip-worker','hearmeout-main','hmo-dj-worker','streamweaver-new','spmt-live','mtman-machine-rotator']);
 // Publish only fixed classifications and numeric measurements. Never publish log text,
 // process arguments, environment variables, health output, or command stderr.
