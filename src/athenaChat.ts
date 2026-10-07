@@ -1,6 +1,7 @@
 import { spmtSharedUiHead, spmtSharedUiScript } from "./spmtSharedUi.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isSpmtAdmin, requireSpmtIdentity } from "./spmtAuth.js";
+import { readFreeCoderPolicy } from "./freeGeminiCoder.js";
 
 type ChatProvider = "local" | "openai" | "eden" | "gemini";
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -27,13 +28,13 @@ export async function handleAthenaChatRequest(request: IncomingMessage, response
     const identity = await requireSpmtIdentity(request, env);
     if (!identity) return send(response, 401, { error: "SPMT login required" });
     response.writeHead(200, privateHeaders("text/html; charset=utf-8"));
-    response.end(renderWorkbench(isSpmtAdmin(identity), listProviders(env), String(identity.username || identity.id || "SPMT user")));
+    response.end(renderWorkbench(isSpmtAdmin(identity), await listProviders(env), String(identity.username || identity.id || "SPMT user")));
     return true;
   }
   if (url.pathname === "/athena/api/chat/providers" && request.method === "GET") {
     const identity = await requireSpmtIdentity(request, env);
     if (!identity) return send(response, 401, { error: "SPMT login required" });
-    return send(response, 200, { providers: listProviders(env), adultModeAllowed: isSpmtAdmin(identity) });
+    return send(response, 200, { providers: await listProviders(env), adultModeAllowed: isSpmtAdmin(identity) });
   }
   if (url.pathname !== "/athena/api/chat" || request.method !== "POST") return false;
 
@@ -50,22 +51,24 @@ export async function handleAthenaChatRequest(request: IncomingMessage, response
   }
 
   const system = adultMode ? `${BASE_SYSTEM_PROMPT}\n\n${ADULT_MODE_PROMPT}` : BASE_SYSTEM_PROMPT;
-  const result = await runProvider(provider, [{ role: "system", content: system }, ...messages], body, env);
+  const result = await runAthenaProvider(provider, [{ role: "system", content: system }, ...messages], body, env);
   return send(response, 200, { ...result, provider, adultMode });
 }
 
 function hasRealOpenAiKey(env: NodeJS.ProcessEnv) { return Boolean(env.OPENAI_API_KEY) && env.OPENAI_API_KEY !== "spmt-private-network-no-auth"; }
 
-function listProviders(env: NodeJS.ProcessEnv) {
+export async function listProviders(env: NodeJS.ProcessEnv) {
+  const free = Boolean(await readFreeCoderPolicy(env));
   return [
-    { id: "local", label: "Local Qwen", ready: env.ATHENA_CHAT_LOCAL_ENABLED === "true" && Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },
-    { id: "openai", label: "OpenAI", ready: hasRealOpenAiKey(env), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini" },
-    { id: "eden", label: "Eden AI", ready: Boolean(env.EDENAI_API_KEY), model: env.ATHENA_CHAT_EDEN_MODEL || "openai/gpt-4.1-mini" },
-    { id: "gemini", label: "Gemini", ready: Boolean(env.GEMINI_API_KEY), model: env.ATHENA_CHAT_GEMINI_MODEL || "gemini-2.5-flash" },
+    { id: "local", label: "Local Qwen", ready: !free && env.ATHENA_CHAT_LOCAL_ENABLED === "true" && Boolean(env.SPMT_LLM_BASE_URL), model: env.ATHENA_CHAT_LOCAL_MODEL || "spmt-qwen3-4b" },
+    { id: "openai", label: "OpenAI", ready: !free && hasRealOpenAiKey(env), model: env.ATHENA_CHAT_OPENAI_MODEL || "gpt-4o-mini" },
+    { id: "eden", label: "Eden AI", ready: !free && Boolean(env.EDENAI_API_KEY), model: env.ATHENA_CHAT_EDEN_MODEL || "openai/gpt-4.1-mini" },
+    { id: "gemini", label: "Gemini", ready: !free && Boolean(env.GEMINI_API_KEY), model: env.ATHENA_CHAT_GEMINI_MODEL || "gemini-2.5-flash" },
   ];
 }
 
-async function runProvider(provider: ChatProvider, messages: ChatMessage[], body: ChatRequest, env: NodeJS.ProcessEnv) {
+export async function runAthenaProvider(provider: ChatProvider, messages: ChatMessage[], body: ChatRequest, env: NodeJS.ProcessEnv) {
+  if (await readFreeCoderPolicy(env)) throw new Error("Private chat requires explicit authorization for Google Gemini; paid providers are disabled.");
   if (provider === "gemini") return runGemini(messages, body, env);
   if (provider === "eden") return runEden(messages, body, env);
   const local = provider === "local";
@@ -129,7 +132,7 @@ function privateHeaders(type: string) { return { "content-type": type, "cache-co
 function send(response: ServerResponse, status: number, value: unknown): true { response.writeHead(status, privateHeaders("application/json; charset=utf-8")); response.end(JSON.stringify(value)); return true; }
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character] || character); }
 
-function renderWorkbench(adultAllowed: boolean, providers: ReturnType<typeof listProviders>, userName: string) {
+function renderWorkbench(adultAllowed: boolean, providers: Awaited<ReturnType<typeof listProviders>>, userName: string) {
   const config = JSON.stringify({ adultAllowed, providers }).replaceAll("<", "\\u003c");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Athena LLM Workbench</title><style>
 :root{color-scheme:dark;--bg:#050713;--panel:rgba(15,22,44,.88);--line:rgba(255,255,255,.13);--ink:#f8fafc;--muted:#a9b4ca;--violet:#8b5cf6;--cyan:#22d3ee;--good:#34d399;--bad:#fb7185}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,rgba(34,211,238,.14),transparent 30%),radial-gradient(circle at 90% 0,rgba(139,92,246,.2),transparent 31%),var(--bg);color:var(--ink);font:15px Inter,system-ui,sans-serif;min-height:100vh}.shell{max-width:1450px;margin:auto;padding:22px 18px 65px}.top,.row,.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top{justify-content:space-between}.nav a{color:white;text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:8px 11px;margin-left:6px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;margin-top:18px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:17px;box-shadow:0 24px 70px rgba(0,0,0,.32)}h1{font-size:clamp(2rem,5vw,4rem);margin:8px 0}.muted{color:var(--muted);line-height:1.55}.messages{height:58vh;overflow:auto;background:rgba(2,6,20,.55);border:1px solid var(--line);border-radius:18px;padding:14px}.msg{padding:13px 15px;border-radius:16px;margin:9px 0;white-space:pre-wrap;line-height:1.55}.user{background:#27345c;margin-left:14%}.assistant{background:#171f39;margin-right:14%}.composer{margin-top:12px}textarea,input,select,button{background:#080c1b;color:white;border:1px solid #34405f;border-radius:12px;padding:10px;font:inherit}textarea{width:100%;min-height:100px;resize:vertical}button{cursor:pointer;font-weight:800}.primary{border:0;background:linear-gradient(135deg,var(--violet),var(--cyan))}.side{display:grid;gap:16px;align-content:start}.kv{display:grid;grid-template-columns:1fr auto;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}pre{white-space:pre-wrap;word-break:break-word;max-height:250px;overflow:auto;background:#050914;border:1px solid var(--line);border-radius:13px;padding:11px}.good{color:var(--good)}.bad{color:var(--bad)}.warning{color:#fbbf24;font-size:12px}@media(max-width:950px){.layout{grid-template-columns:1fr}.messages{height:52vh}}
@@ -141,7 +144,7 @@ html[data-spmt-theme="aurora-green"]{--spmt-suite-bg-image:url("https://spacemou
 body.spmt-host-shell:before{content:"";position:fixed;inset:-3%;z-index:-3;pointer-events:none;background-image:linear-gradient(180deg,rgba(2,6,18,.28),rgba(2,6,18,.72)),var(--spmt-suite-bg-image);background-size:cover;background-position:center;background-repeat:no-repeat;transform:scale(1.035)}
 body.spmt-host-shell:after{background:radial-gradient(circle at 10% 0%,rgba(var(--spmt-accent-rgb),calc(.25 * var(--spmt-nebula))),transparent 36rem),radial-gradient(circle at 92% 86%,rgba(var(--spmt-accent-rgb),calc(.12 * var(--spmt-nebula))),transparent 34rem)!important}
 </style></head><body><main class="shell"><header class="top"><div><div class="muted">SPMT · signed in as ${escapeHtml(userName)}</div><h1>Athena LLM Workbench</h1></div><nav class="nav"><a href="/">Home</a><a href="/athena">Coder</a><a href="/athena/repair">Repair</a><a href="/rotator">Fleet</a></nav></header>
-<div class="layout"><section class="panel"><div class="controls"><select id="provider"></select><input id="model" placeholder="Optional model override" style="flex:1;min-width:210px"><label>Temperature <input id="temp" type="number" min="0" max="2" step="0.1" value="0.8" style="width:82px"></label><label><input id="adult" type="checkbox" ${adultAllowed ? "" : "disabled"}> Adult mode</label></div><div id="adultConfirm" class="warning" hidden><label><input id="confirmed" type="checkbox"> I confirm I am an adult requesting consensual adult fictional content.</label></div><div id="messages" class="messages"><div class="msg assistant">Athena is ready. OpenAI chat is ready. Choose another available provider if you prefer.</div></div><div class="composer"><textarea id="input" placeholder="Talk to Athena…"></textarea><div class="row"><button class="primary" id="send">Send</button><button id="clear">Clear</button><button id="export">Export conversation</button><span id="status" class="muted"></span></div></div></section>
+<div class="layout"><section class="panel"><div class="controls"><select id="provider"></select><input id="model" placeholder="Optional model override" style="flex:1;min-width:210px"><label>Temperature <input id="temp" type="number" min="0" max="2" step="0.1" value="0.8" style="width:82px"></label><label><input id="adult" type="checkbox" ${adultAllowed ? "" : "disabled"}> Adult mode</label></div><div id="adultConfirm" class="warning" hidden><label><input id="confirmed" type="checkbox"> I confirm I am an adult requesting consensual adult fictional content.</label></div><div id="messages" class="messages"><div class="msg assistant">${providers.some(p => p.ready) ? "Choose an available AI provider." : "Private chat awaits authorization for the free provider. Paid providers are disabled."}</div></div><div class="composer"><textarea id="input" placeholder="Talk to Athena…"></textarea><div class="row"><button class="primary" id="send">Send</button><button id="clear">Clear</button><button id="export">Export conversation</button><span id="status" class="muted"></span></div></div></section>
 <aside class="side"><section class="panel"><h2>Provider status</h2><div id="providers"></div></section><section class="panel" id="worker"><div class="row" style="justify-content:space-between"><h2>Local worker</h2><button id="refreshWorker">Refresh</button></div><p id="workerSummary" class="muted">Loading worker state…</p><label class="row"><input id="enabled" type="checkbox"> Allow provisioning/deployment</label><div class="row"><button id="provision">Provision / Deploy</button></div><pre id="workerOutput">Loading…</pre></section></aside></div></main>
 <script>
 const cfg=${config},history=[],$=id=>document.getElementById(id),provider=$('provider');
