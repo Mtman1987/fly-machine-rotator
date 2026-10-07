@@ -1,0 +1,28 @@
+name: Correct agents readiness check
+on:
+  push:
+    branches: [diagnose/chat-tag-fleet-20261006]
+    paths:
+      - scripts/agents-health-correction.mjs
+      - .github/workflows/agents-health-correction.yml
+permissions:
+  contents: read
+concurrency:
+  group: agents-readiness-correction
+  cancel-in-progress: false
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Validate bounded correction
+        run: node --check scripts/agents-health-correction.mjs
+      - name: Configure and verify the existing agents health endpoint
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/agents-health-correction.mjs
