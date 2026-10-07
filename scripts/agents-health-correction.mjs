@@ -1,20 +1,24 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const exec = promisify(execFile);
 const app='spmt-agents', id='85d626f42450e8';
-const endpoint='https://api.machines.dev/v1/apps/'+app+'/machines/'+id;
 const check={type:'http',port:8080,protocol:'http',method:'GET',path:'/health',interval:'30s',timeout:'5s',grace_period:'30s'};
 const token=process.env.FLY_API_TOKEN;
-let nonce,changed=false;
-async function api(path='',method='GET',body) {
-  const r=await fetch(endpoint+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(nonce?{'fly-machine-lease-nonce':nonce}:{})},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(60000),redirect:'error'});
-  if(!r.ok){await r.body?.cancel();throw new Error('fly_request_rejected_'+r.status);}
-  return r.json();
-}
+let changed=false;
+const configFile=join(tmpdir(),'approved-agents-check-'+process.pid+'.json');
 async function fly(args) {
-  try{return (await exec('flyctl',args,{timeout:30000,maxBuffer:1048576})).stdout;}
-  catch{throw new Error('runtime_probe_failed');}
+ try{return (await exec('flyctl',args,{timeout:180000,maxBuffer:1048576})).stdout;}
+ catch(e){throw new Error(/403|not authorized|not permitted|forbidden|unauthorized/i.test(String(e.stderr||''))?'operation_permission_denied':'fly_command_failed');}
+}
+async function read() {
+ const machines=JSON.parse(await fly(['machines','list','--app',app,'--json']));
+ const machine=machines.find(m=>m.id===id);
+ if(!machine)throw new Error('target_machine_not_found');
+ return machine;
 }
 function unchanged(config) {
   const value=structuredClone(config);delete value.checks;
@@ -22,7 +26,7 @@ function unchanged(config) {
 }
 try {
  if(!token)throw new Error('authentication_unavailable');
- let before=await api();
+ let before=await read();
  if(before.state!=='started'||before.config.guest.cpu_kind!=='shared'||before.config.guest.cpus!==1||before.config.guest.memory_mb!==512)throw new Error('unexpected_machine_resources');
  if(!/registry\.fly\.io\/spmt-agents/.test(before.config.image||'')||Object.keys(before.config.init||{}).some(k=>(before.config.init[k]||[]).length))throw new Error('unexpected_startup_configuration');
  const findPython="awk 'BEGIN { getline children < \"/proc/1/task/1/children\"; n=split(children,pids,\" \"); for(i=1;i<=n;i++){path=\"/proc/\"pids[i]\"/comm\"; getline cmd < path; close(path); if(cmd~/python/)print \"python_pid\",pids[i];}}'";
@@ -51,21 +55,21 @@ print(json.dumps({"owned_source":int(owned),"health_route":int("/health" in rout
  const output=await fly(['ssh','console','--app',app,'--command','/proc/'+pid+'/exe -c exec(bytes(['+[...probe].map(c=>c.charCodeAt(0)).join(',')+']).decode())','--quiet']);
  const metrics=JSON.parse(output.match(/\{"owned_source"[^\n]*\}/)?.[0]||'{}');
  if(metrics.owned_source!==1||metrics.health_route!==1||metrics.private_http_status!==200||metrics.healthy!==1)throw new Error('service_health_precondition_failed');
- const lease=await api('/lease','POST',{ttl:180,description:'Approved agents health correction'});
- nonce=lease.data?.nonce;
- if(!nonce)throw new Error('lease_not_acquired');
- before=await api();
+ const current=await read();
+ if(current.instance_id!==before.instance_id||unchanged(current.config)!==unchanged(before.config))throw new Error('machine_changed_during_preflight');
+ before=current;
  const prior=unchanged(before.config);
  const config=structuredClone(before.config);
  if(config.checks?.agents_ready&&JSON.stringify(config.checks.agents_ready)!==JSON.stringify(check))throw new Error('existing_check_conflict');
  if(!config.checks?.agents_ready){
   config.checks={...config.checks,agents_ready:check};
-  await api('','POST',{config,current_version:before.instance_id});
+  await writeFile(configFile,JSON.stringify(config),{mode:0o600});
+  await fly(['machine','update',id,'--app',app,'--machine-config',configFile,'--wait-timeout','120','--yes']);
   changed=true;
  }
  let after;
  for(let attempt=0;attempt<40;attempt++){
-  after=await api();
+  after=await read();
   if(unchanged(after.config)!==prior)throw new Error('unrelated_configuration_changed');
   const checks=Array.isArray(after.checks)?after.checks:Object.entries(after.checks||{}).map(([name,c])=>({name,...c}));
   if(after.state==='started'&&checks.some(c=>c.name==='agents_ready'&&c.status==='passing')){
@@ -76,4 +80,4 @@ print(json.dumps({"owned_source":int(owned),"health_route":int("/health" in rout
   await new Promise(resolve=>setTimeout(resolve,3000));
  }
 }catch(e){console.log(JSON.stringify({app,changed:Number(changed),health_passing:0,error_category:/^[a-z_]+(?:_\d+)?$/.test(e.message)?e.message:'operation_failed'}));process.exitCode=1;}
-finally{if(nonce){try{await api('/lease','DELETE');}catch{console.log(JSON.stringify({app,lease_release_verified:0}));}}}
+finally{await unlink(configFile).catch(()=>{});}
