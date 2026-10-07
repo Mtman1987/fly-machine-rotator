@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 export type CoderPolicy = { provider: "gemini"; geminiFreeTierVerified: true };
 export async function readFreeCoderPolicy(env: NodeJS.ProcessEnv): Promise<CoderPolicy | null> {
@@ -14,6 +15,10 @@ export async function readFreeCoderPolicy(env: NodeJS.ProcessEnv): Promise<Coder
   try { policy = JSON.parse(text); } catch { throw new Error("Coder provider policy is invalid; paid fallback refused."); }
   if (policy?.provider !== "gemini" || policy.geminiFreeTierVerified !== true || policy.paidRoutesEnabled !== false) {
     throw new Error("Coder provider policy is unverified; paid fallback refused.");
+  }
+  const key = String(env.GEMINI_API_KEY || "").trim();
+  if (!key || policy.keyFingerprint !== createHash("sha256").update(key).digest("hex")) {
+    throw new Error("Coder verified credential changed; paid fallback refused.");
   }
   return { provider: "gemini", geminiFreeTierVerified: true };
 }

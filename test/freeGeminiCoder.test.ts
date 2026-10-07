@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { describe, it, expect, vi } from "vitest";
 import { createFreeGeminiCoder, readFreeCoderPolicy, publicCoderTask, publicSourceContext } from "../src/freeGeminiCoder.js";
 const env = { GEMINI_API_KEY: "test-credential-not-real" };
@@ -21,13 +22,14 @@ describe("Verified free coder", () => {
   it("fails closed for missing, malformed, paid or unverified policies", async () => {
     const root=await mkdtemp(join(tmpdir(),"free-coder-"));
     try {
-      const e={CODEX_FIXER_DATA_DIR:root};
+      const e={CODEX_FIXER_DATA_DIR:root,...env};
       expect(await readFreeCoderPolicy(e)).toBeNull();
       for(const p of [{provider:"gemini",geminiFreeTierVerified:false,paidRoutesEnabled:false},{provider:"gemini",geminiFreeTierVerified:true,paidRoutesEnabled:true},{provider:"gemini",geminiFreeTierVerified:true}]) {
         await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify(p));await expect(readFreeCoderPolicy(e)).rejects.toThrow("paid fallback refused");
       }
-      await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify({...policy,paidRoutesEnabled:false}));
+      await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify({...policy,paidRoutesEnabled:false,keyFingerprint:createHash("sha256").update(env.GEMINI_API_KEY).digest("hex")}));
       expect(await readFreeCoderPolicy(e)).toEqual(policy);
+      await expect(readFreeCoderPolicy({...e,GEMINI_API_KEY:"changed-credential"})).rejects.toThrow("verified credential changed");
     }finally{await rm(root,{recursive:true,force:true});}
   });
   it("requires verified policy and credential before making a request", async () => {
