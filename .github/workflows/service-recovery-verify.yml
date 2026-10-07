@@ -1,0 +1,50 @@
+name: Verify StreamWeaver and Chat Tag recovery
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/service-recovery-verify.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Numeric resource sample
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import json,base64,subprocess
+          source="\n(async()=>{\nconst fs=require('fs');\nconst safe=p=>{try{return fs.readFileSync(p,'utf8')}catch{return ''}};\nconst rows=()=>fs.readdirSync('/proc').filter(p=>/^\\d+$/.test(p)).map(p=>{\nconst comm=safe('/proc/'+p+'/comm').trim();\nconst category=/^node$/.test(comm)?'node':/^python/.test(comm)?'python':/^ffmpeg$/.test(comm)?'ffmpeg':'other';\nconst stat=safe('/proc/'+p+'/stat');const fields=stat.slice(stat.lastIndexOf(')')+2).split(/\\s+/);\nconst status=safe('/proc/'+p+'/status');\nreturn {pid:p,category,ticks:Number(fields[11]||0)+Number(fields[12]||0),rssKb:Number(status.match(/VmRSS:\\s+(\\d+)/)?.[1]||0),threads:Number(status.match(/Threads:\\s+(\\d+)/)?.[1]||0)};\n});\nconst first=rows();await new Promise(r=>setTimeout(r,2000));const second=rows();\nconst summary={};for(const row of second){if(row.category==='other')continue;const prev=first.find(x=>x.pid===row.pid);const s=summary[row.category]||{processes:0,rssMb:0,threads:0,cpuSeconds:0};s.processes++;s.rssMb+=Math.round(row.rssKb/1024);s.threads+=row.threads;s.cpuSeconds+=Math.max(0,row.ticks-(prev?.ticks??row.ticks))/100;summary[row.category]=s;}\nconst mem=safe('/proc/meminfo');const avail=Number(mem.match(/MemAvailable:\\s+(\\d+)/)?.[1]||0);\nconsole.log(JSON.stringify({sampleSeconds:2,ramAvailableMb:Math.round(avail/1024),processCategories:summary}));\n})().catch(()=>{console.error('resource_sample_failed');process.exit(1)});\n"
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          for app in ['streamweaver-new','chat-tag-new','chat-tag-bot-new']:
+              r=subprocess.run(['flyctl','ssh','console','--app',app,'--command',command,'--quiet'],capture_output=True,text=True,timeout=60)
+              for line in r.stdout.splitlines():
+                  if line.startswith('{'):print(json.dumps({'app':app,'sample':json.loads(line)}))
+              if r.returncode:raise SystemExit('resource_sample_failed')
+          PY
+      - name: Verify actual HTTP status and active release
+        run: |
+          python3 <<'PY'
+          import json,time,urllib.request,concurrent.futures
+          urls=['https://streamweaver-new.fly.dev/api/health','https://streamweaver-new.fly.dev/api/shared-chat/featured?tenant=spacemountainlive&fallback=latest','https://chat-tag-new.fly.dev/api/health','https://chat-tag-new.fly.dev/api/tag','https://chat-tag-bot-new.fly.dev/health']
+          def probe(i):
+              t=time.monotonic()
+              try:
+                  with urllib.request.urlopen(urls[i],timeout=10) as r:
+                      raw=r.read(); status=r.status
+                  body=json.loads(raw)
+                  result={'target':i,'status':status,'elapsedMs':round((time.monotonic()-t)*1000)}
+                  if i in [0,2]:result['buildSha']=body.get('buildSha')
+                  if i==4:result['connected']=body.get('connected')
+                  return result
+              except Exception:return {'target':i,'status':0,'elapsedMs':round((time.monotonic()-t)*1000)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+              results=list(pool.map(probe,range(5)))
+          for r in results:print(json.dumps(r))
+          assert all(r['status']==200 for r in results), 'service_verification_failed'
+          PY
