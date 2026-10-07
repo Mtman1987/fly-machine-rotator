@@ -77,3 +77,14 @@ jobs:
               subprocess.run(['flyctl','machine','update',rows[0]['id'],'--app',app,'--memory','2048','--cpus','2','--vm-cpu-kind','shared','--yes'],check=True,timeout=240)
           print('Chat Tag web now has 2 GB RAM on two shared CPUs.')
           PY
+      - name: Classify exception source without exporting code or runtime content
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import base64, subprocess
+          source="const fs=require('fs');const line=fs.readFileSync('/app/.next/server/chunks/3062.js','utf8').split('\\n')[35];const area=line.slice(40000,46000);const rules={'knownBots':/known-bots-custom\\.json/,'sharedChatReplay':/replay\\.json/,'pointSettings':/point-settings\\.json/,'storedTokens':/tokens\\.json/,'genericStorage':/readFile.{0,100}JSON\\.parse/};console.log(JSON.stringify({classifications:Object.entries(rules).filter(([,r])=>r.test(area)).map(([k])=>k),jsonParseSites:(area.match(/JSON\\.parse/g)||[]).length}));"
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          subprocess.run(['flyctl','ssh','console','--app','streamweaver-new','--machine','080e967ea95558','--command',command,'--quiet'],check=True,timeout=60)
+          PY
