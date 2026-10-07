@@ -39,3 +39,26 @@ jobs:
           flyctl checks list --app streamweaver-new
           flyctl volumes list --app streamweaver-new
           flyctl ssh console --app streamweaver-new --machine 080e967ea95558 --command 'df -h /data' --quiet
+      - name: Measure public API response times without publishing response content
+        run: |
+          python3 <<'PY'
+          import json, time, urllib.request
+          targets = [
+            'https://streamweaver-new.fly.dev/api/health',
+            'https://streamweaver-new.fly.dev/api/shared-chat/featured?tenant=spacemountainlive&fallback=latest',
+            'https://chat-tag-new.fly.dev/api/health',
+            'https://chat-tag-new.fly.dev/api/tag',
+            'https://chat-tag-new.fly.dev/api/game-hub/channel?channel=spacemountainlive',
+          ]
+          for url in targets:
+              started = time.monotonic()
+              try:
+                  with urllib.request.urlopen(url, timeout=20) as response:
+                      response.read()
+                      status = response.status
+              except urllib.error.HTTPError as error:
+                  status = error.code
+              except Exception:
+                  status = 0
+              print(json.dumps({'url':url,'status':status,'elapsedMs':round((time.monotonic()-started)*1000)}))
+          PY
