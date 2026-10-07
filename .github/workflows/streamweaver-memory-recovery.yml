@@ -1,0 +1,41 @@
+name: StreamWeaver memory recovery
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/streamweaver-memory-recovery.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Restore memory headroom on the existing StreamWeaver machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import json, subprocess
+          app = 'streamweaver-new'
+          rows = json.loads(subprocess.check_output(['flyctl','machines','list','--app',app,'--json']))
+          assert len(rows) == 1, 'Expected the existing single StreamWeaver machine'
+          machine = rows[0]
+          assert machine['id'] == '080e967ea95558', 'Unexpected recovery target'
+          guest = machine['config']['guest']
+          assert guest['cpu_kind'] == 'shared' and guest['cpus'] == 2
+          if guest['memory_mb'] < 4096:
+              subprocess.run(['flyctl','machine','update',machine['id'],'--app',app,'--memory','4096','--cpus','2','--cpu-kind','shared','--yes'],check=True,timeout=240)
+          current = json.loads(subprocess.check_output(['flyctl','machines','list','--app',app,'--json']))
+          g = current[0]['config']['guest']
+          assert g['cpu_kind'] == 'shared' and g['cpus'] == 2 and g['memory_mb'] >= 4096
+          print(json.dumps({'app':app,'machineId':machine['id'],'guest':g}))
+          PY
+      - name: Read health and storage after recovery
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl checks list --app streamweaver-new
+          flyctl volumes list --app streamweaver-new
+          flyctl ssh console --app streamweaver-new --machine 080e967ea95558 --command 'df -h /data' --quiet
