@@ -53,7 +53,7 @@ jobs:
         run: |
           python3 <<'PY'
           import urllib.request,json,time
-          expected='52caf190f40200187ab53fb635c6154dd3c99044'
+          expected='ec4550fbacf2c6e801ebebd05d0cfc45c0736294'
           for attempt in range(24):
               try:
                   with urllib.request.urlopen('https://streamweaver-new.fly.dev/api/health',timeout=10) as r:
@@ -102,3 +102,18 @@ jobs:
             console.log(JSON.stringify({app,recentRecordCount:entries.length,sampleWindowSeconds:120,counts}));
           }
           NODE
+
+      - name: Verify Stella executes a viewer request on the live Lounge
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 <<'PY'
+          import base64,subprocess
+          source="(async()=>{process.chdir('/app');const req=require('module').createRequire('/app/package.json');req('tsx/cjs/api').register({tsconfig:'/app/tsconfig.json'});const {routeBotAction}=req('./src/services/bot-action-runtime.ts');const {getLoungeAudioMix}=req('./src/services/lounge-audio-mix.ts');const before=await getLoungeAudioMix();const output=before.selected;const value=before.levels[output];const message='Stella set '+output+' volume to '+value+' percent';const actor={username:'owner-recovery-viewer-probe',role:'member'};const result=await routeBotAction(message,{tenantId:'spacemountainlive',sourceTenantId:'spacemountainlive',sourceActorRole:'member',executorAuthority:'stella-lounge-moderator',source:'twitch',botName:'Stella',message,actor});const after=await getLoungeAudioMix();const unchanged=JSON.stringify(before.levels)===JSON.stringify(after.levels)&&before.selected===after.selected;console.log(JSON.stringify({action:result?.action,status:result?.status,requesterRole:actor.role,mixerLevelsUnchanged:unchanged}));if(result?.action!=='sw.lounge.volume'||result.status!=='completed'||!unchanged||actor.role!=='member')process.exit(2);})().catch(()=>{console.error('stella_live_action_verification_failed');process.exit(1)});"
+          encoded=base64.b64encode(source.encode()).decode()
+          command="node -e \"eval(Buffer.from('"+encoded+"','base64').toString('utf8'))\""
+          r=subprocess.run(['flyctl','ssh','console','--app','streamweaver-new','--machine','080e967ea95558','--command',command,'--quiet'],capture_output=True,text=True,timeout=60)
+          for line in r.stdout.splitlines():
+              if line.startswith('{'): print(line)
+          if r.returncode:raise SystemExit('stella_live_action_verification_failed')
+          PY
