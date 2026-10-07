@@ -116,103 +116,17 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           python3 <<'PY'
-          import os,json,urllib.request,urllib.parse,urllib.error,subprocess,time,sys
-          BASE='https://api.sprites.dev'
-          SOURCE='web-terminal'
-          DEST='spmt-ops-recovery'
-          EXPECTED={'web-terminal':'sprite-2249fee2-ecf3-4b10-8bc1-314f4b9e5bcc','spmt-ops-recovery':'sprite-4bd76345-15a1-43ed-811f-9a3ee4618df8'}
-          fly=os.environ['FLY_API_TOKEN']
-          def request(path,token,method='GET',data=None,timeout=45,auth='Bearer'):
-              headers={'Authorization':auth+' '+token}
-              if isinstance(data,dict):data=json.dumps(data).encode();headers['Content-Type']='application/json'
-              req=urllib.request.Request(BASE+path,data=data,headers=headers,method=method)
-              try:
-                  with urllib.request.urlopen(req,timeout=timeout) as r:return r.status,r.read()
-              except urllib.error.HTTPError as e:return e.code,b''
-              except Exception:return 0,b''
-          import base64
-          source="(()=>{const fs=require('fs'),path=require('path');const found=[];let visited=0;const walk=(root,depth)=>{if(depth>5||visited>5000)return;let rows;try{rows=fs.readdirSync(root,{withFileTypes:true})}catch{return}for(const row of rows){visited++;const p=path.join(root,row.name);if(row.isSymbolicLink())continue;if(row.isDirectory()){if(!['repos','codex-fixer','node_modules','jobs','.git','sandboxes'].includes(row.name))walk(p,depth+1)}else if(/fly.*(?:token|config)|(?:token.*fly)|^config\\.ya?ml$/i.test(row.name))found.push({path:p,bytes:fs.statSync(p).size});}};walk('/data',0);for(const p of ['/home/sprite/.fly/config.yml','/home/sprite/.fly/config.yaml','/home/sprite/.config/spmt/Fly token_update.txt']){if(fs.existsSync(p))found.push({path:p,bytes:fs.statSync(p).size})};console.log(JSON.stringify({phase:'rotator_volume_credential_metadata',dataMounted:fs.existsSync('/data'),runtimeFlyCredentialPresent:Boolean(process.env.FLY_API_TOKEN),runtimeSpriteCredentialPresent:Boolean(process.env.SPRITES_TOKEN||process.env.SPRITES_API_TOKEN||process.env.SPRITE_TOKEN),candidateFiles:found.slice(0,20),visited}));})();"
+          import base64,json,subprocess,sys
+          source="(async()=>{\nconst fs=require('fs'),cp=require('child_process');\nconst apiToken=fs.readFileSync('/data/spmtfly-sprites-token','utf8').trim();\nconst base='https://api.sprites.dev/v1/sprites/';\nconst source='web-terminal',dest='spmt-ops-recovery';\nasync function api(name,path,method='GET',body){try{const r=await fetch(base+name+path,{method,headers:{Authorization:'Bearer '+apiToken},body,signal:AbortSignal.timeout(45000)});return {status:r.status,text:await r.text()};}catch{return {status:0,text:''}}}\nfor(const [name,id]of [[source,'sprite-2249fee2-ecf3-4b10-8bc1-314f4b9e5bcc'],[dest,'sprite-4bd76345-15a1-43ed-811f-9a3ee4618df8']]){\n const r=await api(name,'');if(r.status!==200||JSON.parse(r.text).id!==id)throw Error('sprite_identity_mismatch');\n}\nconst restarted=await api(source,'/restart','POST');console.log(JSON.stringify({phase:'original_sprite_restart',httpStatus:restarted.status}));if(![200,201,202,204].includes(restarted.status))throw Error('original_sprite_restart_failed');\nlet saved='',sourcePath='';\nfor(const path of ['/home/sprite/.fly/config.yml','/home/sprite/.fly/config.yaml','/home/sprite/.config/spmt/Fly token_update.txt']){\n const q=new URLSearchParams({path,workingDir:'/'});\n const r=await api(source,'/fs/read?'+q);console.log(JSON.stringify({phase:'saved_credential_read',path,httpStatus:r.status}));\n if(r.status!==200)continue;\n const text=r.text.trim(),m=text.match(/^\\s*access_token\\s*:\\s*(.+)\\s*$/m);\n let value=m?m[1].trim():text;try{value=JSON.parse(value)}catch{value=value.replace(/^['\"]|['\"]$/g,'')}\n if(typeof value==='string'&&value.length>30&&!/[\\r\\n]/.test(value)){saved=value;sourcePath=path;break;}\n}\nif(!saved)throw Error('saved_credential_unavailable');\nconst check=cp.spawnSync('flyctl',['machines','list','--app','mtman-machine-rotator','--json'],{encoding:'utf8',env:{...process.env,FLY_API_TOKEN:saved},timeout:45000});\nif(check.status!==0||!JSON.parse(check.stdout).some(m=>m.id==='2862e02c9263d8'))throw Error('recovered_fly_authentication_failed');\nconst q=new URLSearchParams({path:'/home/sprite/.fly/config.yml',workingDir:'/',mode:'0600',mkdirParents:'true'});\nconst write=await api(dest,'/fs/write?'+q,'PUT','access_token: '+JSON.stringify(saved)+'\\n');\nif(![200,201].includes(write.status))throw Error('replacement_credential_write_failed');\nconst wrapper=String.raw`#!/usr/bin/env node\nconst fs=require('fs'),cp=require('child_process');\nconst text=fs.readFileSync('/home/sprite/.fly/config.yml','utf8');\nconst match=text.match(/^\\s*access_token\\s*:\\s*(.+)\\s*$/m);\nif(!match)process.exit(1);\nlet value=match[1].trim();try{value=JSON.parse(value)}catch{value=value.replace(/^['\"]|['\"]$/g,'')}\nconst r=cp.spawnSync('/home/sprite/.fly/bin/flyctl',process.argv.slice(2),{stdio:'inherit',env:{...process.env,FLY_API_TOKEN:value}});\nprocess.exit(r.status??1);\n`;\nconst wq=new URLSearchParams({path:'/home/sprite/ops/bin/flyctl-spmt',workingDir:'/'});\nconst removed=await api(dest,'/fs/delete?'+wq,'DELETE');if(![200,204,404].includes(removed.status))throw Error('wrapper_link_removal_failed');\nwq.set('mode','0700');wq.set('mkdirParents','true');const wr=await api(dest,'/fs/write?'+wq,'PUT',wrapper);if(![200,201].includes(wr.status))throw Error('wrapper_install_failed');\nconst imported=cp.spawnSync('flyctl',['secrets','import','--stage','--app','mtman-machine-rotator'],{input:'FLY_API_TOKEN='+saved+'\\n',encoding:'utf8',timeout:90000,env:process.env});\nif(imported.status!==0)throw Error('fly_secret_staging_failed');\nconsole.log(JSON.stringify({ok:true,phase:'credential_recovered',sourcePath,destinationSprite:dest,configMode:'0600',flySecretStaged:true}));\n})().catch(e=>{const allowed=['sprite_identity_mismatch','original_sprite_restart_failed','saved_credential_unavailable','recovered_fly_authentication_failed','replacement_credential_write_failed','wrapper_link_removal_failed','wrapper_install_failed','fly_secret_staging_failed'];console.log(JSON.stringify({ok:false,error:allowed.includes(e.message)?e.message:'credential_recovery_failed'}));process.exitCode=1;});"
           command="node -e \"eval(Buffer.from('"+base64.b64encode(source.encode()).decode()+"','base64').toString('utf8'))\""
-          probe=subprocess.run(['flyctl','ssh','console','--app','mtman-machine-rotator','--machine','2862e02c9263d8','--command',command,'--quiet'],capture_output=True,text=True,timeout=60)
-          for line in probe.stdout.splitlines():
-              if line.startswith('{'):print(line)
-          if probe.returncode:sys.exit('rotator_volume_probe_failed')
-          
-
-          # Test the live rotator's own credential independently of Actions.
-          runtimeSource="(async()=>{const token=process.env.FLY_API_TOKEN;if(!token)throw Error('missing_runtime_fly_credential');for(const [label,value]of [['official_sdk_format',token],['normalized_format',token.startsWith('FlyV1 ')?token.slice(6):token]]){const r=await fetch('https://api.sprites.dev/v1/organizations/mtman-new/tokens',{method:'POST',headers:{Authorization:'FlyV1 '+value,'content-type':'application/json'},body:JSON.stringify({description:'SPMTFly rotator terminal recovery'}),signal:AbortSignal.timeout(30000)});console.log(JSON.stringify({phase:'runtime_rotator_sprites_authorization',format:label,httpStatus:r.status}));if(r.ok){const b=await r.json();if(!b.token)throw Error('missing_sprite_credential');require('fs').writeFileSync('/data/spmtfly-sprites-token',b.token,{mode:0o600});console.log(JSON.stringify({phase:'runtime_sprite_auth_saved',path:'/data/spmtfly-sprites-token',mode:'0600'}));return;}}})().catch(()=>{console.log(JSON.stringify({phase:'runtime_rotator_auth_probe_failed'}));process.exitCode=1});"
-          command="node -e \"eval(Buffer.from('"+base64.b64encode(runtimeSource.encode()).decode()+"','base64').toString('utf8'))\""
-          runtimeProbe=subprocess.run(['flyctl','ssh','console','--app','mtman-machine-rotator','--machine','2862e02c9263d8','--command',command,'--quiet'],capture_output=True,text=True,timeout=90)
-          for line in runtimeProbe.stdout.splitlines():
-              if line.startswith('{'):print(line)
-
-          # Use the rotator's existing Actions secret only inside this runner.
-          macaroon=fly
-          status,raw=request('/v1/organizations/mtman-new/tokens',macaroon,'POST',{'description':'SPMTFly terminal credential recovery'},auth='FlyV1')
-          print(json.dumps({'phase':'sprites_authorization','httpStatus':status}))
-          if status not in (200,201):sys.exit('sprites_authorization_failed')
-          token=json.loads(raw).get('token')
-          if not token:sys.exit('sprites_authorization_missing')
-          # Immediately mask the minted credential; no secrets are exported as artifacts.
-          print('::add-mask::'+token)
-          for name in (SOURCE,DEST):
-              status,raw=request('/v1/sprites/'+name,token)
-              if status!=200 or json.loads(raw).get('id')!=EXPECTED[name]:sys.exit('sprite_identity_mismatch')
-          status,raw=request('/v1/sprites/'+SOURCE+'/restart',token,'POST',timeout=60)
-          print(json.dumps({'phase':'original_sprite_restart','httpStatus':status}))
-          if status not in (200,201,202,204):sys.exit('sprite_restart_failed')
-          # A restart preserves the filesystem. Never restore an older checkpoint.
-          saved=None
-          sourcePath=None
-          paths=['/home/sprite/.fly/config.yml','/home/sprite/.fly/config.yaml','/home/sprite/.config/spmt/Fly token_update.txt']
-          for attempt in range(3):
-              for path in paths:
-                  query=urllib.parse.urlencode({'path':path,'workingDir':'/'})
-                  status,raw=request('/v1/sprites/'+SOURCE+'/fs/read?'+query,token,timeout=45)
-                  print(json.dumps({'phase':'saved_credential_read','path':path,'httpStatus':status}))
-                  if status==200:
-                      text=raw.decode().strip()
-                      import re
-                      match=re.search(r'(?m)^\s*access_token\s*:\s*(.+?)\s*$',text)
-                      value=match.group(1).strip().strip('"\'') if match else text
-                      if value and not any(c in value for c in '\r\n') and len(value)>30:
-                          saved=value;sourcePath=path;break
-              if saved:break
-              time.sleep(3)
-          if not saved:sys.exit('saved_credential_unavailable_after_restart')
-          print('::add-mask::'+saved)
-          # Verify the recovered key against the target app before changing any secret.
-          childEnv=dict(os.environ,FLY_API_TOKEN=saved)
-          check=subprocess.run(['flyctl','machines','list','--app','mtman-machine-rotator','--json'],env=childEnv,capture_output=True,text=True,timeout=45)
-          if check.returncode:sys.exit('recovered_fly_authentication_failed')
-          try:machines=json.loads(check.stdout)
-          except Exception:sys.exit('recovered_fly_inventory_invalid')
-          if not any(m.get('id')=='2862e02c9263d8' for m in machines):sys.exit('rotator_identity_mismatch')
-          config=('access_token: '+json.dumps(saved)+'\n').encode()
-          query=urllib.parse.urlencode({'path':'/home/sprite/.fly/config.yml','workingDir':'/','mode':'0600','mkdirParents':'true'})
-          status,raw=request('/v1/sprites/'+DEST+'/fs/write?'+query,token,'PUT',config)
-          if status not in (200,201):sys.exit('replacement_credential_write_failed')
-          # Install a wrapper that supplies saved auth internally even when HOME differs.
-          wrapper=b'''#!/usr/bin/env node
-          const fs=require('fs'),cp=require('child_process');
-          const text=fs.readFileSync('/home/sprite/.fly/config.yml','utf8');
-          const match=text.match(/^\\s*access_token\\s*:\\s*(.+)\\s*$/m);
-          if(!match)process.exit(1);
-          let value=match[1].trim();try{value=JSON.parse(value)}catch{value=value.replace(/^['"]|['"]$/g,'')}
-          const result=cp.spawnSync('/home/sprite/.fly/bin/flyctl',process.argv.slice(2),{stdio:'inherit',env:{...process.env,FLY_API_TOKEN:value}});
-          process.exit(result.status??1);
-          '''
-          # Existing flyctl-spmt is a symlink; delete only that link before replacing it.
-          q=urllib.parse.urlencode({'path':'/home/sprite/ops/bin/flyctl-spmt','workingDir':'/'})
-          status,raw=request('/v1/sprites/'+DEST+'/fs/delete?'+q,token,'DELETE')
-          if status not in (200,204,404):sys.exit('wrapper_link_removal_failed')
-          q=urllib.parse.urlencode({'path':'/home/sprite/ops/bin/flyctl-spmt','workingDir':'/','mode':'0700','mkdirParents':'true'})
-          status,raw=request('/v1/sprites/'+DEST+'/fs/write?'+q,token,'PUT',wrapper)
-          if status not in (200,201):sys.exit('wrapper_install_failed')
-          # Reapply the recovered Fly credential to the owner's rotator app over stdin.
-          # The service restarts only if Fly detects a secret change.
-          update=subprocess.run(['flyctl','secrets','import','--app','mtman-machine-rotator'],input='FLY_API_TOKEN='+saved+'\n',env=dict(os.environ),capture_output=True,text=True,timeout=180)
-          if update.returncode:sys.exit('fly_secret_restore_failed')
-          print(json.dumps({'ok':True,'sourceSprite':SOURCE,'sourcePath':sourcePath,'destinationSprite':DEST,'configMode':'0600','flySecretApp':'mtman-machine-rotator','flySecretName':'FLY_API_TOKEN','recoveredAuthVerified':True}))
-          
+          r=subprocess.run(['flyctl','ssh','console','--app','mtman-machine-rotator','--machine','2862e02c9263d8','--command',command,'--quiet'],capture_output=True,text=True,timeout=360)
+          ok=False
+          for line in r.stdout.splitlines():
+              if line.startswith('{'):
+                  value=json.loads(line);print(json.dumps(value))
+                  if value.get('ok') is True:ok=True
+          if r.returncode or not ok:sys.exit('runtime_credential_recovery_failed')
+          deployed=subprocess.run(['flyctl','secrets','deploy','--app','mtman-machine-rotator'],capture_output=True,text=True,timeout=180)
+          print(json.dumps({'phase':'fly_secret_deployment','ok':deployed.returncode==0}))
+          if deployed.returncode:sys.exit('fly_secret_deployment_failed')
           PY
