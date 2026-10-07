@@ -24,7 +24,7 @@ describe("Verified free coder", () => {
       const e={CODEX_FIXER_DATA_DIR:root};
       expect(await readFreeCoderPolicy(e)).toBeNull();
       for(const p of [{provider:"gemini",geminiFreeTierVerified:false,paidRoutesEnabled:false},{provider:"gemini",geminiFreeTierVerified:true,paidRoutesEnabled:true},{provider:"gemini",geminiFreeTierVerified:true}]) {
-        await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify(p));expect(await readFreeCoderPolicy(e)).toBeNull();
+        await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify(p));await expect(readFreeCoderPolicy(e)).rejects.toThrow("paid fallback refused");
       }
       await writeFile(join(root,"ai-provider-policy.json"),JSON.stringify({...policy,paidRoutesEnabled:false}));
       expect(await readFreeCoderPolicy(e)).toEqual(policy);

@@ -3,11 +3,19 @@ import { join } from "node:path";
 
 export type CoderPolicy = { provider: "gemini"; geminiFreeTierVerified: true };
 export async function readFreeCoderPolicy(env: NodeJS.ProcessEnv): Promise<CoderPolicy | null> {
+  let text: string;
   try {
-    const policy = JSON.parse(await readFile(join(String(env.CODEX_FIXER_DATA_DIR || "/data/codex-fixer"), "ai-provider-policy.json"), "utf8"));
-    return policy.provider === "gemini" && policy.geminiFreeTierVerified === true && policy.paidRoutesEnabled === false
-      ? { provider: "gemini", geminiFreeTierVerified: true } : null;
-  } catch { return null; }
+    text = await readFile(join(String(env.CODEX_FIXER_DATA_DIR || "/data/codex-fixer"), "ai-provider-policy.json"), "utf8");
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error("Coder provider policy is unreadable; paid fallback refused.");
+  }
+  let policy: any;
+  try { policy = JSON.parse(text); } catch { throw new Error("Coder provider policy is invalid; paid fallback refused."); }
+  if (policy?.provider !== "gemini" || policy.geminiFreeTierVerified !== true || policy.paidRoutesEnabled !== false) {
+    throw new Error("Coder provider policy is unverified; paid fallback refused.");
+  }
+  return { provider: "gemini", geminiFreeTierVerified: true };
 }
 
 export async function assertPublicCoderSource(repoUrl: string, commit: string, fetchImpl: typeof fetch = fetch): Promise<void> {
