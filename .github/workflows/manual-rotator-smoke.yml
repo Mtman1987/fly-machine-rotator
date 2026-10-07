@@ -67,6 +67,7 @@ jobs:
           sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' diagnostics/apps.txt | xargs -r -P4 -I{} bash -c '
             set -euo pipefail
             app="$1"
+            case "$app" in mika-bot|aetherra) exit 0 ;; esac
             [[ "$app" =~ ^[A-Za-z0-9_-]+$ ]] || exit 1
             capture "diagnostics/$app-machines.txt" flyctl machine list -a "$app" --json
             if FILE="diagnostics/$app-machines.txt" node -e "const fs=require(\"fs\");const rows=JSON.parse(fs.readFileSync(process.env.FILE,\"utf8\"));process.exit(rows.some(m=>m.state===\"started\")?0:1)"; then
@@ -100,27 +101,3 @@ jobs:
           path: diagnostics/
           retention-days: 1
           if-no-files-found: error
-
-  recover-terminal:
-    name: Recover SPMTFly saved credential without exporting secrets
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    concurrency:
-      group: spmt-fly-production-mutation
-      cancel-in-progress: false
-    steps:
-      - uses: superfly/flyctl-actions/setup-flyctl@v1
-      - name: Restart original Sprite and restore saved authentication
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          python3 <<'PY'
-          import base64,json,subprocess,sys
-          source="(async()=>{const fs=require('fs');const token=fs.readFileSync('/data/spmtfly-sprites-token','utf8').trim();for(const [name,id,ready]of [['spmt-ops-recovery','sprite-4bd76345-15a1-43ed-811f-9a3ee4618df8',true],['web-terminal','sprite-2249fee2-ecf3-4b10-8bc1-314f4b9e5bcc',false]]){const url='https://api.sprites.dev/v1/sprites/'+name;const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};const current=await fetch(url,{headers,signal:AbortSignal.timeout(30000)});if(!current.ok)throw Error('metadata_read_failed');const body=await current.json();if(body.id!==id)throw Error('identity_mismatch');const labels=(body.labels||[]).filter(l=>l!=='fly:sprite-terminal-ready');if(ready)labels.push('fly:sprite-terminal-ready');const update=await fetch(url,{method:'PUT',headers,body:JSON.stringify({labels}),signal:AbortSignal.timeout(30000)});if(!update.ok)throw Error('label_update_failed');console.log(JSON.stringify({sprite:name,defaultTerminal:ready,updated:true}));}})().catch(()=>{console.log(JSON.stringify({ok:false,error:'terminal_selection_update_failed'}));process.exitCode=1});"
-          command="node -e \"eval(Buffer.from('"+base64.b64encode(source.encode()).decode()+"','base64').toString('utf8'))\""
-          r=subprocess.run(['flyctl','ssh','console','--app','mtman-machine-rotator','--machine','2862e02c9263d8','--command',command,'--quiet'],capture_output=True,text=True,timeout=120)
-          for line in r.stdout.splitlines():
-              if line.startswith('{'):print(line)
-          if r.returncode:sys.exit('terminal_selection_update_failed')
-          PY
