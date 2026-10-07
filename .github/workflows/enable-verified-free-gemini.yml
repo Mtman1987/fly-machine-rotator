@@ -1,0 +1,27 @@
+name: Enable verified free Gemini
+on:
+  push:
+    branches: [diagnose/chat-tag-fleet-20261006]
+    paths:
+      - scripts/enable-verified-free-gemini.mjs
+      - .github/workflows/enable-verified-free-gemini.yml
+permissions:
+  contents: read
+concurrency:
+  group: verified-free-gemini-policy
+  cancel-in-progress: false
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: node --check scripts/enable-verified-free-gemini.mjs
+      - name: Enable verified persistent policy and test app generation
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/enable-verified-free-gemini.mjs
