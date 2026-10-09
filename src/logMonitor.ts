@@ -226,6 +226,7 @@ async function handleLogLineInner(
   entry.region ??= subject?.region;
   rememberRecentFlyLog({appName, machineId:entry.machineId,region:entry.region,level:entry.level,timestamp:entry.timestamp,message:entry.message});
   if (stats) stats.entries += 1;
+  if (isLogMonitorEcho(appName, entry.message)) return;
   pushContext(context, entry, options.contextLines);
 
   if (!looksLikeError(entry.message) && !isExpectedApplicationResponse(stripAnsi(entry.message))) return;
@@ -345,6 +346,11 @@ function parseFlyLogLine(appName: string, line: string): LogEntry {
   }
 }
 
+export function isLogMonitorEcho(appName: string, message: string): boolean {
+  return appName === "mtman-machine-rotator"
+    && /^\s*(?:observed|reported)\s+[a-z0-9-]+\s+[0-9a-f]{16}\s*(?:\[[^\]]+\]:|:)/i.test(stripAnsi(message));
+}
+
 export function looksLikeError(message: string): boolean {
   const normalized = stripAnsi(message);
   if (isNonActionableErrorMessage(normalized)) return false;
@@ -461,6 +467,7 @@ export class ObservationBaselineStore {
 
 function isNonActionableErrorEcho(message: string): boolean {
   return [
+    /^\[Bot\] Twitch chat uses the authorized bot account via TMI\.js\. Optional EventSub integration is off; this is not a bot authentication error\.$/i,
     /\[Twitch\] Message sent via API:/i,
     /^\[DiscordChat\] Received:\s*\{/i,
     /\[Dispatcher\] Handling Twitch message:/i,
