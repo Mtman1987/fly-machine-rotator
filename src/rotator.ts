@@ -188,6 +188,7 @@ export class MachineRotator {
           throw new Error(`Machine ${machine.id} stopped before its refresh; aborting remaining restarts.`);
         }
         const nonce = machine.id === anchor.id ? lease.nonce : undefined;
+        let stopConfirmed = false;
         try {
           actions.push(`Stopping Machine ${machine.id} to clear RAM and ephemeral temp files.`);
           await this.fly.stopMachine(
@@ -197,12 +198,16 @@ export class MachineRotator {
             nonce
           );
           await this.fly.waitForMachineState(appName, machine.id, "stopped");
+          stopConfirmed = true;
           const stoppedMachine = await this.fly.getMachine(appName, machine.id);
-          if (stoppedMachine.state !== "stopped") {
-            throw new Error(`Expected stopped state, found ${stoppedMachine.state}.`);
+          if (stoppedMachine.state === "stopped") {
+            actions.push(`Starting Machine ${machine.id}.`);
+            await this.startRestartedMachine(appName, machine.id, actions, warnings, nonce);
+          } else if (stoppedMachine.state === "starting" || stoppedMachine.state === "started") {
+            warnings.push(`Machine ${machine.id} automatically restarted after stopping; verifying readiness.`);
+          } else {
+            throw new Error(`Expected stopped or restarting state, found ${stoppedMachine.state}.`);
           }
-          actions.push(`Starting Machine ${machine.id}.`);
-          await this.startRestartedMachine(appName, machine.id, actions, warnings, nonce);
           await this.waitForRestartReady(appName, machine.id, actions);
         } catch (error) {
           // A failed readiness check must not strand a stopped Machine.
@@ -212,10 +217,13 @@ export class MachineRotator {
               await this.startRestartedMachine(appName, machine.id, actions, warnings, nonce);
               await this.waitForRestartReady(appName, machine.id, actions);
               warnings.push(`Recovered Machine ${machine.id} after a refresh error.`);
+              if (stopConfirmed) continue;
             } catch (recoveryError) {
               warnings.push(`Recovery of Machine ${machine.id} failed: ${String(recoveryError)}`);
             }
           }
+          // Preserve the failed result when stop confirmation was lost. Starting a
+          // stranded Machine is recovery, not proof the refresh completed.
           throw new Error(`Machine ${machine.id} refresh failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -335,6 +343,13 @@ export class MachineRotator {
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);
+        // A timed-out start may already have reached Fly. Reconcile before
+        // repeating it; the caller still requires started state and health.
+        const current = await this.fly.getMachine(appName, machineId).catch(() => undefined);
+        if (current?.state === "starting" || current?.state === "started") {
+          warnings.push(`Start response failed for ${machineId}, but Machine is ${current.state}; verifying readiness.`);
+          return;
+        }
         if (!isRetryableRestartStartError(message) || attempt === this.options.restartStartRetries) break;
 
         warnings.push(`Start retry ${attempt}/${this.options.restartStartRetries} for ${machineId}: ${message}`);
@@ -469,7 +484,7 @@ function hasMultiMachineService(machine: FlyMachine): boolean {
 }
 
 function isRetryableRestartStartError(message: string): boolean {
-  return /429|rate limit|machine still active|still attempting to start|failed_precondition/i.test(message);
+  return /429|rate limit|machine still active|still attempting to start|failed_precondition|network_or_timeout|timed? ?out|fetch failed|ECONNRESET/i.test(message);
 }
 
 function successResult(

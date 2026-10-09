@@ -13,6 +13,7 @@ export interface RotatorRuntimeState {
   lastError?: string;
   nextRunAt?: string;
   lastRunLines: string[];
+  pendingAppNames?: string[];
 }
 
 const DEFAULT_STATE: RotatorRuntimeState = {
@@ -58,7 +59,8 @@ export class RotatorRuntimeStateStore {
     finishedAt: string,
     durationMs: number,
     results: AppRotationResult[],
-    nextRunAt: string
+    nextRunAt: string,
+    pendingAppNames?: string[]
   ): Promise<void> {
     this.value.totalRuns += 1;
     this.value.currentStatus = results.every((result) => result.success) ? "success" : "failed";
@@ -68,6 +70,7 @@ export class RotatorRuntimeStateStore {
     this.value.lastError = results.find((result) => result.error)?.error;
     this.value.nextRunAt = nextRunAt;
     this.value.lastRunLines = results.map(formatRuntimeResultLine).slice(0, 20);
+    this.value.pendingAppNames = pendingAppNames;
     this.value.updatedAt = finishedAt;
     await this.save();
   }
@@ -96,6 +99,7 @@ export class RotatorRuntimeStateStore {
     this.value.lastDurationMs = snapshot.lastDurationMs;
     this.value.lastError = snapshot.lastError;
     this.value.lastRunLines = snapshot.lastRunLines;
+    this.value.pendingAppNames = snapshot.pendingAppNames;
     this.value.nextRunAt = nextRunAt;
     this.value.updatedAt = new Date().toISOString();
     await this.save();
@@ -136,6 +140,9 @@ function normalizeState(value: Partial<RotatorRuntimeState>): RotatorRuntimeStat
     lastDurationMs: typeof value.lastDurationMs === "number" && Number.isFinite(value.lastDurationMs) ? value.lastDurationMs : undefined,
     lastError: typeof value.lastError === "string" ? value.lastError : undefined,
     nextRunAt: typeof value.nextRunAt === "string" ? value.nextRunAt : undefined,
+    pendingAppNames: Array.isArray(value.pendingAppNames)
+      ? [...new Set(value.pendingAppNames.filter((item): item is string => typeof item === "string" && Boolean(item.trim())))]
+      : undefined,
     lastRunLines: Array.isArray(value.lastRunLines) ? value.lastRunLines.filter((item): item is string => typeof item === "string") : []
   };
 }

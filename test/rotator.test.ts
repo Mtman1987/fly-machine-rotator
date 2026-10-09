@@ -55,6 +55,53 @@ describe("MachineRotator", () => {
     expect(fly.calls.filter((call) => call.startsWith("release "))).toEqual(["release a"]);
   });
 
+  it("accepts an automatic restart only after stop confirmation and health", async () => {
+    const fly = new FakeFlyClient([machine("a", "started"), machine("b", "started")]);
+    const wait = fly.waitForMachineState.bind(fly);
+    fly.waitForMachineState = async (app, id, state) => {
+      await wait(app, id, state);
+      if (id === "a" && state === "stopped") fly.machines[0].state = "started";
+    };
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("app");
+    expect(result.success).toBe(true);
+    expect(fly.calls).not.toContain("start a");
+    expect(fly.calls).toContain("stop b");
+    expect(result.warnings.join(" ")).toContain("automatically restarted");
+  });
+
+  it("reconciles a timed-out start that already succeeded without issuing a duplicate start", async () => {
+    const fly = new FakeFlyClient([machine("a", "started")]);
+    const start = fly.startMachine.bind(fly);
+    fly.startMachine = async (app, id) => { await start(app, id); throw new Error("network_or_timeout"); };
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("app");
+    expect(result.success).toBe(true);
+    expect(fly.calls.filter(c => c === "start a")).toHaveLength(1);
+    expect(result.actions).toContain("Machine a is healthy.");
+  });
+
+  it("does not accept an unhealthy Machine after a timed-out start", async () => {
+    const fly = new FakeFlyClient([machine("a", "started", false), machine("b", "started")]);
+    const start = fly.startMachine.bind(fly);
+    fly.startMachine = async (app, id) => { await start(app, id); throw new Error("network_or_timeout"); };
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("app");
+    expect(result.success).toBe(false);
+    expect(fly.calls).not.toContain("stop b");
+  });
+
+  it("continues other roles after confirmed-stop recovery succeeds", async () => {
+    const fly = new FakeFlyClient([machine("a", "started"), machine("b", "started")]);
+    const start = fly.startMachine.bind(fly);
+    let first = true;
+    fly.startMachine = async (app, id) => {
+      if (first) { first = false; throw new Error("temporary start failure"); }
+      await start(app, id);
+    };
+    const result = await new MachineRotator(fly, { ...baseOptions, restartOnly: true }).rotateApp("app");
+    expect(result.success).toBe(true);
+    expect(fly.calls).toContain("stop b");
+    expect(activeIds(fly.machines)).toEqual(["a", "b"]);
+  });
+
   it("starts a healthy standby before stopping the previous active Machine", async () => {
     const fly = new FakeFlyClient([
       machine("active-1", "started"),

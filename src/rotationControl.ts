@@ -39,7 +39,8 @@ async function executeTrackedRotationInner(
     if (sessionReset) results.push(sessionReset);
     const finishedAt = new Date();
     const nextRunAt = new Date(finishedAt.getTime() + computeNextIntervalMs(results)).toISOString();
-    await store.markFinished(trigger, finishedAt.toISOString(), finishedAt.getTime() - startedAt.getTime(), results, nextRunAt);
+    await store.markFinished(trigger, finishedAt.toISOString(), finishedAt.getTime() - startedAt.getTime(), results, nextRunAt,
+      pendingRotationApps(config.appNames, results));
     await sendDiscordReport(config.discordWebhookUrl, results);
     return results;
   } catch (error) {
@@ -53,4 +54,10 @@ async function executeTrackedRotationInner(
 
 export function computeNextIntervalMs(results: AppRotationResult[]): number {
   return results.every((result) => result.success) ? SUCCESS_INTERVAL_MS : FAILURE_RETRY_MS;
+}
+
+
+export function pendingRotationApps(appNames: string[], results: AppRotationResult[]): string[] {
+  const succeeded = new Set(results.filter(result => result.success).map(result => result.appName));
+  return appNames.filter(name => name !== "spmt-llm-worker" && !succeeded.has(name));
 }

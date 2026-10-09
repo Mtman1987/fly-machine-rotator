@@ -8,7 +8,12 @@ type RotationHistoryEntry = { at?: string };
 export async function startAutoRotationLoop(argv: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<never> {
   const historyFile = env.ROTATION_HISTORY_FILE ?? "/data/rotation-history.json";
   const runtime = await RotatorRuntimeStateStore.load(getRuntimeStateFile(env));
-  let nextDelayMs = await getNextRotationDelayMs(historyFile);
+  const saved = runtime.snapshot();
+  let retryApps = saved.pendingAppNames?.length ? saved.pendingAppNames : undefined;
+  const savedDeadline = Date.parse(saved.nextRunAt || "");
+  let nextDelayMs = Number.isFinite(savedDeadline)
+    ? Math.max(0, savedDeadline - Date.now())
+    : await getNextRotationDelayMs(historyFile);
   nextDelayMs = await capNextRotationDelayForStreamReset(nextDelayMs, env);
 
   for (;;) {
@@ -25,7 +30,11 @@ export async function startAutoRotationLoop(argv: string[] = [], env: NodeJS.Pro
 
     console.log("auto-rotation starting");
     try {
-      const results = await executeTrackedRotation(argv, env, "auto");
+      const runEnv = retryApps?.length ? { ...env, FLY_ROTATOR_APPS: JSON.stringify(retryApps) } : env;
+      const results = await executeTrackedRotation(argv, runEnv, "auto");
+      const latest = await RotatorRuntimeStateStore.load(getRuntimeStateFile(env));
+      retryApps = latest.snapshot().pendingAppNames;
+      if (!retryApps?.length) retryApps = undefined;
       const allSucceeded = results.every((result) => result.success);
       nextDelayMs = allSucceeded
         ? await capNextRotationDelayForStreamReset(SUCCESS_INTERVAL_MS, env)

@@ -57,3 +57,18 @@ describe("RotatorRuntimeStateStore", () => {
     expect(saved.lastRunLines).toEqual(["OK dsh-clip-worker handoff: old -> new"]);
   });
 });
+
+it("persists pending apps across reload and stale scheduling updates", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rotator-retry-"));
+  const file = join(dir, "runtime.json");
+  const stale = await RotatorRuntimeStateStore.load(file);
+  const store = await RotatorRuntimeStateStore.load(file);
+  await store.markFinished("auto", new Date().toISOString(), 10, [],
+    new Date(Date.now() + 3600000).toISOString(), ["failed", "unattempted"]);
+  await stale.setNextRunAt(new Date(Date.now() + 3600000).toISOString());
+  const reloaded = await RotatorRuntimeStateStore.load(file);
+  expect(reloaded.snapshot().pendingAppNames).toEqual(["failed", "unattempted"]);
+  await reloaded.markFinished("auto", new Date().toISOString(), 10, [],
+    new Date(Date.now() + 43200000).toISOString(), []);
+  expect((await RotatorRuntimeStateStore.load(file)).snapshot().pendingAppNames).toEqual([]);
+});

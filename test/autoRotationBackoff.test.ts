@@ -4,11 +4,14 @@ import { executeTrackedRotation, FAILURE_RETRY_MS, SUCCESS_INTERVAL_MS } from ".
 
 vi.mock("node:fs/promises", () => ({ readFile: async () => "[]" }));
 vi.mock("../src/rotationControl.js", () => ({ executeTrackedRotation: vi.fn(), FAILURE_RETRY_MS: 3_600_000, SUCCESS_INTERVAL_MS: 43_200_000 }));
+const { saved } = vi.hoisted(() => ({ saved: { nextRunAt: undefined as string | undefined, pendingAppNames: undefined as string[] | undefined } }));
 vi.mock("../src/runtimeState.js", () => ({
   getRuntimeStateFile: () => "unused",
-  RotatorRuntimeStateStore: { load: async () => ({ setNextRunAt: vi.fn() }) },
+  RotatorRuntimeStateStore: { load: async () => ({ setNextRunAt: vi.fn(), snapshot: () => ({ ...saved }) }) },
 }));
 beforeEach(() => {
+  saved.nextRunAt = undefined;
+  saved.pendingAppNames = undefined;
   vi.useFakeTimers();
   vi.clearAllMocks();
   vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -29,4 +32,17 @@ describe("automatic rotation backoff without written history", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(executeTrackedRotation).toHaveBeenCalledTimes(2);
   });
+});
+
+it("keeps a saved retry deadline and failed-app subset after restart", async () => {
+  saved.nextRunAt = new Date(Date.now() + 120_000).toISOString();
+  saved.pendingAppNames = ["failed"];
+  vi.mocked(executeTrackedRotation).mockResolvedValue([]);
+  void startAutoRotationLoop([], { FLY_ROTATOR_APPS: "ok,failed" });
+  await vi.advanceTimersByTimeAsync(119_999);
+  expect(executeTrackedRotation).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(executeTrackedRotation).toHaveBeenCalledWith([], expect.objectContaining({
+    FLY_ROTATOR_APPS: '["failed"]',
+  }), "auto");
 });

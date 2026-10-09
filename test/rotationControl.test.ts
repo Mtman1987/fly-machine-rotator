@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeTrackedRotation } from "../src/rotationControl.js";
+import { executeTrackedRotation, pendingRotationApps } from "../src/rotationControl.js";
 import { runRotationOnce } from "../src/rotationRunner.js";
 
-vi.mock("../src/config.js", () => ({ loadConfig: () => ({}) }));
+vi.mock("../src/config.js", () => ({ loadConfig: () => ({ appNames: [] }) }));
 vi.mock("../src/discord.js", () => ({ sendDiscordReport: vi.fn() }));
 vi.mock("../src/rotationRunner.js", () => ({ runRotationOnce: vi.fn() }));
 vi.mock("../src/runtimeState.js", () => ({
@@ -29,4 +29,15 @@ describe("tracked rotation concurrency", () => {
     await expect(executeTrackedRotation()).resolves.toEqual([]);
     expect(runRotationOnce).toHaveBeenCalledTimes(2);
   });
+});
+
+
+it("retries failed and unattempted apps without revisiting successful apps or retired workers", () => {
+  const result = (appName: string, success: boolean) => ({
+    appName, success, dryRun: false, before: [], after: [], actions: [], warnings: [],
+  });
+  expect(pendingRotationApps(["ok", "failed", "unattempted", "spmt-llm-worker"],
+    [result("ok", true), result("failed", false), result("stream-session-reset", false)]))
+    .toEqual(["failed", "unattempted"]);
+  expect(pendingRotationApps(["ok"], [result("ok", true)])).toEqual([]);
 });
