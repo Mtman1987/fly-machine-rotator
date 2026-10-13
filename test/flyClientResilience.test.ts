@@ -39,15 +39,19 @@ describe("Fly API bounded retry and pacing", () => {
       .rejects.toThrow("failed with 503");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
-  it("retries explicitly rejected rate and lease conflicts within a bound", async () => {
-    for (const status of [409, 429]) {
-      const fetcher = vi.fn().mockResolvedValueOnce(new Response("rejected", { status, headers: { "retry-after": "0" } }))
-        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { nonce: "test-lease" } })));
-      vi.stubGlobal("fetch", fetcher);
-      const result = await new FlyApiClient({ token: "test", minIntervalMs: 0, maxRetries: 1 }).createLease("app", "machine", 30, "test");
-      expect(result.nonce).toBe("test-lease");
-      expect(fetcher).toHaveBeenCalledTimes(2);
-    }
+  it("retries rate limits but does not hammer an already-held lease", async () => {
+    const rateLimited = vi.fn().mockResolvedValueOnce(new Response("rejected", { status: 429, headers: { "retry-after": "0" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { nonce: "test-lease" } })));
+    vi.stubGlobal("fetch", rateLimited);
+    const result = await new FlyApiClient({ token: "test", minIntervalMs: 0, maxRetries: 1 }).createLease("app", "machine", 30, "test");
+    expect(result.nonce).toBe("test-lease");
+    expect(rateLimited).toHaveBeenCalledTimes(2);
+
+    const held = vi.fn().mockResolvedValue(new Response("held", { status: 409 }));
+    vi.stubGlobal("fetch", held);
+    await expect(new FlyApiClient({ token: "test", minIntervalMs: 0, maxRetries: 8 }).createLease("app", "machine", 30, "test"))
+      .rejects.toThrow("failed with 409");
+    expect(held).toHaveBeenCalledTimes(1);
   });
   it("returns permanent authentication failure once without provider response content", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response("secret upstream detail", { status: 401 }));

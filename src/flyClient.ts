@@ -111,7 +111,7 @@ export class FlyApiClient implements FlyClient {
       await response.body?.cancel();
       lastError = new Error(`${method} ${path} failed with ${response.status}`);
 
-      if (!shouldRetry(method, response.status) || attempt === this.maxRetries) break;
+      if (!shouldRetry(method, path, response.status) || attempt === this.maxRetries) break;
       await sleep(retryAfterMs === undefined ? backoffMs(attempt) : Math.min(30_000, Math.max(0, retryAfterMs)));
     }
     throw lastError;
@@ -128,9 +128,12 @@ export class FlyApiClient implements FlyClient {
 
 function isReplaySafe(method: string): boolean { return method === "GET" || method === "DELETE"; }
 
-function shouldRetry(method: string, status: number): boolean {
+function shouldRetry(method: string, path: string, status: number): boolean {
   // These responses explicitly reject the operation; ambiguous 408/5xx
   // responses can only be retried for reads and idempotent lease release.
+  // A 409 from lease acquisition means another controller owns the app lock.
+  // Retrying it immediately only creates more Fly control-plane noise.
+  if (status === 409 && path.endsWith("/lease")) return false;
   return status === 409 || status === 425 || status === 429 || (isReplaySafe(method) && (status === 408 || status >= 500));
 }
 

@@ -132,6 +132,11 @@ export class MachineRotator {
       after = await this.verifyExactlyOneRunning(appName, standby.id, actions, warnings, lease?.nonce);
       return successResult(appName, false, before, after, previousActiveId, newActiveId, actions, warnings);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isLeaseConflict(message)) {
+        warnings.push(`Skipped rotation because another controller currently holds the Fly lease for ${appName}.`);
+        return successResult(appName, this.options.dryRun, before, before, previousActiveId, newActiveId, actions, warnings);
+      }
       try {
         after = snapshot(await this.fly.listMachines(appName));
       } catch {
@@ -486,7 +491,9 @@ function hasMultiMachineService(machine: FlyMachine): boolean {
 function isRetryableRestartStartError(message: string): boolean {
   return /429|rate limit|machine still active|still attempting to start|failed_precondition|network_or_timeout|timed? ?out|fetch failed|ECONNRESET/i.test(message);
 }
-
+function isLeaseConflict(message: string): boolean {
+  return /\/lease failed with 409\b/i.test(message);
+}
 function successResult(
   appName: string,
   dryRun: boolean,
