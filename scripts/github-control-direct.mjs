@@ -199,7 +199,15 @@ async function logs(appName, requestedLimit, errorsOnly) {
       region: entry.region || null,
       level: entry.level || null,
       message: redact(entry.message || entry.msg || entry.log || entry.event || JSON.stringify(entry)),
-    })).filter((entry) => !errorsOnly || pattern.test(entry.message)).slice(-max);
+    })).filter((entry) => {
+      if (!errorsOnly) return true;
+      // Prefer the provider's explicit severity. Error-like words in an info
+      // message (for example, a caught WebSocket error being logged at info)
+      // must not inflate the error-only sample or hide actual error counts.
+      const level = String(entry.level || '').toLowerCase();
+      if (level) return /^(error|fatal|critical|panic)$/.test(level);
+      return pattern.test(entry.message);
+    }).slice(-max);
     result.push({ appName: app, ok: true, count: entries.length, logs: entries });
   }
   return { ok: result.every((row) => row.ok), sampledAt: new Date().toISOString(), errorsOnly: Boolean(errorsOnly), apps: result };
