@@ -206,7 +206,9 @@ async function logs(appName, requestedLimit, errorsOnly) {
   const max = limit(requestedLimit, 50, 200);
   const result = [];
   for (const app of apps) {
-    const read = await fly(['logs', '--app', app, '--json', '--no-tail', '--since', '15m'], { timeout: 60000 });
+    // This flyctl version does not support --since; apply the bounded window
+    // below after parsing timestamps so collection remains portable.
+    const read = await fly(['logs', '--app', app, '--json', '--no-tail'], { timeout: 60000 });
     if (!read.ok) { result.push({ appName: app, ok: false, error: read.stderr || 'fly logs failed' }); continue; }
     const entries = parseJsonLines(read.stdout).map((entry) => ({
       timestamp: entry.timestamp || entry.time || entry.ts || null,
