@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseJsonLines } from '../scripts/github-control-direct.mjs';
+import { isBenignFlyControlPlaneNoise, parseJsonLines } from '../scripts/github-control-direct.mjs';
 
 test('reads complete Fly records from consecutive pretty JSON objects', () => {
   const events = [
@@ -25,4 +25,10 @@ test('nested Error metadata cannot become a fake application error', () => {
 test('incomplete records are reported without leaking a partial payload', () => {
   const rows=parseJsonLines('{\n"message": "private test data');
   assert.deepEqual(rows,[{message:'[Incomplete Fly log record skipped]'}]);
+});
+test('classifies duplicate Rotator lease/state echoes as control-plane noise', () => {
+  assert.equal(isBenignFlyControlPlaneNoise('[PM01] machines API returned an error: machine ID abc lease currently held'), true);
+  assert.equal(isBenignFlyControlPlaneNoise('[PM07] failed to change machine state: machine still active, refusing to start'), true);
+  assert.equal(isBenignFlyControlPlaneNoise('[PC01] instance refused connection on port 3002'), false);
+  assert.equal(isBenignFlyControlPlaneNoise('Health check has failed'), false);
 });

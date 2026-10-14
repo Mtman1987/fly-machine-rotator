@@ -44,6 +44,22 @@ function limit(value, fallback, max) {
   return Math.min(max, Math.max(1, Math.floor(n)));
 }
 
+const CURRENT_LOG_WINDOW_MS = 15 * 60 * 1000;
+const ERROR_PATTERN = /\berror\b|\bexception\b|\bfatal\b|\bpanic\b|\bfailed\b|\bunhandled\b|\brejection\b/i;
+
+export function isBenignFlyControlPlaneNoise(message) {
+  const value = String(message || '');
+  return (
+    /^\[PM01\].*lease currently held/i.test(value) ||
+    /^\[PM07\].*machine still active, refusing to start/i.test(value)
+  );
+}
+
+function isRecentLog(timestamp, now = Date.now()) {
+  const parsed = Date.parse(String(timestamp || ''));
+  return Number.isFinite(parsed) && parsed >= now - CURRENT_LOG_WINDOW_MS && parsed <= now + 60_000;
+}
+
 function requireApp(value) {
   const app = text(value);
   if (!app) return undefined;
@@ -188,10 +204,9 @@ export function parseJsonLines(raw) {
 async function logs(appName, requestedLimit, errorsOnly) {
   const apps = appName ? [appName] : MANAGED_APPS;
   const max = limit(requestedLimit, 50, 200);
-  const pattern = /\berror\b|\bexception\b|\bfatal\b|\bpanic\b|\bfailed\b|\bunhandled\b|\brejection\b/i;
   const result = [];
   for (const app of apps) {
-    const read = await fly(['logs', '--app', app, '--json', '--no-tail'], { timeout: 60000 });
+    const read = await fly(['logs', '--app', app, '--json', '--no-tail', '--since', '15m'], { timeout: 60000 });
     if (!read.ok) { result.push({ appName: app, ok: false, error: read.stderr || 'fly logs failed' }); continue; }
     const entries = parseJsonLines(read.stdout).map((entry) => ({
       timestamp: entry.timestamp || entry.time || entry.ts || null,
@@ -200,13 +215,15 @@ async function logs(appName, requestedLimit, errorsOnly) {
       level: entry.level || null,
       message: redact(entry.message || entry.msg || entry.log || entry.event || JSON.stringify(entry)),
     })).filter((entry) => {
+      if (!isRecentLog(entry.timestamp)) return false;
+      if (isBenignFlyControlPlaneNoise(entry.message)) return false;
       if (!errorsOnly) return true;
       // Prefer the provider's explicit severity. Error-like words in an info
       // message (for example, a caught WebSocket error being logged at info)
       // must not inflate the error-only sample or hide actual error counts.
       const level = String(entry.level || '').toLowerCase();
       if (level) return /^(error|fatal|critical|panic)$/.test(level);
-      return pattern.test(entry.message);
+      return ERROR_PATTERN.test(entry.message);
     }).slice(-max);
     result.push({ appName: app, ok: true, count: entries.length, logs: entries });
   }
