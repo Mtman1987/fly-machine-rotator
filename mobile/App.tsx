@@ -228,12 +228,40 @@ export default function App() {
   }
 
   useEffect(() => {
-    SecureStore.getItemAsync("mountainview_token").then((stored) => {
+    let cancelled = false;
+    async function restoreConnection() {
+      const stored = await SecureStore.getItemAsync("mountainview_token");
       if (stored) {
-        setToken(stored);
-        void load(stored);
+        try {
+          await load(stored);
+          if (!cancelled) setToken(stored);
+          return;
+        } catch (error) {
+          await SecureStore.deleteItemAsync("mountainview_token").catch(() => undefined);
+          if (cancelled) return;
+          appendActivityLog("system", "Saved session expired", "info", error instanceof Error ? error.message : String(error));
+        }
       }
-    });
+
+      // Development mode on the backend intentionally accepts a placeholder token.
+      // Try it first so testers do not have to sign into SPMT a second time.
+      const developmentToken = "mountainview-development-access";
+      try {
+        await load(developmentToken);
+        if (!cancelled) {
+          setToken(developmentToken);
+          setStatusMessage("Development access connected. No separate SPMT sign-in needed.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuthVisible(true);
+          setStatusMessage("SPMT sign-in is required on this server.");
+          appendActivityLog("system", "Development access unavailable", "info", error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+    void restoreConnection();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
