@@ -254,9 +254,14 @@ export default function App() {
         }
       } catch (error) {
         if (!cancelled) {
-          setAuthVisible(true);
-          setStatusMessage("SPMT sign-in is required on this server.");
-          appendActivityLog("system", "Development access unavailable", "info", error instanceof Error ? error.message : String(error));
+          // Never block local development behind the SPMT sign-in screen.
+          // The backend's MOUNTAINVIEW_AUTH_DISABLED=true mode accepts this
+          // placeholder on every API request; if the server is temporarily
+          // unreachable, leave the app open and let requests retry normally.
+          setToken(developmentToken);
+          setAuthVisible(false);
+          setStatusMessage("Development mode: sign-in bypassed. Backend connection will retry when you use the app.");
+          appendActivityLog("system", "Development access fallback", "info", error instanceof Error ? error.message : String(error));
         }
       }
     }
