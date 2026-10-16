@@ -1,4 +1,4 @@
-name: Android APK
+name: Android Release APK
 
 on:
   workflow_dispatch:
@@ -49,42 +49,6 @@ permissions:
   contents: write
 
 jobs:
-  debug:
-    name: Build SpaceMountain Companion Android debug APK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - name: Install dependencies
-        run: npm ci
-      - name: Apply current SPMT Companion, private Athena room, Coder control, native local wake, browser auth, cache, command, and presence parity
-        run: cd .. && node scripts/patch-ecosystem-workspace-parity.mjs && node scripts/patch-private-athena-room.mjs && node scripts/patch-athena-room-coder-control.mjs && node scripts/patch-mountainview-command-parity.mjs && node scripts/patch-mountainview-ai-router.mjs && node scripts/patch-session-cache.mjs && node scripts/patch-mobile-presence.mjs && node scripts/patch-native-athena-foreground-wake.mjs && node scripts/patch-local-only-athena-wake.mjs && node scripts/patch-native-athena-wake-regex.mjs && node scripts/patch-mobile-spmt-browser-auth.mjs && node scripts/patch-athena-single-turn.mjs
-      - name: Typecheck
-        run: npx tsc --noEmit
-      - name: Generate Android project
-        run: npx expo prebuild --platform android --no-install
-        env:
-          MOUNTAINVIEW_ENABLE_META_DAT: "false"
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
-        working-directory: mobile/android
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: spacemountain-companion-debug-apk
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
-
   release:
     name: Build SpaceMountain Companion Android release APK
     runs-on: ubuntu-latest
