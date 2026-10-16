@@ -110,3 +110,8 @@ sample_fly_logs {"appName":"streamweaver-new","limit":50,"durationMs":2000}
 ## Rollback
 
 MCP uses the same SPMT identity boundary as the rest of Rotator. Emergency shutdown should disable or remove the public `/mcp` route in the outer gateway. The owner runtime tools are isolated from the existing monitor/auto-rotation loop, so they can also be removed independently without disabling scheduled rotation.
+
+
+## Temporary development access
+
+When `MCP_DEV_CODING_ACCESS=true`, the public MCP route accepts requests without an SPMT token **only for the isolated coding tools**: `list_code_references`, `create_coding_job`, `get_coding_job`, and `get_coding_job_artifact`. Anonymous mode does not expose job listings, PR publication, Fly logs/state, rotation, worker provisioning, or other administrative tools. Anonymous job reads are limited to IDs created in the current Rotator process, and creation is capped at 10 jobs per hour process-wide. This mode is temporary development convenience, not a production security boundary; set it to `false` before opening the full owner-control MCP toolset for production use.
