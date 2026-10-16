@@ -3,6 +3,17 @@ import { listMcpTools } from "../src/mcpControlServer.js";
 import { isSpmtAdmin, readSpmtAccessToken } from "../src/spmtAuth.js";
 
 describe("MCP control server", () => {
+  it("limits unauthenticated development mode to the isolated coding tools", () => {
+    const tools = listMcpTools(true);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "list_code_references",
+      "create_coding_job",
+      "get_coding_job",
+      "get_coding_job_artifact",
+    ]);
+    expect(tools.some((tool) => /publish|rotation|fly_app|provision|secret/i.test(tool.name))).toBe(false);
+  });
+
   it("accepts only the canonical SPMT bearer or SPMT session cookies", () => {
     expect(readSpmtAccessToken({ headers: { authorization: "Bearer spmt-token" } } as any)).toBe("spmt-token");
     expect(readSpmtAccessToken({ headers: { cookie: "rotator_spmt_access_token=rotator-token" } } as any)).toBe("rotator-token");
