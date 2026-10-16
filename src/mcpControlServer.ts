@@ -89,9 +89,12 @@ async function callInternalCodex(
 }
 
 const readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const DEV_CODING_TOOLS = new Set(["list_code_references", "create_coding_job", "get_coding_job", "get_coding_job_artifact"]);
+const devCodingJobIds = new Set<string>();
+const devCodingCreateTimes: number[] = [];
 
-export function listMcpTools() {
-  return [
+export function listMcpTools(devCodingAccess = false) {
+  const tools = [
     { name: "list_code_references", title: "List authorized code repositories", description: "List repositories the Rotator coder can inspect.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "list_coding_jobs", title: "List coding jobs", description: "List recent isolated coding jobs and their validation state.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnlyAnnotations },
     { name: "create_coding_job", title: "Create isolated coding job", description: "Create an isolated coding job. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", minLength: 1, maxLength: 120 }, description: { type: "string", minLength: 1, maxLength: 4000 }, context: { type: "object", additionalProperties: true } }, required: ["appName", "description"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -108,6 +111,7 @@ export function listMcpTools() {
     { name: "provision_spmt_llm_worker", title: "Provision dedicated SPMT LLM worker", description: "Provision the allowlisted SPMT LLM worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
     { name: "provision_spmt_embedding_worker", title: "Provision SPMT embeddings worker", description: "Provision the separate CPU embeddings worker. Requires SPMT admin or owner.", inputSchema: { type: "object", properties: { appName: { type: "string", pattern: "^spmt-[a-z0-9-]{3,40}$" }, region: { type: "string", pattern: "^[a-z]{3}$" }, modelRepo: { type: "string", minLength: 1, maxLength: 200 }, modelAlias: { type: "string", minLength: 1, maxLength: 120 }, volumeName: { type: "string", pattern: "^[a-zA-Z0-9_]{3,64}$" }, volumeGb: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
   ];
+  return devCodingAccess ? tools.filter((tool) => DEV_CODING_TOOLS.has(tool.name)) : tools;
 }
 
 function toolRequiresAdmin(name: string): boolean {
@@ -130,7 +134,8 @@ function codingJobId(args: Record<string, unknown>): string | null {
 }
 
 async function executeTool(name: string, args: Record<string, unknown>, identity: SpmtIdentity, env: NodeJS.ProcessEnv, dashboardPort: number) {
-  if (toolRequiresAdmin(name) && !isSpmtAdmin(identity)) return { status: 403, payload: { error: "SPMT admin or owner required" } };
+  const anonymousDevCreate = name === "create_coding_job" && env.MCP_DEV_CODING_ACCESS === "true" && identity.id === "anonymous-dev";
+  if (toolRequiresAdmin(name) && !isSpmtAdmin(identity) && !anonymousDevCreate) return { status: 403, payload: { error: "SPMT admin or owner required" } };
   if (name === "list_code_references") return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/references");
   if (name === "list_coding_jobs") return await callInternalCodex(env, dashboardPort, "GET", "/api/codex/jobs");
   if (name === "create_coding_job") {
@@ -175,7 +180,9 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   if (url.pathname !== MCP_PATH) return false;
 
-  const identity = await requireSpmtIdentity(request, env);
+  const authenticatedIdentity = await requireSpmtIdentity(request, env);
+  const devCodingAccess = !authenticatedIdentity && env.MCP_DEV_CODING_ACCESS === "true";
+  const identity: SpmtIdentity | null = authenticatedIdentity ?? (devCodingAccess ? { id: "anonymous-dev", username: "Claude development", role: "member" } : null);
   if (!identity) {
     response.setHeader("www-authenticate", 'Bearer realm="SPMT"');
     sendJson(response, 401, rpcError(null, -32001, "Valid SPMT token required"));
@@ -203,15 +210,43 @@ export async function handleMcpControlRequest(request: IncomingMessage, response
     return true;
   }
   if (rpc.method === "tools/list") {
-    sendJson(response, 200, rpcResult(rpc.id, { tools: listMcpTools() }));
+    sendJson(response, 200, rpcResult(rpc.id, { tools: listMcpTools(devCodingAccess) }));
     return true;
   }
   if (rpc.method === "tools/call") {
     const params = rpc.params || {};
     const name = String(params.name || "");
     const args = params.arguments && typeof params.arguments === "object" ? params.arguments as Record<string, unknown> : {};
+    if (devCodingAccess && !DEV_CODING_TOOLS.has(name)) {
+      sendJson(response, 200, rpcResult(rpc.id, { content: [{ type: "text", text: "Tool not available in unauthenticated development mode" }], isError: true }));
+      return true;
+    }
+    if (devCodingAccess && (name === "get_coding_job" || name === "get_coding_job_artifact")) {
+      const requestedJobId = codingJobId(args);
+      if (!requestedJobId || !devCodingJobIds.has(requestedJobId)) {
+        sendJson(response, 200, rpcResult(rpc.id, { content: [{ type: "text", text: "Development mode can access only jobs created during this process session" }], isError: true }));
+        return true;
+      }
+    }
+    if (devCodingAccess && name === "create_coding_job") {
+      const now = Date.now();
+      while (devCodingCreateTimes.length && devCodingCreateTimes[0] < now - 60 * 60 * 1000) devCodingCreateTimes.shift();
+      if (devCodingCreateTimes.length >= 10) {
+        sendJson(response, 200, rpcResult(rpc.id, { content: [{ type: "text", text: "Development coding-job limit reached (10 per hour). Try again later." }], isError: true }));
+        return true;
+      }
+      devCodingCreateTimes.push(now);
+    }
     try {
       const result = await executeTool(name, args, identity, env, dashboardPort);
+      if (devCodingAccess && name === "create_coding_job" && result.status >= 200 && result.status < 300) {
+        const payload = result.payload as any;
+        const createdId = String(payload?.id || payload?.job?.id || payload?.jobId || payload?.job?.jobId || "").trim();
+        if (createdId && /^[a-zA-Z0-9_-]{8,100}$/.test(createdId)) {
+          if (devCodingJobIds.size >= 1000) devCodingJobIds.clear();
+          devCodingJobIds.add(createdId);
+        }
+      }
       const isError = result.status < 200 || result.status >= 300 || Boolean((result.payload as { ok?: boolean } | undefined)?.ok === false);
       sendJson(response, 200, rpcResult(rpc.id, { content: [{ type: "text", text: JSON.stringify(result.payload, null, 2) }], structuredContent: result.payload, isError }));
     } catch (error) {
