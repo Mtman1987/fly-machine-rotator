@@ -1,6 +1,6 @@
 # Currency Sweeper — rough draft (read-only)
 
-The first pass preserves three separate currencies: GP (Nebula), SP (StreamWeaver), and XP (SPMT support/catch-all). It parses only explicit `CURRENCY_SWEEP_V1` log markers; it does not merge wallets, mutate balances, set prices, or trigger purchases.
+The first pass preserves three separate currencies: GP (Nebula), SP (StreamWeaver), and XP (SPMT support/catch-all). The Rotator Companion diagnostics payload now includes a `currencySweep` summary derived from the same bounded log sample already collected by the existing observability pipeline. It parses only explicit `CURRENCY_SWEEP_V1` log markers; it does not merge wallets, mutate balances, set prices, or trigger purchases. Known source IDs must match their registered currency, and operations must use the supported operation vocabulary.
 
 ## Current known source registry
 
@@ -20,4 +20,4 @@ Import `scanCurrencySweepLogsV1` and supply the bounded Rotator log sample as li
 
 ## Important limits
 
-This is a parser prototype, not yet a live Rotator collector or a source-of-truth supply report. It only quantifies the supplied log window. It will undercount unflagged paths and log samples that omit older entries. Next step after review: wire the parser to the existing bounded Rotator log sampler, flag the remaining XP mutation paths, and compare log deltas against authoritative ledger/state snapshots. Keep all collection read-only.
+The parser is integrated into the Rotator Companion snapshot builder, but production delivery and real flagged events have not been verified in this draft. It only quantifies the bounded log window; it will undercount unflagged paths and log samples that omit older entries. Next steps: confirm the current production release path, observe a real snapshot with flags, instrument remaining mutation paths, and compare deltas against authoritative ledger/state snapshots. Keep all collection read-only.
