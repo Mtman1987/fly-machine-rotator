@@ -11,8 +11,8 @@ The first pass preserves three separate currencies: GP (Nebula), SP (StreamWeave
 | XP | `spmt.xp.ledger.award` | SPMT `POST /api/platform/xp` | Flag added in draft branch |
 | XP | `spmt.xp.ledger.spend` | SPMT `POST /api/platform/xp/spend` | Flag added in draft branch |
 | XP | `spmt.xp.ledger.transfer` | SPMT `POST /api/platform/xp/transfer` | Flag added in draft branch |
-| XP | `spmt.xp.ledger.gamble` | SPMT `POST /api/platform/xp/gamble-settle` | Needs flag |
-| XP | `spmt.xp.ledger.migration` | SPMT `POST /api/platform/xp/migrate-balance` | Needs flag |
+| XP | `spmt.xp.ledger.gamble` | SPMT `POST /api/platform/xp/gamble-settle` | Flag added in draft branch |
+| XP | `spmt.xp.ledger.migration` | SPMT `POST /api/platform/xp/migrate-balance` | Flag added in draft branch |
 
 ## How to quantify
 
