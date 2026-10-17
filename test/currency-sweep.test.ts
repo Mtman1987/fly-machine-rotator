@@ -20,6 +20,17 @@ describe("currency sweep log draft", () => {
     expect(report.byCurrency.XP.netDelta).toBe(15);
   });
 
+  it("rejects a known source with the wrong currency and invalid operation", () => {
+    const report = scanCurrencySweepLogsV1([
+      'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"nebula.checkin.front-seat","currency":"XP","operation":"award","delta":100}',
+      'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"nebula.checkin.front-seat","currency":"GP","operation":"print","delta":100}',
+    ]);
+    expect(report.invalidLines).toBe(2);
+    expect(report.acceptedEvents).toBe(0);
+    expect(report.byCurrency.GP.netDelta).toBe(0);
+    expect(report.byCurrency.XP.netDelta).toBe(0);
+  });
+
   it("marks unknown sources and malformed flagged lines instead of silently counting them", () => {
     const report = scanCurrencySweepLogsV1([
       'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"future.source","currency":"GP","operation":"award","delta":5}',
