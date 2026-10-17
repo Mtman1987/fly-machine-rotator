@@ -1,0 +1,29 @@
+name: Currency Sweep Draft Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/currencySweep.ts"
+      - "scripts/currency-sweep.ts"
+      - "test/currency-sweep.test.ts"
+      - "package.json"
+      - ".github/workflows/currency-sweep-draft-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Test currency sweep parser
+        run: npx vitest run test/currency-sweep.test.ts
+      - name: Type-check currency sweep module and CLI
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --types node src/currencySweep.ts scripts/currency-sweep.ts
