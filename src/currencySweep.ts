@@ -24,7 +24,8 @@ export const CURRENCY_SOURCE_REGISTRY_V1 = [
 ] as const;
 
 const PREFIX = "CURRENCY_SWEEP_V1 ";
-const KNOWN_SOURCES = new Set<string>(CURRENCY_SOURCE_REGISTRY_V1.map((source) => source.sourceId));
+const SOURCE_BY_ID = new Map<string, (typeof CURRENCY_SOURCE_REGISTRY_V1)[number]>(CURRENCY_SOURCE_REGISTRY_V1.map((source) => [source.sourceId, source]));
+const VALID_OPERATIONS = new Set<CurrencyOperationV1>(["award", "spend", "transfer", "redeem", "adjust", "delete", "migration"]);
 
 export type CurrencySweepReportV1 = {
   schema: "spmt.currency-sweep-report.v1";
@@ -69,11 +70,16 @@ export function scanCurrencySweepLogsV1(lines: string[]): CurrencySweepReportV1 
     catch { report.invalidLines += 1; continue; }
     if (event?.schema !== "spmt.currency-source.v1" || typeof event.sourceId !== "string" ||
         !["GP", "SP", "XP"].includes(event.currency) || !Number.isSafeInteger(event.delta) ||
-        typeof event.operation !== "string") {
+        !VALID_OPERATIONS.has(event.operation as CurrencyOperationV1)) {
       report.invalidLines += 1; continue;
     }
-    if (!KNOWN_SOURCES.has(event.sourceId)) {
+    const registeredSource = SOURCE_BY_ID.get(event.sourceId);
+    if (!registeredSource) {
       report.unknownSources.push(event.sourceId);
+      continue;
+    }
+    if (registeredSource.currency !== event.currency) {
+      report.invalidLines += 1;
       continue;
     }
     if (event.duplicate) { report.duplicateEvents += 1; continue; }
