@@ -19,7 +19,8 @@
     "pretest": "npm run patch:spmt-llm && npm run patch:workspace-parity && npm run patch:athena-repair && npm run patch:openai-bridge",
     "test": "vitest run",
     "pretypecheck": "npm run patch:spmt-llm && npm run patch:workspace-parity && npm run patch:athena-repair && npm run patch:openai-bridge",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "currency:sweep:sample": "tsx scripts/currency-sweep.ts"
   },
   "dependencies": {
     "@openai/codex-sdk": "^0.146.0",

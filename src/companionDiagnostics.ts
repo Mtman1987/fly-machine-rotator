@@ -1,5 +1,6 @@
 import { getFlyObservabilitySnapshot } from './flyObservability.js';
 import { redactSensitiveText } from './redaction.js';
+import { scanCurrencySweepLogsV1 } from './currencySweep.js';
 
 export type CompanionDiagnosticsPayload = {
   snapshotId: string;
@@ -7,6 +8,7 @@ export type CompanionDiagnosticsPayload = {
   mode: 'debug' | 'verbose';
   states: Record<string, unknown>;
   logs: Array<Record<string, unknown>>;
+  currencySweep: ReturnType<typeof scanCurrencySweepLogsV1>;
 };
 
 const SECRET_KEY = /(?:authorization|password|secret|token|api[_-]?key|cookie)/i;
@@ -38,6 +40,14 @@ export function buildCompanionDiagnosticsPayload(
     logs: (Array.isArray(snapshot.logs?.logs) ? snapshot.logs.logs : [])
       .slice(-500)
       .map((entry) => sanitizeValue(entry) as Record<string, unknown>),
+    currencySweep: scanCurrencySweepLogsV1(
+      (Array.isArray(snapshot.logs?.logs) ? snapshot.logs.logs : []).map((entry) => {
+        if (typeof entry === 'string') return entry;
+        if (!entry || typeof entry !== 'object') return '';
+        const value = entry as Record<string, unknown>;
+        return typeof value.message === 'string' ? value.message : '';
+      }),
+    ),
   };
 
   while (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 380_000 && payload.logs.length > 1) {

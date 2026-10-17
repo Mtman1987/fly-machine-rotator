@@ -18,6 +18,27 @@ describe('Companion diagnostics delivery', () => {
     expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(380_000);
   });
 
+  it('quantifies flagged GP, SP, and XP from the bounded live log sample independently', () => {
+    const payload = buildCompanionDiagnosticsPayload({
+      states: {},
+      logs: {
+        sampledAt: '2026-10-17T18:00:00.000Z',
+        logs: [
+          { appName: 'chat-tag-new', message: 'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"nebula.checkin.front-seat","currency":"GP","operation":"award","delta":100}' },
+          { appName: 'streamweaver-new', message: 'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"streamweaver.ride.front-seat","currency":"SP","operation":"award","delta":100}' },
+          { appName: 'spacemountain-live', message: 'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"spmt.xp.ledger.award","currency":"XP","operation":"award","delta":25}' },
+          { appName: 'spacemountain-live', message: 'CURRENCY_SWEEP_V1 {"schema":"spmt.currency-source.v1","sourceId":"spmt.xp.ledger.spend","currency":"XP","operation":"spend","delta":-10}' },
+        ],
+      },
+    });
+
+    expect(payload.currencySweep.byCurrency.GP.netDelta).toBe(100);
+    expect(payload.currencySweep.byCurrency.SP.netDelta).toBe(100);
+    expect(payload.currencySweep.byCurrency.XP.positiveUnits).toBe(25);
+    expect(payload.currencySweep.byCurrency.XP.negativeUnits).toBe(10);
+    expect(payload.currencySweep.byCurrency.XP.netDelta).toBe(15);
+  });
+
   it('posts through the tenant-bound SPMT platform key without placing it in the body', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.body).not.toContain('tenant-platform-key');
