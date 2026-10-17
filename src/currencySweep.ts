@@ -18,9 +18,9 @@ export const CURRENCY_SOURCE_REGISTRY_V1 = [
   { sourceId: "streamweaver.ride.front-seat", currency: "SP", app: "ApolloStation/apps/streamweaver", location: "apps/streamweaver/src/ride-runtime.ts", status: "flagged-in-draft" },
   { sourceId: "spmt.xp.ledger.award", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp", status: "flagged-in-draft" },
   { sourceId: "spmt.xp.ledger.spend", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/spend", status: "flagged-in-draft" },
-  { sourceId: "spmt.xp.ledger.gamble", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/gamble-settle", status: "pending-flag" },
+  { sourceId: "spmt.xp.ledger.gamble", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/gamble-settle", status: "flagged-in-draft" },
   { sourceId: "spmt.xp.ledger.transfer", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/transfer", status: "flagged-in-draft" },
-  { sourceId: "spmt.xp.ledger.migration", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/migrate-balance", status: "pending-flag" },
+  { sourceId: "spmt.xp.ledger.migration", currency: "XP", app: "spmt-live", location: "POST /api/platform/xp/migrate-balance", status: "flagged-in-draft" },
 ] as const;
 
 const PREFIX = "CURRENCY_SWEEP_V1 ";
