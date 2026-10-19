@@ -241,60 +241,132 @@ export async function appendStreamContinuityIncident(
 }
 
 
+export type StreamContinuityWatchState = {
+  lastConfirmedLive?: boolean;
+  offlineSince?: number;
+  lastAttemptAt?: number;
+  notified: boolean;
+};
+
+export function advanceStreamContinuityWatchState(
+  current: StreamContinuityWatchState,
+  input: { isLive: boolean; now: number; dropGraceMs: number; retryIntervalMs: number; resetSuppressed?: boolean },
+): { state: StreamContinuityWatchState; shouldAttemptRecovery: boolean; firstAttempt: boolean; streamRecovered: boolean; suppressed: boolean } {
+  if (input.isLive) {
+    return {
+      state: { lastConfirmedLive: true, notified: false },
+      shouldAttemptRecovery: false,
+      firstAttempt: false,
+      streamRecovered: current.lastConfirmedLive === false && current.notified,
+      suppressed: false,
+    };
+  }
+
+  if (input.resetSuppressed) {
+    return {
+      state: { ...current, offlineSince: undefined, lastAttemptAt: undefined, notified: false },
+      shouldAttemptRecovery: false,
+      firstAttempt: false,
+      streamRecovered: false,
+      suppressed: true,
+    };
+  }
+
+  // Treat an offline result at process start the same as a live-to-offline drop.
+  // Otherwise a monitor restart while Twitch is already offline leaves the watch inert.
+  const offlineSince = current.offlineSince ?? input.now;
+  const graceElapsed = input.now - offlineSince >= Math.max(0, input.dropGraceMs);
+  const retryReady = current.lastAttemptAt === undefined
+    || input.now - current.lastAttemptAt >= Math.max(0, input.retryIntervalMs);
+  const shouldAttemptRecovery = graceElapsed && retryReady;
+  if (!shouldAttemptRecovery) {
+    return {
+      state: { ...current, offlineSince },
+      shouldAttemptRecovery: false,
+      firstAttempt: false,
+      streamRecovered: false,
+      suppressed: false,
+    };
+  }
+
+  return {
+    state: { lastConfirmedLive: false, offlineSince, lastAttemptAt: input.now, notified: true },
+    shouldAttemptRecovery: true,
+    firstAttempt: !current.notified,
+    streamRecovered: false,
+    suppressed: false,
+  };
+}
+
 export async function startStreamContinuityWatchLoop(env: NodeJS.ProcessEnv = process.env): Promise<never> {
   if (!apiKey(env) || env.STREAM_CONTINUITY_ENABLED === "false") {
     for (;;) await sleep(60_000);
   }
   const intervalMs = Number(env.STREAM_CONTINUITY_WATCH_INTERVAL_MS || 30_000);
   const dropGraceMs = Number(env.STREAM_CONTINUITY_DROP_GRACE_MS || 45_000);
-  let lastConfirmedLive: boolean | undefined;
-  let offlineSince: number | undefined;
-  let notified = false;
+  const retryIntervalMs = Math.max(intervalMs, Number(env.STREAM_CONTINUITY_RETRY_INTERVAL_MS || 60_000));
+  let watchState: StreamContinuityWatchState = { notified: false };
+  let lastFailureRecordedAt: number | undefined;
 
   for (;;) {
     const state = await probeStreamLiveState(env);
-    if (state.ok) {
+    if (state.ok && typeof state.isLive === "boolean") {
       if (state.isLive) {
-        if (lastConfirmedLive === false && notified) {
+        const decision = advanceStreamContinuityWatchState(watchState, {
+          isLive: true,
+          now: Date.now(),
+          dropGraceMs,
+          retryIntervalMs,
+        });
+        watchState = decision.state;
+        if (decision.streamRecovered) {
           await recordStreamContinuityEvent({ kind: "watch-recovered", detail: "Twitch live state recovered outside rotation." }, env);
           await notifyStreamContinuityOwner(`Twitch stream continuity recovered for **${state.login}** after an offline period.`, env);
+          lastFailureRecordedAt = undefined;
         }
-        lastConfirmedLive = true;
-        offlineSince = undefined;
-        notified = false;
       } else {
         const resetSuppressed = await isStreamSessionResetSuppressed(env);
-        if (resetSuppressed) {
-          offlineSince = undefined;
-          notified = false;
+        const decision = advanceStreamContinuityWatchState(watchState, {
+          isLive: false,
+          now: Date.now(),
+          dropGraceMs,
+          retryIntervalMs,
+          resetSuppressed,
+        });
+        watchState = decision.state;
+        if (decision.suppressed) {
           await sleep(intervalMs);
           continue;
         }
-        if (lastConfirmedLive === true && offlineSince === undefined) offlineSince = Date.now();
-        if (offlineSince !== undefined && !notified && Date.now() - offlineSince >= dropGraceMs) {
-          lastConfirmedLive = false;
-          notified = true;
+        if (decision.firstAttempt) {
           await recordStreamContinuityEvent({ kind: "watch-drop", detail: `Confirmed offline for at least ${dropGraceMs}ms outside a rotation.` }, env);
           await appendStreamContinuityIncident(
             String(env.STREAM_CONTINUITY_DEFAULT_APP || "streamweaver-new"),
-            `Twitch stream ${state.login} dropped outside a planned rotation and remained offline past the continuity grace window.`,
+            `Twitch stream ${state.login} remained offline past the continuity grace window.`,
             env,
           );
+        }
+        if (decision.shouldAttemptRecovery) {
           const recovery = await startStreamIfConfirmedOffline(env);
           if (recovery.ok && recovery.twitch?.isLive) {
             await notifyStreamContinuityOwner(
               `✅ Twitch stream **${state.login}** was confirmed offline and Restream was started automatically. Twitch is live again.`,
               env,
             );
-            lastConfirmedLive = true;
-            offlineSince = undefined;
-            notified = false;
+            watchState = { lastConfirmedLive: true, notified: false };
+            lastFailureRecordedAt = undefined;
           } else {
-            await recordStreamContinuityEvent({ kind: "recovery-failed", detail: recovery.reason || "Automatic Restream start failed." }, env);
-            await notifyStreamContinuityOwner(
-              `🚨 Twitch stream **${state.login}** is offline and the one-shot automatic Restream start did not recover it. Reason: ${recovery.reason || "unknown"}`,
-              env,
-            );
+            const failedAt = Date.now();
+            if (decision.firstAttempt || lastFailureRecordedAt === undefined || failedAt - lastFailureRecordedAt >= 15 * 60_000) {
+              await recordStreamContinuityEvent({ kind: "recovery-failed", detail: recovery.reason || "Automatic Restream start failed." }, env);
+              lastFailureRecordedAt = failedAt;
+            }
+            if (decision.firstAttempt) {
+              await notifyStreamContinuityOwner(
+                `🚨 Twitch stream **${state.login}** is offline and the automatic Restream start did not recover it. Reason: ${recovery.reason || "unknown"}`,
+                env,
+              );
+            }
           }
         }
       }
