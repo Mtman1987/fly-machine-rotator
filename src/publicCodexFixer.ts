@@ -188,18 +188,38 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
   return applyCoderResult(result, workspace, env);
 }
 
-async function applyCoderResult(result: { summary: string; patch: string }, workspace: string, env: NodeJS.ProcessEnv): Promise<string> {
-  if (result.patch) {
-    if (result.patch.length > 120_000) throw new Error("Coder patch exceeded the safety limit.");
-    const patchFile = join(rootDir(env), "tmp", `coder-${randomUUID()}.patch`);
-    await mkdir(join(rootDir(env), "tmp"), { recursive: true });
-    await writeFile(patchFile, result.patch);
-    try {
-      await execFileAsync("git", ["apply", "--check", patchFile], { cwd: workspace, timeout: 60_000 });
-      await execFileAsync("git", ["apply", "--whitespace=fix", patchFile], { cwd: workspace, timeout: 60_000 });
-    } finally {
-      await rm(patchFile, { force: true }).catch(() => undefined);
+export async function applyCoderResult(
+  result: { summary: string; patch: string },
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  jobId?: string,
+  attempt = 1,
+): Promise<string> {
+  if (!result.patch) return result.summary;
+  if (result.patch.length > 120_000) throw new Error("Coder patch exceeded the safety limit.");
+  const temporaryDir = join(rootDir(env), "tmp");
+  await mkdir(temporaryDir, { recursive: true });
+  const patchFile = join(temporaryDir, `coder-${randomUUID()}.patch`);
+  await writeFile(patchFile, result.patch);
+  try {
+    await execFileAsync("git", ["apply", "--check", patchFile], { cwd: workspace, timeout: 60_000 });
+    await execFileAsync("git", ["apply", "--whitespace=fix", patchFile], { cwd: workspace, timeout: 60_000 });
+  } catch (error: any) {
+    const diagnostic = redact([
+      "Patch validation rejected the coder output.",
+      String(error?.stderr || "").trim(),
+      String(error?.stdout || "").trim(),
+      String(error?.message || error).trim(),
+    ].filter(Boolean).join("\n").slice(0, 12_000));
+    if (jobId) {
+      const rejectedDir = join(rootDir(env), "jobs", jobId, "rejected-patches");
+      await mkdir(rejectedDir, { recursive: true });
+      await writeFile(join(rejectedDir, `attempt-${attempt}.patch`), result.patch, { mode: 0o600 });
+      await writeFile(join(rejectedDir, `attempt-${attempt}.diagnostic.txt`), diagnostic, { mode: 0o600 });
     }
+    throw new Error(`PATCH_VALIDATION_REJECTED: ${diagnostic}`);
+  } finally {
+    await rm(patchFile, { force: true }).catch(() => undefined);
   }
   return result.summary;
 }
@@ -351,14 +371,31 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
     if (freePolicy) {
       const description = redact(String(input.description || "").slice(0, 4000));
       const context = redact(await buildRepositoryContext(description, workspace));
-      const content = await generateFreeGeminiCode(env, description, context, freePolicy, { repoUrl: repo.repoUrl, commit: job.baseCommit! });
+      const publicCommit = { repoUrl: repo.repoUrl, commit: job.baseCommit! };
+      const content = await generateFreeGeminiCode(env, description, context, freePolicy, publicCommit);
       let decoded: unknown;
       try { decoded = JSON.parse(content); } catch { throw new Error("Free Gemini Coder JSON invalid."); }
       if (!decoded || typeof decoded !== "object" || typeof (decoded as any).summary !== "string" || typeof (decoded as any).patch !== "string") {
         throw new Error("Free Gemini Coder result schema invalid.");
       }
       const result = parseQwenCoderResult(content);
-      job.summary = await applyCoderResult(result, workspace, env);
+      try {
+        job.summary = await applyCoderResult(result, workspace, env, job.id, 1);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.startsWith("PATCH_VALIDATION_REJECTED:")) throw error;
+        const reset = await runCommand("git reset --hard HEAD && git clean -fd", workspace);
+        if (!reset.ok) throw new Error("Rejected patch was preserved, but the sandbox could not be reset safely for one correction attempt.");
+        const correction = await generateFreeGeminiCode(env, description, context, freePolicy, publicCommit, undefined,
+          `Your previous unified diff was rejected by git apply --check. Return a corrected strict JSON object with the same schema. Do not claim tests ran. Fix only the patch formatting/context problem; do not broaden the change. Validator diagnostic follows:\n${message.slice(0, 6000)}`);
+        let corrected: unknown;
+        try { corrected = JSON.parse(correction); } catch { throw new Error("Free Gemini Coder correction JSON invalid; original rejected patch and diagnostic were preserved."); }
+        if (!corrected || typeof corrected !== "object" || typeof (corrected as any).summary !== "string" || typeof (corrected as any).patch !== "string") {
+          throw new Error("Free Gemini Coder correction schema invalid; original rejected patch and diagnostic were preserved.");
+        }
+        job.summary = await applyCoderResult(parseQwenCoderResult(correction), workspace, env, job.id, 2);
+        job.summary = `Patch corrected after one validation rejection. Original candidate and diagnostic are retained for review. ${job.summary}`;
+      }
     } else if (env.CODEX_FIXER_PROVIDER === "qwen" && String(env.SPMT_LLM_BASE_URL || "").trim()) {
       job.summary = await runQwenCoder(String(input.description || "").slice(0, 4000), workspace, env);
     } else {

@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { inferRepo, reconcileInterruptedCodexJobs } from "../src/publicCodexFixer.js";
+import { applyCoderResult, inferRepo, reconcileInterruptedCodexJobs } from "../src/publicCodexFixer.js";
+import { execFileSync } from "node:child_process";
 
 const cleanup: string[] = [];
 afterEach(async () => {
@@ -55,5 +56,35 @@ describe("Stella Coder restart reconciliation", () => {
     expect(running.error).toMatch(/interrupted by a rotator restart/i);
     expect(queued.error).toMatch(/safe to retry/i);
     expect(completed.status).toBe("completed");
+  });
+});
+
+
+describe("Stella Coder patch rejection recovery", () => {
+  it("preserves malformed candidate and validation diagnostics for a bounded correction attempt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rotator-codex-patch-reject-"));
+    cleanup.push(root);
+    const repo = join(root, "repo");
+    const data = join(root, "data");
+    await mkdir(repo, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    await writeFile(join(repo, "sample.txt"), "original\n");
+    execFileSync("git", ["add", "sample.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+
+    await expect(applyCoderResult(
+      { summary: "candidate", patch: "this is not a unified diff\n" },
+      repo,
+      { CODEX_FIXER_DATA_DIR: data },
+      "mtfix_test_1234",
+      1,
+    )).rejects.toThrow(/PATCH_VALIDATION_REJECTED/);
+
+    const rejected = join(data, "jobs", "mtfix_test_1234", "rejected-patches");
+    expect(await readFile(join(rejected, "attempt-1.patch"), "utf8")).toContain("not a unified diff");
+    expect(await readFile(join(rejected, "attempt-1.diagnostic.txt"), "utf8")).toMatch(/Patch validation rejected|corrupt patch|No valid patches/i);
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" })).toBe("");
   });
 });
