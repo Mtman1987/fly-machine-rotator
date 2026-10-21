@@ -68,12 +68,9 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/logs/run-readout.json") {
-    if (!(await requireSpmtAdmin(request, env))) {
-      response.writeHead(302, {
-        location: `/auth/spmt/login?next=${encodeURIComponent(url.pathname)}`,
-        "cache-control": "no-store"
-      });
-      response.end();
+    if (!(await requireSpmtLogReader(request, env))) {
+      response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or logs:read:last24h service identity required" }));
       return;
     }
     response.writeHead(200, { "content-type": "application/json", "cache-control": "private, no-store" });
