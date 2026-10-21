@@ -82,7 +82,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
     if (!(await requireSpmtLogReader(request, env))) {
       response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or approved logs:read:last24h service identity required" }));
+      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or caller-supplied logs:read:last24h service token required" }));
       return;
     }
     const history = await readErrorHistory(env);
