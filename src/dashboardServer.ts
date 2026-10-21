@@ -109,7 +109,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
       const approvalRequestId = String(url.searchParams.get('approvalRequestId') || '');
       const pendingGrant = approvalRequestId ? await takePendingScopedLogGrant(approvalRequestId, env) : null;
       if (pendingGrant) {
-        const authorization = await consumeScopedLogGrant(pendingGrant.token, env);
+        const authorization = await consumeScopedLogGrant(pendingGrant.token, env, pendingGrant.requestId);
         if (authorization.ok) {
           const history = await readErrorHistory(env);
           response.writeHead(200, {
