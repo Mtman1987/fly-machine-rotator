@@ -53,6 +53,13 @@ describe("SPMT scoped log grants", () => {
     });
   });
 
+  it("rejects a grant bound to a different approval request", async () => {
+    root = await mkdtemp(join(tmpdir(), "rotator-scoped-grant-"));
+    expect(await consumeScopedLogGrant(token(), env(), randomUUID())).toEqual({
+      ok: false, reason: "wrong_request_binding",
+    });
+  });
+
   it("rejects grants with the wrong audience", async () => {
     root = await mkdtemp(join(tmpdir(), "rotator-scoped-grant-"));
     expect(await consumeScopedLogGrant(token({ aud: "another-service" }), env())).toEqual({
