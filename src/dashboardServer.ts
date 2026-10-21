@@ -2,7 +2,7 @@ import { recordActualRepair } from "./repairComparison.js";
 import { evidenceRoot } from "./operationsEvidence.js";
 import { clearObservationWindow } from "./observationWindow.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { generateFixRecord, StoredErrorEvent } from "./aiFixer.js";
@@ -86,53 +86,6 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     if (!(await requireSpmtLogReader(request, env))) {
       response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       response.end(JSON.stringify({ ok: false, error: "SPMT admin session or approved logs:read:last24h service identity required" }));
-      return;
-    }
-    const history = await readErrorHistory(env);
-          response.writeHead(200, {
-            "content-type": "text/plain; charset=utf-8",
-            "content-disposition": 'attachment; filename="fly-errors-last-24h.txt"',
-            "cache-control": "private, no-store",
-            "x-content-type-options": "nosniff"
-          });
-          response.end(renderLast24HourReport(history));
-          return;
-        }
-      }
-      const serviceSecret = String(env.SPMT_OWNER_APPROVAL_SERVICE_SECRET || "").trim();
-      const spmtBase = String(env.SPMT_BASE_URL || "https://spmt.live").replace(/\/$/, "");
-      if (serviceSecret.length >= 32) {
-        const created = await fetch(spmtBase + "/api/internal/owner-approvals", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-spmt-approval-service-secret": serviceSecret },
-          body: JSON.stringify({
-            requester: "Rotator protected log reader",
-            problem: "The assistant was blocked from reading Rotator's protected last-24-hours error report because no owner session or scoped grant was available.",
-            proposedFix: "After explicit owner approval, issue one short-lived grant to read only GET /logs/errors.txt, then consume it once and return the report.",
-            blocker: "SPMT admin session is absent and the protected endpoint requires owner authorization.",
-            target: "Rotator · protected last-24-hours error report",
-            scope: "logs:read:last24h"
-          }),
-          signal: AbortSignal.timeout(10000)
-        }).catch(() => null);
-        const payload = await created?.json().catch(() => null) as any;
-        if (created?.ok && payload?.request?.id) {
-          response.writeHead(302, {
-            location: `${spmtBase}/owner-approvals.html?requestId=${encodeURIComponent(payload.request.id)}`,
-            "cache-control": "no-store"
-          });
-          response.end();
-          return;
-        }
-        response.writeHead(503, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-        response.end(JSON.stringify({ ok: false, error: "Could not create an SPMT owner approval request. Check SPMT delegation service configuration." }));
-        return;
-      }
-      response.writeHead(302, {
-        location: `/auth/spmt/login?next=${encodeURIComponent(url.pathname)}`,
-        "cache-control": "no-store"
-      });
-      response.end();
       return;
     }
     const history = await readErrorHistory(env);
