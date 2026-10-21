@@ -1,0 +1,48 @@
+name: Verify scoped Rotator log exports
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify-scoped-log-exports.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-scoped-rotator-log-exports
+  cancel-in-progress: false
+jobs:
+  verify:
+    name: Retrieve protected log exports through Rotator's SPMT service identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install redaction dependency
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Read both protected exports and print sanitized evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /logs/errors.txt /logs/run-readout.json; do
+            body="$(mktemp)"
+            status="$(curl --silent --show-error --max-time 45 --output "$body" --write-out '%{http_code}' "https://mtman-machine-rotator.fly.dev$path")"
+            if [ "$status" != "200" ]; then
+              echo "::error::$path returned HTTP $status"
+              cat "$body"
+              rm -f "$body"
+              exit 1
+            fi
+            echo "::group::Sanitized $path (HTTP $status)"
+            FILE="$body" node --import tsx --input-type=module -e '
+              import fs from "node:fs";
+              import { redactSensitiveText } from "./src/redaction.ts";
+              const value = redactSensitiveText(fs.readFileSync(process.env.FILE, "utf8"));
+              console.log("Retrieved bytes:", Buffer.byteLength(value, "utf8"));
+              console.log(value);
+            '
+            echo "::endgroup::"
+            rm -f "$body"
+          done
