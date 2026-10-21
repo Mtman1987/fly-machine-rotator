@@ -218,6 +218,3 @@ export async function requireSpmtLogReader(request: IncomingMessage, env: NodeJS
     && Array.isArray(payload?.scopes)
     && payload.scopes.includes("logs:read:last24h");
 }
-
-
-//
