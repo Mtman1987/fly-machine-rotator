@@ -106,7 +106,8 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
 
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
     if (!(await requireSpmtAdmin(request, env))) {
-      const pendingGrant = await takePendingScopedLogGrant(env);
+      const approvalRequestId = String(url.searchParams.get('approvalRequestId') || '');
+      const pendingGrant = approvalRequestId ? await takePendingScopedLogGrant(approvalRequestId, env) : null;
       if (pendingGrant) {
         const authorization = await consumeScopedLogGrant(pendingGrant.token, env);
         if (authorization.ok) {
