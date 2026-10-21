@@ -68,14 +68,28 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
   if (method === "GET" && url.pathname === "/logs/run-readout.json") {
-    authorizeAction(request, env);
+    if (!(await requireSpmtAdmin(request, env))) {
+      response.writeHead(302, {
+        location: `/auth/spmt/login?next=${encodeURIComponent(url.pathname)}`,
+        "cache-control": "no-store"
+      });
+      response.end();
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json", "cache-control": "private, no-store" });
     response.end(await readFile(join(evidenceRoot(env), "latest.json"), "utf8"));
     return;
   }
 
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
-    authorizeAction(request, env);
+    if (!(await requireSpmtAdmin(request, env))) {
+      response.writeHead(302, {
+        location: `/auth/spmt/login?next=${encodeURIComponent(url.pathname)}`,
+        "cache-control": "no-store"
+      });
+      response.end();
+      return;
+    }
     const history = await readErrorHistory(env);
     response.writeHead(200, {
       "content-type": "text/plain; charset=utf-8",
