@@ -16,8 +16,7 @@ import { executeTrackedRotation } from "./rotationControl.js";
 import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { handleMountainViewRequest } from "./mountainView.js";
-import { requireSpmtAdmin } from "./spmtAuth.js";
-import { consumeScopedLogGrant, storePendingScopedLogGrant, takePendingScopedLogGrant } from "./scopedLogGrant.js";
+import { requireSpmtAdmin, requireSpmtLogReader } from "./spmtAuth.js";
 import { isNonActionableErrorMessage } from "./logMonitor.js";
 import { classifyIncident, evaluateAutoFixEligibility } from "./incidentClassifier.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
@@ -83,35 +82,13 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
   }
 
 
-  if (method === "POST" && url.pathname === "/actions/owner-approvals/grant") {
-    const expected = String(env.SPMT_OWNER_APPROVAL_CALLBACK_SECRET || "").trim();
-    const supplied = String(request.headers["x-spmt-owner-approval-callback-secret"] || "").trim();
-    const a = Buffer.from(expected); const b = Buffer.from(supplied);
-    if (expected.length < 32 || a.length !== b.length || !timingSafeEqual(a, b)) {
-      response.writeHead(401, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "Owner approval callback authentication failed" }));
-      return;
-    }
-    const input = JSON.parse(await readBody(request) || "{}") as { requestId?: string; grant?: string; scope?: string };
-    if (input.scope !== "logs:read:last24h" || !input.requestId || !input.grant) {
-      response.writeHead(400, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "Invalid scoped grant handoff" }));
-      return;
-    }
-    await storePendingScopedLogGrant(input.requestId, input.grant, env);
-    response.writeHead(202, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    response.end(JSON.stringify({ ok: true, status: "grant_stored" }));
-    return;
-  }
-
   if (method === "GET" && url.pathname === "/logs/errors.txt") {
-    if (!(await requireSpmtAdmin(request, env))) {
-      const approvalRequestId = String(url.searchParams.get('approvalRequestId') || '');
-      const pendingGrant = approvalRequestId ? await takePendingScopedLogGrant(approvalRequestId, env) : null;
-      if (pendingGrant) {
-        const authorization = await consumeScopedLogGrant(pendingGrant.token, env, pendingGrant.requestId);
-        if (authorization.ok) {
-          const history = await readErrorHistory(env);
+    if (!(await requireSpmtLogReader(request, env))) {
+      response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or approved logs:read:last24h service identity required" }));
+      return;
+    }
+    const history = await readErrorHistory(env);
           response.writeHead(200, {
             "content-type": "text/plain; charset=utf-8",
             "content-disposition": 'attachment; filename="fly-errors-last-24h.txt"',
