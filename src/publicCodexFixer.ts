@@ -252,10 +252,33 @@ async function runCodexWorkspaceCoder(
     approvalPolicy: "never",
   });
   const prompt = `${STELLA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${description.slice(0, 4000)}\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(10 * 60_000) });
+  let turn = await thread.run(prompt, { signal: AbortSignal.timeout(10 * 60_000) });
+  let summary = redact(turn.finalResponse || "Codex completed without a final response.");
+  let status = await execFileAsync("git", ["status", "--porcelain"], { cwd: workspace, timeout: 30_000 });
+  if (!status.stdout.trim()) {
+    // A no-op answer is not a repair. Keep the same repository and thread, give
+    // the agent the first response as evidence, and require one focused follow-up.
+    const retryPrompt = [
+      "Your previous response produced NO working-tree changes. This is not a validated repair.",
+      "Continue investigating the assigned incident instead of stopping after a high-level inspection.",
+      "Search the relevant handler, authentication/caller path, configuration, and regression tests in this checkout.",
+      "Use the supplied error and timestamp context to connect the symptom to a concrete code path.",
+      "If the repository supports a code fix, implement it now and add a focused regression test.",
+      "If you conclude no code change is justified, provide the exact files/functions inspected, the evidence proving the issue is runtime/configuration-only, and the single next check needed. Do not claim that a repair was made.",
+      "First response for context:",
+      summary,
+    ].join("\\n\\n");
+    turn = await thread.run(retryPrompt, { signal: AbortSignal.timeout(10 * 60_000) });
+    summary = redact(turn.finalResponse || "Codex retry completed without a final response.");
+    status = await execFileAsync("git", ["status", "--porcelain"], { cwd: workspace, timeout: 30_000 });
+    if (!status.stdout.trim()) {
+      throw new Error(`NO_PATCH_AFTER_REPAIR_RETRY: Codex made no source changes after two investigation turns. First response: ${summary.slice(0, 5000)}`);
+    }
+    summary = `No-op response detected; a second focused repair attempt produced working-tree changes. ${summary}`;
+  }
   return {
     threadId: thread.id || undefined,
-    summary: redact(turn.finalResponse || "Codex completed without a final response."),
+    summary,
   };
 }
 function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {
