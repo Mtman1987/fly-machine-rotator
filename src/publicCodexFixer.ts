@@ -202,7 +202,7 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: "You are Stella Coder. The previous answer produced no patch. Continue investigating and return strict JSON only: {\\"summary\\":\\"evidence-based diagnosis\\",\\"patch\\":\\"unified git diff or empty string\\"}. Do not claim tests ran. Never invent files or APIs. Patch paths must be repository-relative." },
-          { role: "user", content: `Task:\\n${description}\\n\\nFirst response:\\n${result.summary}\\n\\nRepository source:\\n${retryContext}\\n\\n/no_think` },
+          { role: "user", content: `Task:\n${description}\n\nFirst response:\n${result.summary}\n\nRepository source:\n${retryContext}\n\n/no_think` },
         ],
       }),
     });
