@@ -63,7 +63,7 @@ export async function storePendingScopedLogGrant(requestId: string, token: strin
   await pending;
 }
 
-export async function takePendingScopedLogGrant(env: NodeJS.ProcessEnv = process.env): Promise<{ requestId: string; token: string } | null> {
+export async function takePendingScopedLogGrant(requestId: string, env: NodeJS.ProcessEnv = process.env): Promise<{ requestId: string; token: string } | null> {
   const file = join(String(env.ROTATOR_EVIDENCE_DIR || "/data/operations-evidence"), "pending-scoped-log-grants.json");
   let result: { requestId: string; token: string } | null = null;
   const run = async () => {
@@ -72,7 +72,8 @@ export async function takePendingScopedLogGrant(env: NodeJS.ProcessEnv = process
     try { items = JSON.parse(await readFile(file, "utf8")); if (!Array.isArray(items)) items = []; } catch {}
     const now = Date.now();
     items = items.filter((item) => now - Date.parse(item.storedAt) < 2 * 60 * 1000);
-    const item = items.shift();
+    const index = items.findIndex((item) => item.requestId === requestId);
+    const item = index >= 0 ? items.splice(index, 1)[0] : null;
     if (item) result = { requestId: item.requestId, token: item.token };
     await writeFile(file, JSON.stringify(items), { mode: 0o600 });
   };
