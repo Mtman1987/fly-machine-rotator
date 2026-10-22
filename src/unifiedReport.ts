@@ -155,17 +155,21 @@ export async function persistUnifiedReportAttachments(
     // The same JSON string is used for Discord and local persistence.
     JSON.parse(file.content);
     const path = join(folder, file.name);
-    await writeFile(path, file.content, { mode: 0o600 });
-    await chmod(path, 0o600);
+    const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, file.content, { mode: 0o600 });
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, path);
     saved.push(path);
   }
   const manifest = join(folder, "latest.json");
-  await writeFile(manifest, JSON.stringify({
+  const manifestTemporaryPath = `${manifest}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(manifestTemporaryPath, JSON.stringify({
     schemaVersion: "rotator.discord-report-cache/v1",
     updatedAt: new Date().toISOString(),
     files: ["rotator-run-readout.json", "rotator-log-snapshot.json"]
   }, null, 2), { mode: 0o600 });
-  await chmod(manifest, 0o600);
+  await chmod(manifestTemporaryPath, 0o600);
+  await rename(manifestTemporaryPath, manifest);
   return [...saved, manifest];
 }
 
