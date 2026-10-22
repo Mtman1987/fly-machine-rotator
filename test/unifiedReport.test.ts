@@ -1,6 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { buildUnifiedPayload } from "../src/unifiedReport.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildUnifiedPayload, persistUnifiedReportAttachments } from "../src/unifiedReport.js";
 import { RotatorRuntimeState } from "../src/runtimeState.js";
+
+describe("persistUnifiedReportAttachments", () => {
+  it("stores the exact allowlisted JSON attachment contents for direct Rotator reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rotator-discord-report-"));
+    const readout = JSON.stringify({ schemaVersion: "test/v1", logSnapshot: { logs: ["safe"] } }, null, 2);
+    const snapshot = JSON.stringify({ logs: ["safe"] }, null, 2);
+    try {
+      const saved = await persistUnifiedReportAttachments([
+        { name: "rotator-run-readout.json", content: readout },
+        { name: "rotator-log-snapshot.json", content: snapshot }
+      ], root);
+      expect(await readFile(join(root, "discord-report", "rotator-run-readout.json"), "utf8")).toBe(readout);
+      expect(await readFile(join(root, "discord-report", "rotator-log-snapshot.json"), "utf8")).toBe(snapshot);
+      expect(JSON.parse(await readFile(join(root, "discord-report", "latest.json"), "utf8")).files).toEqual([
+        "rotator-run-readout.json", "rotator-log-snapshot.json"
+      ]);
+      expect(saved).toHaveLength(3);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unexpected attachment names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rotator-discord-report-"));
+    try {
+      await expect(persistUnifiedReportAttachments([{ name: "../secrets.json", content: "{}" }], root)).rejects.toThrow("Unexpected unified report attachment");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("buildUnifiedPayload", () => {
   it("does not call an empty repair queue an error-free fleet", () => {

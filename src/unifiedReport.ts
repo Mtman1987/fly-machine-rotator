@@ -1,8 +1,8 @@
 import { collectOperationsEvidence } from "./operationsEvidence.js";
 import { renderMachineLoads, type MachineLoad } from "./machineLoads.js";
 import { type ObservationWindow } from "./observationWindow.js";
-import { dirname } from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { RotatorRuntimeState, getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { AppRotationResult } from "./types.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
@@ -83,6 +83,10 @@ async function updateUnifiedDiscordReport(
     { name: "rotator-run-readout.json", content: JSON.stringify(evidence, null, 2) },
     { name: "rotator-log-snapshot.json", content: JSON.stringify(evidence.logSnapshot, null, 2) },
   ];
+  // Persist the exact attachment payloads locally first. Discord is a delivery
+  // destination, not the canonical store that Athena/SPMT must read back from.
+  await persistUnifiedReportAttachments(files, process.env.ROTATOR_EVIDENCE_DIR ?? "/data/operations-evidence");
+
   // Replace previous attachments on edits; every embed and its evidence agree.
   const multipartBody = () => {
     const form = new FormData();
@@ -135,6 +139,34 @@ async function updateUnifiedDiscordReport(
     const now = new Date().toISOString();
     await currentState.set({ messageId: created.id, createdAt: now, updatedAt: now });
   }
+}
+
+
+export async function persistUnifiedReportAttachments(
+  files: Array<{ name: string; content: string }>,
+  evidenceRoot = process.env.ROTATOR_EVIDENCE_DIR ?? "/data/operations-evidence"
+): Promise<string[]> {
+  const allowed = new Set(["rotator-run-readout.json", "rotator-log-snapshot.json"]);
+  const folder = join(evidenceRoot, "discord-report");
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const saved: string[] = [];
+  for (const file of files) {
+    if (!allowed.has(file.name)) throw new Error(`Unexpected unified report attachment: ${file.name}`);
+    // The same JSON string is used for Discord and local persistence.
+    JSON.parse(file.content);
+    const path = join(folder, file.name);
+    await writeFile(path, file.content, { mode: 0o600 });
+    await chmod(path, 0o600);
+    saved.push(path);
+  }
+  const manifest = join(folder, "latest.json");
+  await writeFile(manifest, JSON.stringify({
+    schemaVersion: "rotator.discord-report-cache/v1",
+    updatedAt: new Date().toISOString(),
+    files: ["rotator-run-readout.json", "rotator-log-snapshot.json"]
+  }, null, 2), { mode: 0o600 });
+  await chmod(manifest, 0o600);
+  return [...saved, manifest];
 }
 
 export function buildUnifiedPayload(
