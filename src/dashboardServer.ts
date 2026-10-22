@@ -100,37 +100,6 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     return;
   }
 
-  if (method === "GET" && url.pathname.startsWith("/logs/discord-report/")) {
-    if (!(await requireSpmtLogReader(request, env))) {
-      response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or logs:read:last24h service identity required" }));
-      return;
-    }
-    const name = url.pathname.slice("/logs/discord-report/".length);
-    const allowed = new Set(["latest.json", "rotator-run-readout.json", "rotator-log-snapshot.json"]);
-    if (!allowed.has(name)) {
-      response.writeHead(404, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "Unknown report evidence file" }));
-      return;
-    }
-    const path = join(evidenceRoot(env), "discord-report", name);
-    try {
-      const content = await readFile(path);
-      response.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "content-disposition": `attachment; filename="${name}"`,
-        "cache-control": "private, no-store",
-        "x-content-type-options": "nosniff"
-      });
-      response.end(content);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      response.writeHead(404, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: false, error: "Report evidence has not been written yet" }));
-    }
-    return;
-  }
-
   if (method === "GET" && url.pathname === "/logs/run-readout.json") {
     if (!(await requireSpmtLogReader(request, env))) {
       response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
