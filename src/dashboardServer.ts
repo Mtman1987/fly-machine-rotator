@@ -67,6 +67,39 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse, 
     return;
   }
 
+  if (method === "GET" && url.pathname.startsWith("/logs/discord-report/")) {
+    if (!(await requireSpmtLogReader(request, env))) {
+      response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ ok: false, error: "SPMT admin session or logs:read:last24h service identity required" }));
+      return;
+    }
+    const files: Record<string, { name: string; type: string }> = {
+      "/logs/discord-report/run-readout.json": { name: "rotator-run-readout.json", type: "application/json; charset=utf-8" },
+      "/logs/discord-report/log-snapshot.json": { name: "rotator-log-snapshot.json", type: "application/json; charset=utf-8" },
+      "/logs/discord-report/manifest.json": { name: "latest.json", type: "application/json; charset=utf-8" }
+    };
+    const selected = files[url.pathname];
+    if (!selected) {
+      response.writeHead(404, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ ok: false, error: "Unknown Discord report evidence file" }));
+      return;
+    }
+    const path = join(evidenceRoot(env), "discord-report", selected.name);
+    try {
+      const content = await readFile(path, "utf8");
+      response.writeHead(200, {
+        "content-type": selected.type,
+        "cache-control": "private, no-store",
+        "x-content-type-options": "nosniff"
+      });
+      response.end(content);
+    } catch {
+      response.writeHead(404, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ ok: false, error: "No locally persisted Discord report evidence is available yet" }));
+    }
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/logs/run-readout.json") {
     if (!(await requireSpmtLogReader(request, env))) {
       response.writeHead(403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
