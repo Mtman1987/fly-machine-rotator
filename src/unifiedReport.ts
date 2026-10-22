@@ -2,7 +2,7 @@ import { collectOperationsEvidence } from "./operationsEvidence.js";
 import { renderMachineLoads, type MachineLoad } from "./machineLoads.js";
 import { type ObservationWindow } from "./observationWindow.js";
 import { dirname, join } from "node:path";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { RotatorRuntimeState, getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js";
 import { AppRotationResult } from "./types.js";
 import { redactSensitiveText, redactSensitiveValue } from "./redaction.js";
