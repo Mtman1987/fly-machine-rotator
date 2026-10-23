@@ -112,12 +112,12 @@ jobs:
 
               archive_status=""
               for attempt in $(seq 1 80); do
-                archive_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "cat $status_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr -cd '0-9' | tail -c 2)"
+              archive_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "cat $status_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr -cd '0-9' | tail -c 2 || true)"
                 [ -n "$archive_status" ] && break
                 sleep 8
               done
               if [ -z "$archive_status" ] || [ "$archive_status" != "0" ]; then
-                err="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "tail -c 500 $log_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr '\n' ' ')"
+                err="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "tail -c 500 $log_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr '\n' ' ' || true)"
                 jq -nc --arg app "$safe_app" --arg machine "$machine" --arg status "$archive_status" --arg error "$err" '{app:$app,machine:$machine,status:"remote_archive_failed",remote_exit_status:$status,error:$error}' >> /tmp/fly-mounted/results.jsonl
                 if [ "$original_state" = "stopped" ]; then timeout 20s flyctl machine stop "$machine" --app "$app" >/dev/null 2>&1 || true; fi
                 if [ "$original_state" = "suspended" ]; then timeout 20s flyctl machine suspend "$machine" --app "$app" >/dev/null 2>&1 || true; fi
