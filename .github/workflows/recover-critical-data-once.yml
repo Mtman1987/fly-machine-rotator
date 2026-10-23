@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           if [ -z "${FLY_API_TOKEN:-}" ]; then echo "No Fly API token configured"; exit 1; fi
           printf '%s\\n' '-----BEGIN PUBLIC KEY-----' 'MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAs+KIVdIzX8b6T3D3rGN1fWDUrWDYEkDIkHqpWrprjz25oHVQ3wKydiQCCim+56QjAZXCTf0FCkLkUMesZkbRBfnWhlX237axyV9d9CIP9eaNHv8J/NfthHMecw4+9ll1stgvrGP9zh2YdmPT9inDmK3ZaLi7gepcu8MXiKEEAIyePvEezBCMDL2T9ttUsNivE4VBn5gN+3CS7dbGspoQaEbSxy+lMahc4jxUwAB8a0cAgt4XMGSgSwtg3+hgElcuz36/VqD22Bz0NBqFhHBsSW1LGM7+hYl2gryN4wLnxVd0VkGZGF48yG+NygfYVzJX1UeLqfcuL6lrruK235AYKNeDL+f2lgT7WeqCtjwcRamdbivHyKtXsQiBcpMT675WRpdFy7KA4//IdcTUugxelWGfTbTPpZRkJIz6Tbc56dNTn63LnnoyvL8QAicwIi4btRpvBvMfJcaVJ4zrYH0Q8PwYSQaVQEmEdzCHkjEhwGr3o/CXcrLAgMBAAE=' '-----END PUBLIC KEY-----' > /tmp/export-public.pem
-          timeout 360s flyctl ssh console --app spmt-live -C "sh -c 'tar -cf - -C /data . | gzip -1 | base64'" > /tmp/data.b64
+          timeout 600s flyctl ssh console --app spmt-live --machine 8d0274ce21e918 -C "sh -c 'tar -cf - -C /data . | gzip -1 | base64'" > /tmp/data.b64
           base64 -d /tmp/data.b64 > /tmp/spmt-live-data.tar.gz
           tar -tzf /tmp/spmt-live-data.tar.gz > /tmp/spmt-live-file-list.txt
           echo "Archive entries: $(wc -l < /tmp/spmt-live-file-list.txt); bytes: $(wc -c < /tmp/spmt-live-data.tar.gz)"
