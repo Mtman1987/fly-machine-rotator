@@ -98,7 +98,10 @@ jobs:
               # the session, which made flyctl report "session forcibly closed" despite remote work continuing.
               remote_cmd="rm -f $remote $status_file $log_file; tar --ignore-failed-read --warning=no-file-changed --exclude='*/Cache/*' --exclude='*/Code Cache/*' --exclude='*/BrowserMetrics/*' --exclude='*/GPUCache/*' --exclude='*/Service Worker/CacheStorage/*' -czf $remote -C /"
               while IFS= read -r p; do [ -n "$p" ] && remote_cmd="$remote_cmd $p"; done <<< "$paths"
-              launch_cmd="nohup sh -c '$remote_cmd; echo \$? > $status_file' > $log_file 2>&1 </dev/null & echo recovery-archive-started"
+              script_file="/tmp/fly-recovery-$machine.sh"
+              archive_script="$remote_cmd; echo \$? > $status_file"
+              encoded_script="$(printf '%s' "$archive_script" | base64 -w0)"
+              launch_cmd="echo $encoded_script | base64 -d > $script_file; chmod 700 $script_file; nohup sh $script_file > $log_file 2>&1 </dev/null & echo recovery-archive-started"
               if ! timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "$launch_cmd" --quiet </dev/null >"/tmp/fly-mounted/raw/ssh-$machine.out" 2>"/tmp/fly-mounted/raw/ssh-$machine.err"; then
                 err="$(head -c 500 "/tmp/fly-mounted/raw/ssh-$machine.err" | tr '\n' ' ')"
                 jq -nc --arg app "$safe_app" --arg machine "$machine" --arg error "$err" '{app:$app,machine:$machine,status:"archive_launch_failed",error:$error}' >> /tmp/fly-mounted/results.jsonl
