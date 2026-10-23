@@ -24,7 +24,7 @@ jobs:
           RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY || secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
         shell: bash
         run: |
-          set -uo pipefail
+          set +euo pipefail
           mkdir -p /tmp/fly-preserve/encrypted /tmp/fly-preserve/raw
           : > /tmp/fly-preserve/results.jsonl
           : > /tmp/fly-preserve/app-metadata.jsonl
@@ -46,16 +46,26 @@ jobs:
           while IFS= read -r app; do
             [ -n "$app" ] || continue
             safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
+            case " spmt-live spacemountain-live streamweaver-new discord-stream-hub-new dsh-clip-worker hearmeout-main hmo-dj-worker chat-tag-new chat-tag-bot-new mtman-machine-rotator " in *" $safe_app "*) ;; *) echo "Skipping non-owned Fly app: $safe_app"; continue ;; esac
             echo "Inventorying $safe_app"
             if ! flyctl machines list --app "$app" --json > "/tmp/fly-preserve/raw/machines-$safe_app.json" 2>"/tmp/fly-preserve/raw/machines-$safe_app.err"; then
               jq -nc --arg app "$safe_app" '{app:$app,status:"machine_inventory_failed"}' >> /tmp/fly-preserve/results.jsonl
+              continue
+            fi
+            if ! jq -e 'type == "array"' "/tmp/fly-preserve/raw/machines-$safe_app.json" >/dev/null 2>&1; then
+              jq -nc --arg app "$safe_app" '{app:$app,status:"machine_inventory_invalid_json"}' >> /tmp/fly-preserve/results.jsonl
               continue
             fi
             if ! flyctl volumes list --app "$app" --json > "/tmp/fly-preserve/raw/volumes-$safe_app.json" 2>"/tmp/fly-preserve/raw/volumes-$safe_app.err"; then
               jq -nc --arg app "$safe_app" '{app:$app,status:"volume_inventory_failed"}' >> /tmp/fly-preserve/results.jsonl
               continue
             fi
+            if ! jq -e 'type == "array"' "/tmp/fly-preserve/raw/volumes-$safe_app.json" >/dev/null 2>&1; then
+              jq -nc --arg app "$safe_app" '{app:$app,status:"volume_inventory_invalid_json"}' >> /tmp/fly-preserve/results.jsonl
+              continue
+            fi
             flyctl secrets list --app "$app" --json > "/tmp/fly-preserve/raw/secrets-$safe_app.json" 2>/dev/null || echo '[]' > "/tmp/fly-preserve/raw/secrets-$safe_app.json"
+            if ! jq -e 'type == "array"' "/tmp/fly-preserve/raw/secrets-$safe_app.json" >/dev/null 2>&1; then echo '[]' > "/tmp/fly-preserve/raw/secrets-$safe_app.json"; fi
 
             jq -nc --arg app "$safe_app" --slurpfile machines "/tmp/fly-preserve/raw/machines-$safe_app.json" --slurpfile volumes "/tmp/fly-preserve/raw/volumes-$safe_app.json" --slurpfile secrets "/tmp/fly-preserve/raw/secrets-$safe_app.json" '{
               app:$app,
