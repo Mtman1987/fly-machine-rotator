@@ -24,7 +24,7 @@ jobs:
           RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY || secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
         shell: bash
         run: |
-          set -eo pipefail
+          set -uo pipefail
           mkdir -p /tmp/fly-preserve/encrypted /tmp/fly-preserve/raw
           : > /tmp/fly-preserve/results.jsonl
           : > /tmp/fly-preserve/app-metadata.jsonl
@@ -47,7 +47,6 @@ jobs:
           while IFS= read -r app; do
             [ -n "$app" ] || continue
             safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
-            case " spmt-live spacemountain-live streamweaver-new discord-stream-hub-new dsh-clip-worker hearmeout-main hmo-dj-worker chat-tag-new chat-tag-bot-new mtman-machine-rotator " in *" $safe_app "*) ;; *) echo "Skipping non-owned Fly app: $safe_app"; continue ;; esac
             echo "Inventorying $safe_app"
             if ! timeout 25s flyctl machines list --app "$app" --json > "/tmp/fly-preserve/raw/machines-$safe_app.json" 2>"/tmp/fly-preserve/raw/machines-$safe_app.err"; then
               jq -nc --arg app "$safe_app" '{app:$app,status:"machine_inventory_failed"}' >> /tmp/fly-preserve/results.jsonl
@@ -80,7 +79,12 @@ jobs:
               [ -n "$volume" ] || continue
               safe_volume="$(printf '%s' "$volume" | tr -cd 'A-Za-z0-9._-')"
               if timeout 30s flyctl volumes snapshots create "$volume" --app "$app" --json > "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" 2>"/tmp/fly-preserve/raw/snapshot-$safe_volume.err"; then
-                jq -c --arg app "$safe_app" --arg volume "$safe_volume" '{app:$app,volume:$volume,status:"snapshot_request_succeeded",response:.}' "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" >> /tmp/fly-preserve/results.jsonl
+                if jq -e . "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" >/dev/null 2>&1; then
+                  jq -c --arg app "$safe_app" --arg volume "$safe_volume" '{app:$app,volume:$volume,status:"snapshot_request_succeeded",response:.}' "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" >> /tmp/fly-preserve/results.jsonl
+                else
+                  msg="$(head -c 300 "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" | tr '\n' ' ')"
+                  jq -nc --arg app "$safe_app" --arg volume "$safe_volume" --arg output "$msg" '{app:$app,volume:$volume,status:"snapshot_response_not_json",output:$output}' >> /tmp/fly-preserve/results.jsonl
+                fi
               else
                 err="$(tr '\n' ' ' < "/tmp/fly-preserve/raw/snapshot-$safe_volume.err" | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-400)"
                 jq -nc --arg app "$safe_app" --arg volume "$safe_volume" --arg error "$err" '{app:$app,volume:$volume,status:"snapshot_failed",error:$error}' >> /tmp/fly-preserve/results.jsonl
@@ -137,8 +141,8 @@ jobs:
             done
           done
 
-          jq -s '.' /tmp/fly-preserve/app-metadata.jsonl > /tmp/fly-preserve/encrypted/app-metadata.json
-          jq -s '.' /tmp/fly-preserve/results.jsonl > /tmp/fly-preserve/encrypted/preservation-results.json
+          jq -s '.' /tmp/fly-preserve/app-metadata.jsonl > /tmp/fly-preserve/encrypted/app-metadata.json 2>/tmp/fly-preserve/raw/metadata-parse.err || echo '[]' > /tmp/fly-preserve/encrypted/app-metadata.json
+          jq -s '.' /tmp/fly-preserve/results.jsonl > /tmp/fly-preserve/encrypted/preservation-results.json 2>/tmp/fly-preserve/raw/results-parse.err || echo '[]' > /tmp/fly-preserve/encrypted/preservation-results.json
           find /tmp/fly-preserve/encrypted -type f -name '*.enc' -print0 | xargs -0 -r sha256sum > /tmp/fly-preserve/encrypted/encrypted-files.sha256
           jq -n --slurpfile apps /tmp/fly-preserve/apps.json --slurpfile metadata /tmp/fly-preserve/encrypted/app-metadata.json --slurpfile results /tmp/fly-preserve/encrypted/preservation-results.json '{
             capturedAt:(now|todate),
@@ -149,7 +153,7 @@ jobs:
             snapshotRequestsSucceeded:([$results[0][]|select(.status=="snapshot_request_succeeded")]|length),
             failures:([$results[0][]|select(.status|test("failed|no_mount";"i"))]|length),
             encryption:"AES-256-GCM; scrypt-derived key from SPMT_ADMIN_RECOVERY_KEY when configured, otherwise FLY_API_TOKEN"
-          }' > /tmp/fly-preserve/encrypted/report.json
+          }' > /tmp/fly-preserve/encrypted/report.json || echo '{"status":"partial","reason":"Report aggregation failed; inspect preservation-results.json and raw error files"}' > /tmp/fly-preserve/encrypted/report.json
           cat /tmp/fly-preserve/encrypted/report.json
 
       - name: Upload encrypted recovery archives for core apps
@@ -158,7 +162,7 @@ jobs:
         with:
           name: fly-recovery-core-apps
           path: |
-            /tmp/fly-preserve/encrypted/spmt-live-*.enc
+            /tmp/fly-preserve/encrypted/*.enc
             /tmp/fly-preserve/encrypted/hearmeout-main-*.enc
             /tmp/fly-preserve/encrypted/streamweaver-new-*.enc
             /tmp/fly-preserve/encrypted/chat-tag-new-*.enc
