@@ -24,7 +24,7 @@ jobs:
           RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY || secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
         shell: bash
         run: |
-          set +euo pipefail
+          set -eo pipefail
           mkdir -p /tmp/fly-preserve/encrypted /tmp/fly-preserve/raw
           : > /tmp/fly-preserve/results.jsonl
           : > /tmp/fly-preserve/app-metadata.jsonl
@@ -32,7 +32,8 @@ jobs:
             echo '{"status":"blocked","reason":"Required Fly access or recovery encryption key is unavailable"}' > /tmp/fly-preserve/encrypted/report.json
             exit 1
           fi
-          if ! flyctl apps list --json > /tmp/fly-preserve/apps.json 2>/tmp/fly-preserve/apps.err; then
+          echo "Requesting Fly app inventory (25-second limit)"
+          if ! timeout 25s flyctl apps list --json > /tmp/fly-preserve/apps.json 2>/tmp/fly-preserve/apps.err; then
             err="$(tr '\n' ' ' < /tmp/fly-preserve/apps.err | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-500)"
             jq -nc --arg error "$err" '{status:"blocked",stage:"apps_list",error:$error}' > /tmp/fly-preserve/encrypted/report.json
             exit 1
