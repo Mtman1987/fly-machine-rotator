@@ -68,8 +68,16 @@ jobs:
                 printf '%s\n' "$p"
               done | sort -u)"
               if [ -z "$paths" ]; then
-                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" '{app:$app,machine:$machine,state:$state,status:"no_mount_paths_reported"}' >> /tmp/fly-mounted/results.jsonl
-                continue
+                # Some apps keep user state in the writable container layer instead of an attached Fly volume.
+                # Attempt a conservative filesystem recovery of common persistent-data locations instead of skipping.
+                paths="$(for p in data app/data var/lib home/node/.config root/.config; do
+                  if timeout 5s flyctl ssh console --app "$app" --machine "$machine" --command "test -d /$p" --quiet </dev/null >/dev/null 2>&1; then printf '%s\n' "$p"; fi
+                done | sort -u)"
+                if [ -z "$paths" ]; then
+                  jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" '{app:$app,machine:$machine,state:$state,status:"no_mount_paths_or_known_data_dirs"}' >> /tmp/fly-mounted/results.jsonl
+                  continue
+                fi
+                echo "No attached mounts reported for $safe_app/$machine; attempting common writable data directories: $paths"
               fi
 
               original_state="$state"
@@ -84,13 +92,30 @@ jobs:
               fi
 
               remote="/tmp/fly-recovery-$machine.tar.gz"
-              remote_cmd="tar -czf $remote -C /"
+              status_file="/tmp/fly-recovery-$machine.status"
+              log_file="/tmp/fly-recovery-$machine.log"
+              # Run the archive detached from the SSH session: large volume archives previously outlived
+              # the session, which made flyctl report "session forcibly closed" despite remote work continuing.
+              remote_cmd="rm -f $remote $status_file $log_file; tar --ignore-failed-read --warning=no-file-changed --exclude='*/Cache/*' --exclude='*/Code Cache/*' --exclude='*/BrowserMetrics/*' --exclude='*/GPUCache/*' --exclude='*/Service Worker/CacheStorage/*' -czf $remote -C /"
               while IFS= read -r p; do [ -n "$p" ] && remote_cmd="$remote_cmd $p"; done <<< "$paths"
-              stdout="/tmp/fly-mounted/raw/ssh-$machine.out"
-              stderr="/tmp/fly-mounted/raw/ssh-$machine.err"
-              if ! timeout 600s flyctl ssh console --app "$app" --machine "$machine" --command "$remote_cmd" --quiet </dev/null >"$stdout" 2>"$stderr"; then
-                err="$(head -c 500 "$stderr" | tr '\n' ' ')"
-                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$original_state" --arg error "$err" '{app:$app,machine:$machine,original_state:$state,status:"remote_archive_failed",error:$error}' >> /tmp/fly-mounted/results.jsonl
+              launch_cmd="nohup sh -c '$remote_cmd; echo \$? > $status_file' > $log_file 2>&1 </dev/null & echo recovery-archive-started"
+              if ! timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "$launch_cmd" --quiet </dev/null >"/tmp/fly-mounted/raw/ssh-$machine.out" 2>"/tmp/fly-mounted/raw/ssh-$machine.err"; then
+                err="$(head -c 500 "/tmp/fly-mounted/raw/ssh-$machine.err" | tr '\n' ' ')"
+                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg error "$err" '{app:$app,machine:$machine,status:"archive_launch_failed",error:$error}' >> /tmp/fly-mounted/results.jsonl
+                if [ "$original_state" = "stopped" ]; then timeout 20s flyctl machine stop "$machine" --app "$app" >/dev/null 2>&1 || true; fi
+                if [ "$original_state" = "suspended" ]; then timeout 20s flyctl machine suspend "$machine" --app "$app" >/dev/null 2>&1 || true; fi
+                continue
+              fi
+
+              archive_status=""
+              for attempt in $(seq 1 80); do
+                archive_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "cat $status_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr -cd '0-9' | tail -c 2)"
+                [ -n "$archive_status" ] && break
+                sleep 8
+              done
+              if [ -z "$archive_status" ] || [ "$archive_status" != "0" ]; then
+                err="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "tail -c 500 $log_file 2>/dev/null || true" --quiet </dev/null 2>/dev/null | tr '\n' ' ')"
+                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg status "$archive_status" --arg error "$err" '{app:$app,machine:$machine,status:"remote_archive_failed",remote_exit_status:$status,error:$error}' >> /tmp/fly-mounted/results.jsonl
                 if [ "$original_state" = "stopped" ]; then timeout 20s flyctl machine stop "$machine" --app "$app" >/dev/null 2>&1 || true; fi
                 if [ "$original_state" = "suspended" ]; then timeout 20s flyctl machine suspend "$machine" --app "$app" >/dev/null 2>&1 || true; fi
                 continue
@@ -150,7 +175,8 @@ jobs:
             machineResults:$results[0],
             encryptedArchivesCreated:([$results[0][]|select(.status=="encrypted_archive_created")]|length),
             failures:([$results[0][]|select(.status|test("failed|no_mount";"i"))]|length),
-            encryption:"AES-256-GCM; scrypt-derived key from SPMT_ADMIN_RECOVERY_KEY when configured, otherwise FLY_API_TOKEN"
+            encryption:"AES-256-GCM; scrypt-derived key from SPMT_ADMIN_RECOVERY_KEY when configured, otherwise FLY_API_TOKEN",
+            recoveryMethod:"detached tar with completion status; ignore mutable cache churn; fallback to common data dirs when no mounts are attached"
           }' > /tmp/fly-mounted/report.json || echo '{"status":"partial","reason":"Could not aggregate machine results"}' > /tmp/fly-mounted/report.json
           cat /tmp/fly-mounted/report.json
 
