@@ -1654,6 +1654,9 @@ export default function App() {
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}>
                     <Text style={styles.secondaryButtonText}>Who's live?</Text>
                   </Pressable>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_spmt_live", "Who is active in Chat-Tag?")}>
+                    <Text style={styles.secondaryButtonText}>Who is active in Chat-Tag?</Text>
+                  </Pressable>
                 </View>
                 <View style={styles.actionRow}>
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={saveVisualProfileFromImage}>
@@ -2053,11 +2056,8 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}><Text style={styles.secondaryButtonText}>Who is live?</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_chat_tag_tag", voicePrompt || "tag scarlett")}><Text style={styles.secondaryButtonText}>Tag Chat-Tag player</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout", "HearMeOut music session state")}><Text style={styles.secondaryButtonText}>HearMeOut session</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_peers", "Who is in the HearMeOut room?")}><Text style={styles.secondaryButtonText}>HearMeOut room peers</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_song_request", voicePrompt)}><Text style={styles.secondaryButtonText}>Request HearMeOut song</Text></Pressable>
               <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_music_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control HearMeOut music</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_request", voicePrompt || "Request a watch party item")}><Text style={styles.secondaryButtonText}>Request watch item</Text></Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control watch party</Text></Pressable>
             </View>
           )}
 
