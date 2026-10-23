@@ -1,0 +1,35 @@
+name: Preserve detached HMO volume without snapshots
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/preserve-detached-hmo-volume.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Create preservation snapshot for detached volume with no existing snapshots
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "No Fly API token configured"; exit 1; fi
+          flyctl volumes snapshots create vol_vlyw1nmy2w7pk3o4 --json > /tmp/detached-volume-snapshot.json
+          cat /tmp/detached-volume-snapshot.json
+      - name: Upload snapshot confirmation metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: detached-hmo-volume-snapshot-confirmation
+          path: /tmp/detached-volume-snapshot.json
+          retention-days: 1
+          if-no-files-found: error
