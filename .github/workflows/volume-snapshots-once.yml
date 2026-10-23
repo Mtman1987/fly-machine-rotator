@@ -1,0 +1,70 @@
+name: One-time volume snapshot inventory
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/volume-snapshots-once.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: List existing snapshots for attached and detached volumes
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "No Fly API token configured"; exit 1; fi
+          mkdir -p /tmp/snapshots
+          cat > /tmp/snapshots/volumes.txt <<'VOLS'
+          vol_4ojp7z8jy1mwjoxr streamweaver-new
+          vol_4m32y1839o9q7edv hearmeout-main
+          vol_vlyw1nmy2w7pk3o4 hmo-dj-worker
+          vol_4ojp7nl276l6ke2r hmo-dj-worker
+          vol_4oj19geyd6knd0or hmo-dj-worker
+          vol_491xedonwmk6zx9r hmo-dj-worker
+          vol_4ojg8nld8zqqx6qr hmo-dj-worker
+          vol_rk19n1poymqe3lk4 chat-tag-new
+          vol_vly90ledzql60op4 chat-tag-new
+          vol_r1jwqow115n1gw3r chat-tag-new
+          vol_vz8ey6wpj0nl7zqv discord-stream-hub-new
+          vol_42kmdp560dmgwl94 spacemountain-live
+          vol_vde2p30e6xo8d0k4 spmt-live
+          vol_rnzndd517lpn211r spmt-live
+          vol_re1opp5qzdglkxd4 spmt-live
+          vol_4m30d1921mjj1xzv spmt-live
+          vol_vgnk2m2yqz73g3j4 spmt-live
+          vol_4y8zj5mpdp35nmpr spmt-live
+          vol_v8ee73j6wglewp7v mtman-machine-rotator
+          VOLS
+          sed -i 's/^          //' /tmp/snapshots/volumes.txt
+          : > /tmp/snapshots/results.jsonl
+          while read -r vol app; do
+            [ -n "$vol" ] || continue
+            echo "Listing snapshots for $vol ($app)"
+            if timeout 20s flyctl volumes snapshots list "$vol" --json > "/tmp/snapshots/$vol.json" 2>"/tmp/snapshots/$vol.err"; then
+              jq -c --arg volume "$vol" --arg app "$app" '{volume:$volume,app:$app,snapshots:.}' "/tmp/snapshots/$vol.json" >> /tmp/snapshots/results.jsonl || true
+            else
+              printf '%s\n' "{\"volume\":\"$vol\",\"app\":\"$app\",\"error\":\"snapshot listing unavailable\"}" >> /tmp/snapshots/results.jsonl
+            fi
+          done < /tmp/snapshots/volumes.txt
+          jq -s '.' /tmp/snapshots/results.jsonl > /tmp/snapshots/snapshots.json
+          tar -czf /tmp/volume-snapshots-inventory.tar.gz -C /tmp/snapshots volumes.txt snapshots.json
+          echo "Volume count: $(wc -l < /tmp/snapshots/volumes.txt)"
+          echo "Snapshot response records: $(jq 'length' /tmp/snapshots/snapshots.json)"
+      - name: Upload snapshot metadata only
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-volume-snapshot-inventory
+          path: /tmp/volume-snapshots-inventory.tar.gz
+          retention-days: 1
+          if-no-files-found: error
