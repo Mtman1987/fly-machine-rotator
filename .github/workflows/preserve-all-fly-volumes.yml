@@ -1,0 +1,83 @@
+name: Preserve all Fly app volumes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/preserve-all-fly-volumes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Inventory all accessible apps and volumes, then snapshot every volume
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "::error::No Fly API token configured; no preservation work was performed."
+            exit 1
+          fi
+
+          mkdir -p /tmp/fly-preserve
+          : > /tmp/fly-preserve/results.jsonl
+
+          # Enumerate apps dynamically so retired or newly added apps are not
+          # silently omitted from the inventory.
+          flyctl apps list --json > /tmp/fly-preserve/apps.json
+          jq -e 'type == "array"' /tmp/fly-preserve/apps.json >/dev/null
+
+          jq -r '.[] | (.Name // .name // .app_name // empty)' /tmp/fly-preserve/apps.json |
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
+            echo "Inventorying volumes for app: $safe_app"
+            if ! flyctl volumes list --app "$app" --json > "/tmp/fly-preserve/volumes-$safe_app.json" 2> "/tmp/fly-preserve/volumes-$safe_app.err"; then
+              jq -nc --arg app "$safe_app" --arg status "volume_inventory_failed" '{app:$app,status:$status}' >> /tmp/fly-preserve/results.jsonl
+              continue
+            fi
+
+            jq -e 'type == "array"' "/tmp/fly-preserve/volumes-$safe_app.json" >/dev/null
+            jq -r '.[] | (.id // .ID // empty)' "/tmp/fly-preserve/volumes-$safe_app.json" |
+            while IFS= read -r volume; do
+              [ -n "$volume" ] || continue
+              safe_volume="$(printf '%s' "$volume" | tr -cd 'A-Za-z0-9._-')"
+              echo "Requesting preservation snapshot for $safe_app / $safe_volume"
+              if timeout 90s flyctl volumes snapshots create "$volume" --app "$app" --json > "/tmp/fly-preserve/snapshot-$safe_volume.json" 2> "/tmp/fly-preserve/snapshot-$safe_volume.err"; then
+                jq -c --arg app "$safe_app" --arg volume "$safe_volume" '{app:$app,volume:$volume,status:"snapshot_request_succeeded",response:.}' "/tmp/fly-preserve/snapshot-$safe_volume.json" >> /tmp/fly-preserve/results.jsonl
+              else
+                # Keep processing remaining volumes; never disguise a failure.
+                err="$(tr '\n' ' ' < "/tmp/fly-preserve/snapshot-$safe_volume.err" | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-500)"
+                jq -nc --arg app "$safe_app" --arg volume "$safe_volume" --arg error "$err" '{app:$app,volume:$volume,status:"snapshot_failed",error:$error}' >> /tmp/fly-preserve/results.jsonl
+              fi
+            done
+          done
+
+          jq -s '.' /tmp/fly-preserve/results.jsonl > /tmp/fly-preserve/preservation-results.json
+          jq -n --slurpfile apps /tmp/fly-preserve/apps.json --slurpfile results /tmp/fly-preserve/preservation-results.json '{
+            capturedAt:(now|todate),
+            appsDiscovered:($apps[0]|length),
+            volumeResults:$results[0],
+            snapshotRequestsSucceeded:([$results[0][]|select(.status=="snapshot_request_succeeded")]|length),
+            failures:([$results[0][]|select(.status!="snapshot_request_succeeded")]|length)
+          }' > /tmp/fly-preserve/report.json
+          cat /tmp/fly-preserve/report.json
+
+      - name: Retain sanitized preservation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-all-app-volume-preservation
+          path: /tmp/fly-preserve/report.json
+          retention-days: 30
+          if-no-files-found: warn
