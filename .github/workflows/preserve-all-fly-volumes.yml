@@ -1,4 +1,4 @@
-name: Preserve all Fly app volumes
+name: Preserve all Fly app data
 
 on:
   push:
@@ -13,71 +13,171 @@ permissions:
 jobs:
   preserve:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Inventory all accessible apps and volumes, then snapshot every volume
+      - name: Snapshot all volumes and export encrypted mounted data
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+          RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY || secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
         shell: bash
         run: |
-          set -euo pipefail
-          if [ -z "${FLY_API_TOKEN:-}" ]; then
-            echo "::error::No Fly API token configured; no preservation work was performed."
+          set -uo pipefail
+          mkdir -p /tmp/fly-preserve/encrypted /tmp/fly-preserve/raw
+          : > /tmp/fly-preserve/results.jsonl
+          : > /tmp/fly-preserve/app-metadata.jsonl
+          if [ -z "${FLY_API_TOKEN:-}" ] || [ -z "${RECOVERY_KEY:-}" ]; then
+            echo '{"status":"blocked","reason":"Required Fly access or recovery encryption key is unavailable"}' > /tmp/fly-preserve/encrypted/report.json
             exit 1
           fi
-
-          mkdir -p /tmp/fly-preserve
-          : > /tmp/fly-preserve/results.jsonl
-
-          # Enumerate apps dynamically so retired or newly added apps are not
-          # silently omitted from the inventory.
-          flyctl apps list --json > /tmp/fly-preserve/apps.json
-          jq -e 'type == "array"' /tmp/fly-preserve/apps.json >/dev/null
+          if ! flyctl apps list --json > /tmp/fly-preserve/apps.json 2>/tmp/fly-preserve/apps.err; then
+            err="$(tr '\n' ' ' < /tmp/fly-preserve/apps.err | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-500)"
+            jq -nc --arg error "$err" '{status:"blocked",stage:"apps_list",error:$error}' > /tmp/fly-preserve/encrypted/report.json
+            exit 1
+          fi
+          if ! jq -e 'type == "array"' /tmp/fly-preserve/apps.json >/dev/null; then
+            echo '{"status":"blocked","stage":"apps_list","reason":"Fly app inventory was not a JSON array"}' > /tmp/fly-preserve/encrypted/report.json
+            exit 1
+          fi
 
           jq -r '.[] | (.Name // .name // .app_name // empty)' /tmp/fly-preserve/apps.json |
           while IFS= read -r app; do
             [ -n "$app" ] || continue
             safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
-            echo "Inventorying volumes for app: $safe_app"
-            if ! flyctl volumes list --app "$app" --json > "/tmp/fly-preserve/volumes-$safe_app.json" 2> "/tmp/fly-preserve/volumes-$safe_app.err"; then
-              jq -nc --arg app "$safe_app" --arg status "volume_inventory_failed" '{app:$app,status:$status}' >> /tmp/fly-preserve/results.jsonl
+            echo "Inventorying $safe_app"
+            if ! flyctl machines list --app "$app" --json > "/tmp/fly-preserve/raw/machines-$safe_app.json" 2>"/tmp/fly-preserve/raw/machines-$safe_app.err"; then
+              jq -nc --arg app "$safe_app" '{app:$app,status:"machine_inventory_failed"}' >> /tmp/fly-preserve/results.jsonl
               continue
             fi
+            if ! flyctl volumes list --app "$app" --json > "/tmp/fly-preserve/raw/volumes-$safe_app.json" 2>"/tmp/fly-preserve/raw/volumes-$safe_app.err"; then
+              jq -nc --arg app "$safe_app" '{app:$app,status:"volume_inventory_failed"}' >> /tmp/fly-preserve/results.jsonl
+              continue
+            fi
+            flyctl secrets list --app "$app" --json > "/tmp/fly-preserve/raw/secrets-$safe_app.json" 2>/dev/null || echo '[]' > "/tmp/fly-preserve/raw/secrets-$safe_app.json"
 
-            jq -e 'type == "array"' "/tmp/fly-preserve/volumes-$safe_app.json" >/dev/null
-            jq -r '.[] | (.id // .ID // empty)' "/tmp/fly-preserve/volumes-$safe_app.json" |
+            jq -nc --arg app "$safe_app" --slurpfile machines "/tmp/fly-preserve/raw/machines-$safe_app.json" --slurpfile volumes "/tmp/fly-preserve/raw/volumes-$safe_app.json" --slurpfile secrets "/tmp/fly-preserve/raw/secrets-$safe_app.json" '{
+              app:$app,
+              machines:($machines[0] // [] | map({id:(.id // .ID),state:(.state // .State),region:(.region // .Region),mounts:(.config.mounts // [])})),
+              volumes:($volumes[0] // [] | map({id:(.id // .ID),name:(.name // .Name),region:(.region // .Region),size_gb:(.size_gb // .SizeGB),state:(.state // .State),attached_machine_id:(.attached_machine_id // .attachedMachineId)})),
+              secretNames:($secrets[0] // [] | map({name:(.name // .Name),digest:(.digest // .Digest),created_at:(.created_at // .CreatedAt)}))
+            }' >> /tmp/fly-preserve/app-metadata.jsonl
+
+            jq -r '.[] | (.id // .ID // empty)' "/tmp/fly-preserve/raw/volumes-$safe_app.json" |
             while IFS= read -r volume; do
               [ -n "$volume" ] || continue
               safe_volume="$(printf '%s' "$volume" | tr -cd 'A-Za-z0-9._-')"
-              echo "Requesting preservation snapshot for $safe_app / $safe_volume"
-              if timeout 90s flyctl volumes snapshots create "$volume" --app "$app" --json > "/tmp/fly-preserve/snapshot-$safe_volume.json" 2> "/tmp/fly-preserve/snapshot-$safe_volume.err"; then
-                jq -c --arg app "$safe_app" --arg volume "$safe_volume" '{app:$app,volume:$volume,status:"snapshot_request_succeeded",response:.}' "/tmp/fly-preserve/snapshot-$safe_volume.json" >> /tmp/fly-preserve/results.jsonl
+              if timeout 90s flyctl volumes snapshots create "$volume" --app "$app" --json > "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" 2>"/tmp/fly-preserve/raw/snapshot-$safe_volume.err"; then
+                jq -c --arg app "$safe_app" --arg volume "$safe_volume" '{app:$app,volume:$volume,status:"snapshot_request_succeeded",response:.}' "/tmp/fly-preserve/raw/snapshot-$safe_volume.json" >> /tmp/fly-preserve/results.jsonl
               else
-                # Keep processing remaining volumes; never disguise a failure.
-                err="$(tr '\n' ' ' < "/tmp/fly-preserve/snapshot-$safe_volume.err" | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-500)"
+                err="$(tr '\n' ' ' < "/tmp/fly-preserve/raw/snapshot-$safe_volume.err" | sed -E 's/(FlyV1|Bearer)[[:space:]]+[A-Za-z0-9._~+\/=:-]+/REDACTED/g' | cut -c1-400)"
                 jq -nc --arg app "$safe_app" --arg volume "$safe_volume" --arg error "$err" '{app:$app,volume:$volume,status:"snapshot_failed",error:$error}' >> /tmp/fly-preserve/results.jsonl
               fi
             done
+
+            jq -c '.[] | select((.state // .State // "") == "started") | {id:(.id // .ID),mounts:(.config.mounts // [])}' "/tmp/fly-preserve/raw/machines-$safe_app.json" |
+            while IFS= read -r machine_row; do
+              machine="$(printf '%s' "$machine_row" | jq -r '.id // empty')"
+              [ -n "$machine" ] || continue
+              paths="$(printf '%s' "$machine_row" | jq -r '.mounts[]?.path // empty' | while IFS= read -r p; do case "$p" in /*) p="${p#/}";; *) continue;; esac; case "$p" in *..*|*[!A-Za-z0-9._/-]*) continue;; esac; printf '%s\n' "$p"; done | sort -u)"
+              if [ -z "$paths" ]; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" '{app:$app,machine:$machine,status:"no_mount_paths_reported"}' >> /tmp/fly-preserve/results.jsonl
+                continue
+              fi
+              remote="/tmp/fly-recovery-$machine.tar.gz"
+              remote_cmd="tar -czf $remote -C /"
+              while IFS= read -r p; do [ -n "$p" ] && remote_cmd="$remote_cmd $p"; done <<< "$paths"
+              if ! timeout 240s flyctl ssh console --app "$app" --machine "$machine" --command "$remote_cmd" --quiet >/dev/null 2>&1; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" '{app:$app,machine:$machine,status:"remote_archive_failed"}' >> /tmp/fly-preserve/results.jsonl
+                continue
+              fi
+              local_archive="/tmp/fly-preserve/raw/$safe_app-$machine.tar.gz"
+              if ! timeout 300s flyctl ssh sftp get "$remote" "$local_archive" --app "$app" --machine "$machine" --quiet >/dev/null 2>&1; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" '{app:$app,machine:$machine,status:"archive_download_failed"}' >> /tmp/fly-preserve/results.jsonl
+                continue
+              fi
+              node - "$local_archive" "/tmp/fly-preserve/encrypted/$safe_app-$machine.tar.gz.enc" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const { pipeline } = require('node:stream/promises');
+          (async () => {
+            const [src, dst] = process.argv.slice(2);
+            const pass = process.env.RECOVERY_KEY;
+            if (!pass) throw new Error('Recovery encryption key unavailable');
+            const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+            const key = crypto.scryptSync(pass, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+            const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+            const out = fs.createWriteStream(dst, { mode: 0o600 });
+            out.write(Buffer.concat([Buffer.from('SPMTFLY1'), salt, iv]));
+            await pipeline(fs.createReadStream(src), cipher, out);
+            fs.appendFileSync(dst, cipher.getAuthTag());
+            fs.unlinkSync(src);
+          })().catch(e => { process.stderr.write(String(e.message || e)); process.exitCode = 1; });
+          NODE
+              if [ ! -s "/tmp/fly-preserve/encrypted/$safe_app-$machine.tar.gz.enc" ]; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" '{app:$app,machine:$machine,status:"encryption_failed"}' >> /tmp/fly-preserve/results.jsonl
+                continue
+              fi
+              sha="$(sha256sum "/tmp/fly-preserve/encrypted/$safe_app-$machine.tar.gz.enc" | awk '{print $1}')"
+              bytes="$(stat -c '%s' "/tmp/fly-preserve/encrypted/$safe_app-$machine.tar.gz.enc")"
+              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg file "$safe_app-$machine.tar.gz.enc" --arg sha256 "$sha" --argjson bytes "$bytes" '{app:$app,machine:$machine,status:"encrypted_archive_created",file:$file,bytes:$bytes,sha256:$sha256}' >> /tmp/fly-preserve/results.jsonl
+              flyctl ssh console --app "$app" --machine "$machine" --command "rm -f $remote" --quiet >/dev/null 2>&1 || true
+            done
           done
 
-          jq -s '.' /tmp/fly-preserve/results.jsonl > /tmp/fly-preserve/preservation-results.json
-          jq -n --slurpfile apps /tmp/fly-preserve/apps.json --slurpfile results /tmp/fly-preserve/preservation-results.json '{
+          jq -s '.' /tmp/fly-preserve/app-metadata.jsonl > /tmp/fly-preserve/encrypted/app-metadata.json
+          jq -s '.' /tmp/fly-preserve/results.jsonl > /tmp/fly-preserve/encrypted/preservation-results.json
+          find /tmp/fly-preserve/encrypted -type f -name '*.enc' -print0 | xargs -0 -r sha256sum > /tmp/fly-preserve/encrypted/encrypted-files.sha256
+          jq -n --slurpfile apps /tmp/fly-preserve/apps.json --slurpfile metadata /tmp/fly-preserve/encrypted/app-metadata.json --slurpfile results /tmp/fly-preserve/encrypted/preservation-results.json '{
             capturedAt:(now|todate),
             appsDiscovered:($apps[0]|length),
-            volumeResults:$results[0],
+            appMetadata:$metadata[0],
+            results:$results[0],
+            encryptedArchivesCreated:([$results[0][]|select(.status=="encrypted_archive_created")]|length),
             snapshotRequestsSucceeded:([$results[0][]|select(.status=="snapshot_request_succeeded")]|length),
-            failures:([$results[0][]|select(.status!="snapshot_request_succeeded")]|length)
-          }' > /tmp/fly-preserve/report.json
-          cat /tmp/fly-preserve/report.json
+            failures:([$results[0][]|select(.status|test("failed|no_mount";"i"))]|length),
+            encryption:"AES-256-GCM; scrypt-derived key from SPMT_ADMIN_RECOVERY_KEY when configured, otherwise FLY_API_TOKEN"
+          }' > /tmp/fly-preserve/encrypted/report.json
+          cat /tmp/fly-preserve/encrypted/report.json
 
-      - name: Retain sanitized preservation report
+      - name: Upload encrypted recovery archives for core apps
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fly-all-app-volume-preservation
-          path: /tmp/fly-preserve/report.json
-          retention-days: 30
+          name: fly-recovery-core-apps
+          path: |
+            /tmp/fly-preserve/encrypted/spmt-live-*.enc
+            /tmp/fly-preserve/encrypted/hearmeout-main-*.enc
+            /tmp/fly-preserve/encrypted/streamweaver-new-*.enc
+            /tmp/fly-preserve/encrypted/chat-tag-new-*.enc
+            /tmp/fly-preserve/encrypted/discord-stream-hub-new-*.enc
+            /tmp/fly-preserve/encrypted/spacemountain-live-*.enc
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload encrypted recovery archives for workers and Rotator
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-recovery-workers
+          path: |
+            /tmp/fly-preserve/encrypted/hmo-dj-worker-*.enc
+            /tmp/fly-preserve/encrypted/chat-tag-bot-new-*.enc
+            /tmp/fly-preserve/encrypted/dsh-clip-worker-*.enc
+            /tmp/fly-preserve/encrypted/mtman-machine-rotator-*.enc
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload preservation report and hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-recovery-manifest
+          path: |
+            /tmp/fly-preserve/encrypted/report.json
+            /tmp/fly-preserve/encrypted/encrypted-files.sha256
+            /tmp/fly-preserve/encrypted/app-metadata.json
+            /tmp/fly-preserve/encrypted/preservation-results.json
+          retention-days: 90
           if-no-files-found: warn
