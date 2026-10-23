@@ -1651,7 +1651,7 @@ export default function App() {
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={askStreamWeaverVoiceCommander}>
                     <Text style={styles.secondaryButtonText}>Send typed command</Text>
                   </Pressable>
-                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")}>
+                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_discord_live_members", "Who is live in the connected Discord community?")}>
                     <Text style={styles.secondaryButtonText}>Who's live?</Text>
                   </Pressable>
                   <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_spmt_live", "Who is active in Chat-Tag?")}>
