@@ -184,7 +184,35 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
   const body = await response.json().catch(() => ({})) as { choices?: Array<{ message?: { content?: unknown } }>; error?: unknown };
   if (!response.ok) throw new Error(`Qwen Coder HTTP ${response.status}: ${redact(JSON.stringify(body))}`);
   const content = String(body.choices?.[0]?.message?.content || "").trim();
-  const result = parseQwenCoderResult(content);
+  let result = parseQwenCoderResult(content);
+  if (!result.patch) {
+    const retryContext = await buildRepositoryContext(
+      `Focused repair retry. The first coder response returned no patch. Incident/task: ${description}. First response: ${result.summary}. Inspect the actual failing code path and tests; return a concrete unified diff if a code fix is supported. If not, state the exact evidence and blocker.`,
+      workspace,
+    );
+    const retryResponse = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(5 * 60_000),
+      body: JSON.stringify({
+        model: String(env.SPMT_LLM_MODEL || "spmt-qwen3-4b"),
+        temperature: 0.1,
+        thinking_budget_tokens: 0,
+        max_tokens: 4000,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: `You are Stella Coder. The previous answer produced no patch. Continue investigating and return strict JSON only: {"summary":"evidence-based diagnosis","patch":"unified git diff or empty string"}. Do not claim tests ran. Never invent files or APIs. Patch paths must be repository-relative.` },
+          { role: "user", content: `Task:\n${description}\n\nFirst response:\n${result.summary}\n\nRepository source:\n${retryContext}\n\n/no_think` },
+        ],
+      }),
+    });
+    const retryBody = await retryResponse.json().catch(() => ({})) as { choices?: Array<{ message?: { content?: unknown } }>; error?: unknown };
+    if (!retryResponse.ok) throw new Error(`Qwen no-patch retry HTTP ${retryResponse.status}: ${redact(JSON.stringify(retryBody))}`);
+    const retryContent = String(retryBody.choices?.[0]?.message?.content || "").trim();
+    const retryResult = parseQwenCoderResult(retryContent);
+    if (!retryResult.patch) throw new Error(`NO_PATCH_AFTER_REPAIR_RETRY: Qwen returned no patch after two attempts. Diagnosis: ${retryResult.summary.slice(0, 5000)}`);
+    result = { ...retryResult, summary: `No-op response detected; focused retry produced a patch. ${retryResult.summary}` };
+  }
   return applyCoderResult(result, workspace, env);
 }
 
@@ -252,10 +280,33 @@ async function runCodexWorkspaceCoder(
     approvalPolicy: "never",
   });
   const prompt = `${STELLA_CODE_PROMPT}\n\nAssigned repository: ${repo.label}\nPublic report: ${description.slice(0, 4000)}\nContext JSON: ${JSON.stringify(inputContext || {}).slice(0, 6000)}`;
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(10 * 60_000) });
+  let turn = await thread.run(prompt, { signal: AbortSignal.timeout(10 * 60_000) });
+  let summary = redact(turn.finalResponse || "Codex completed without a final response.");
+  let status = await execFileAsync("git", ["status", "--porcelain"], { cwd: workspace, timeout: 30_000 });
+  if (!status.stdout.trim()) {
+    // A no-op answer is not a repair. Keep the same repository and thread, give
+    // the agent the first response as evidence, and require one focused follow-up.
+    const retryPrompt = [
+      "Your previous response produced NO working-tree changes. This is not a validated repair.",
+      "Continue investigating the assigned incident instead of stopping after a high-level inspection.",
+      "Search the relevant handler, authentication/caller path, configuration, and regression tests in this checkout.",
+      "Use the supplied error and timestamp context to connect the symptom to a concrete code path.",
+      "If the repository supports a code fix, implement it now and add a focused regression test.",
+      "If you conclude no code change is justified, provide the exact files/functions inspected, the evidence proving the issue is runtime/configuration-only, and the single next check needed. Do not claim that a repair was made.",
+      "First response for context:",
+      summary,
+    ].join("\n\n");
+    turn = await thread.run(retryPrompt, { signal: AbortSignal.timeout(10 * 60_000) });
+    summary = redact(turn.finalResponse || "Codex retry completed without a final response.");
+    status = await execFileAsync("git", ["status", "--porcelain"], { cwd: workspace, timeout: 30_000 });
+    if (!status.stdout.trim()) {
+      throw new Error(`NO_PATCH_AFTER_REPAIR_RETRY: Codex made no source changes after two investigation turns. First response: ${summary.slice(0, 5000)}`);
+    }
+    summary = `No-op response detected; a second focused repair attempt produced working-tree changes. ${summary}`;
+  }
   return {
     threadId: thread.id || undefined,
-    summary: redact(turn.finalResponse || "Codex completed without a final response."),
+    summary,
   };
 }
 function minimalCodexEnv(env: NodeJS.ProcessEnv, dataDir: string): Record<string, string> {
@@ -378,7 +429,19 @@ async function executeJob(job: PublicCodexJob, input: CreateJobInput, repo: Repo
       if (!decoded || typeof decoded !== "object" || typeof (decoded as any).summary !== "string" || typeof (decoded as any).patch !== "string") {
         throw new Error("Free Gemini Coder result schema invalid.");
       }
-      const result = parseQwenCoderResult(content);
+      let result = parseQwenCoderResult(content);
+      if (!result.patch) {
+        const retryContent = await generateFreeGeminiCode(env, description, context, freePolicy, publicCommit, undefined,
+          `Your first response returned an empty patch. This is not a completed repair. Investigate the exact error/call path and related tests in the supplied source. Return a concrete unified diff if a code fix is supported. First diagnosis: ${result.summary.slice(0, 5000)}`);
+        let retryDecoded: unknown;
+        try { retryDecoded = JSON.parse(retryContent); } catch { throw new Error("Free Gemini no-patch retry returned invalid JSON."); }
+        if (!retryDecoded || typeof retryDecoded !== "object" || typeof (retryDecoded as any).summary !== "string" || typeof (retryDecoded as any).patch !== "string") {
+          throw new Error("Free Gemini no-patch retry returned an invalid schema.");
+        }
+        const retryResult = parseQwenCoderResult(retryContent);
+        if (!retryResult.patch) throw new Error(`NO_PATCH_AFTER_REPAIR_RETRY: Free Gemini returned no patch after two attempts. Diagnosis: ${retryResult.summary.slice(0, 5000)}`);
+        result = { ...retryResult, summary: `No-op response detected; focused retry produced a patch. ${retryResult.summary}` };
+      }
       try {
         job.summary = await applyCoderResult(result, workspace, env, job.id, 1);
       } catch (error) {
