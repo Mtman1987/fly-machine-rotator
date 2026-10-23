@@ -295,5 +295,19 @@ await patch('mobile/App.tsx', (source) => {
       '        }',
     ]), 'HearMeOut room auto-open');
   }
+  const stalePeerCommand = '              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_voice_peers", "Who is in the HearMeOut room?")}><Text style={styles.secondaryButtonText}>HearMeOut room peers</Text></Pressable>\n';
+  source = source.replace(stalePeerCommand, "");
+  source = source.replace('              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_request", voicePrompt || "Request a watch party item")}><Text style={styles.secondaryButtonText}>Request watch item</Text></Pressable>\n', "");
+  source = source.replace('              <Pressable style={styles.secondaryButton} onPress={() => runCommand("cmd_hearmeout_watch_control", voicePrompt || "play")}><Text style={styles.secondaryButtonText}>Control watch party</Text></Pressable>\n', "");
+  source = source.replace('runCommand("cmd_chat_tag_live_members", "Who is live in Chat-Tag?")', 'runCommand("cmd_discord_live_members", "Who is live in the connected Discord community?")');
+  const liveMembersButton = '                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_discord_live_members", "Who is live in the connected Discord community?")}>\n                    <Text style={styles.secondaryButtonText}>Who\'s live?</Text>\n                  </Pressable>';
+  if (source.includes(liveMembersButton) && !source.includes('cmd_chat_tag_spmt_live')) {
+    source = insertAfter(source, liveMembersButton, block([
+      '                  <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={() => runCommand("cmd_chat_tag_spmt_live", "Who is active in Chat-Tag?")}>',
+      '                    <Text style={styles.secondaryButtonText}>Who is active in Chat-Tag?</Text>',
+      '                  </Pressable>',
+    ]), "Chat-Tag SPMT live command");
+  }
+
   return source;
 }, true);
