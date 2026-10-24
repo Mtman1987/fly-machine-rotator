@@ -61,7 +61,7 @@ jobs:
             esac
             echo "::group::Forking $source in $app"
             set +e
-            output="$(timeout 240s flyctl volumes fork "$source" -a "$app" --yes 2>&1)"
+            output="$(timeout 240s flyctl volumes fork "$source" -a "$app" --name recovery_copy --yes 2>&1)"
             rc=$?
             set -e
             printf '%s\n' "$output"
