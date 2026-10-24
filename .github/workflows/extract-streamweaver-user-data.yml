@@ -1,0 +1,82 @@
+name: Extract StreamWeaver persistent user data directly
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/extract-streamweaver-user-data.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extract-streamweaver-user-data
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Extract persistent data files
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          app=streamweaver-new
+          machine=080e967ea95558
+          mkdir -p recovered/streamweaver logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+          # Only user/runtime state, stats, configuration and command/action definitions.
+          # Do not pull token directories or movie/music media.
+          remote_cmd="find /data/runtime/data /data/runtime/MasterStats /data/runtime/config /data/runtime/commands /data/runtime/actions /data/runtime/global -type f -size -100M -print 2>/dev/null > /tmp/sw-recovery-files.txt; wc -l /tmp/sw-recovery-files.txt"
+          if ! timeout 45s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c '$remote_cmd'" --quiet </dev/null > logs/list-command.out 2> logs/list-command.err; then
+            cat logs/list-command.err
+            exit 1
+          fi
+          if ! timeout 90s flyctl ssh sftp get /tmp/sw-recovery-files.txt recovered/streamweaver/remote-files.txt --app "$app" --machine "$machine" --quiet </dev/null > logs/list-download.out 2> logs/list-download.err; then
+            cat logs/list-download.err
+            exit 1
+          fi
+          count=0; failures=0
+          while IFS= read -r remote; do
+            [ -n "$remote" ] || continue
+            case "$remote" in /data/runtime/*) ;; *) echo "SKIP unexpected path $remote" >> logs/skipped.log; continue ;; esac
+            rel="${remote#/data/runtime/}"
+            dest="recovered/streamweaver/runtime/$rel"
+            mkdir -p "$(dirname "$dest")"
+            if timeout 90s flyctl ssh sftp get "$remote" "$dest" --app "$app" --machine "$machine" --quiet </dev/null > "logs/file-$count.out" 2> "logs/file-$count.err"; then
+              if [ -s "$dest" ]; then sha256sum "$dest" >> recovered/streamweaver/SHA256SUMS; fi
+            else
+              echo "$remote" >> recovered/streamweaver/failed-files.txt
+              cat "logs/file-$count.err" >> logs/failures.log || true
+              failures=$((failures+1))
+            fi
+            count=$((count+1))
+          done < recovered/streamweaver/remote-files.txt
+          find recovered/streamweaver/runtime -type f -printf '%s %p\n' | sort -nr > recovered/streamweaver/file-sizes.txt
+          {
+            echo "app=$app"
+            echo "machine=$machine"
+            echo "remote_files_listed=$(wc -l < recovered/streamweaver/remote-files.txt)"
+            echo "files_attempted=$count"
+            echo "files_failed=$failures"
+            echo "files_downloaded=$(find recovered/streamweaver/runtime -type f | wc -l)"
+            echo "captured_at=$(date -u +%FT%TZ)"
+          } > recovered/streamweaver/RECOVERY-REPORT.txt
+          cat recovered/streamweaver/RECOVERY-REPORT.txt
+          [ "$count" -gt 0 ] && [ "$failures" -eq 0 ]
+      - name: Upload StreamWeaver state files immediately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: streamweaver-user-data-${{ github.run_id }}
+          path: |
+            recovered/streamweaver/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
