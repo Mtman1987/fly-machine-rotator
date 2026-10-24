@@ -1,0 +1,97 @@
+name: Inventory user-data recovery targets
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Inventory likely user-data sources (no data copied)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/user-data-inventory
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo '{"status":"blocked","reason":"Fly access token secret missing"}' > /tmp/user-data-inventory/report.json
+            exit 1
+          fi
+          if ! timeout 20s flyctl apps list --json > /tmp/user-data-inventory/apps.json 2>/tmp/user-data-inventory/apps.err; then
+            echo '{"status":"blocked","stage":"apps_list"}' > /tmp/user-data-inventory/report.json
+            exit 1
+          fi
+          jq -e 'type=="array"' /tmp/user-data-inventory/apps.json >/dev/null || { echo '{"status":"blocked","reason":"Invalid app list"}' > /tmp/user-data-inventory/report.json; exit 1; }
+          : > /tmp/user-data-inventory/results.jsonl
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
+            if ! timeout 15s flyctl machines list --app "$app" --json > "/tmp/user-data-inventory/machines-$safe_app.json" 2>/dev/null; then
+              jq -nc --arg app "$safe_app" '{app:$app,status:"machine_inventory_failed"}' >> /tmp/user-data-inventory/results.jsonl
+              continue
+            fi
+            while IFS= read -r row; do
+              machine="$(printf '%s' "$row" | jq -r '.id // empty')"
+              state="$(printf '%s' "$row" | jq -r '.state // "unknown"')"
+              mounts="$(printf '%s' "$row" | jq -c '.config.mounts // []')"
+              [ -n "$machine" ] || continue
+              mount_paths="$(printf '%s' "$mounts" | jq -r '.[] | [.path // "", .volume // "", .name // ""] | @tsv')"
+              if [ "$state" != "started" ]; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" '{app:$app,machine:$machine,state:$state,mounts:$mounts,status:"mounts_catalogued_machine_not_running; filesystem_not_inspected"}' >> /tmp/user-data-inventory/results.jsonl
+                continue
+              fi
+              # Inspect names/extensions and sizes only. Never read file contents or environment variable values.
+              mount_roots="$(printf '%s\n' "$mount_paths" | cut -f1 | grep -E '^/[A-Za-z0-9._/-]+$' | tr '\n' ' ' || true)"
+              cmd='for root in "$@"; do
+                [ -d "$root" ] || continue
+                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\t%s\n" 2>/dev/null
+              done
+              printf "DB_ENV_KEYS\n"
+              env | cut -d= -f1 | grep -Ei "DATABASE|POSTGRES|MYSQL|MONGO|REDIS|SQLITE|PRISMA|DRIZZLE" | sort -u || true'
+              encoded="$(printf '%s' "$cmd" | base64 -w0)"
+              output="$(timeout 25s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d | sh -s -- /data /app/data /var/lib /home/node/.config $mount_roots" --quiet </dev/null 2>/dev/null || true)"
+              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg inventory "$output" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:(if $inventory=="" then "filesystem_inventory_failed_or_empty" else "inventory_complete" end)}' >> /tmp/user-data-inventory/results.jsonl
+            done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown"),config:(.config // {}),mounts:(.config.mounts // [])}' "/tmp/user-data-inventory/machines-$safe_app.json")
+          done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' /tmp/user-data-inventory/apps.json)
+          jq -s '{generatedAt:(now|todate),purpose:"Inventory only; no files copied; no secret values recorded",results:.}' /tmp/user-data-inventory/results.jsonl > /tmp/user-data-inventory/report.json
+          cat /tmp/user-data-inventory/report.json
+
+      - name: Upload user-data inventory report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: user-data-recovery-inventory
+          path: /tmp/user-data-inventory/report.json
+          retention-days: 30
+          if-no-files-found: warn
+ | tr '\n' ' ' || true)"
+              cmd="for root in /data /app/data /var/lib /home/node/.config $mount_roots; do
+                [ -d "$root" ] || continue
+                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\t%s\n" 2>/dev/null
+              done
+              printf "DB_ENV_KEYS\n"
+              env | cut -d= -f1 | grep -Ei "DATABASE|POSTGRES|MYSQL|MONGO|REDIS|SQLITE|PRISMA|DRIZZLE" | sort -u || true'
+              encoded="$(printf '%s' "$cmd" | base64 -w0)"
+              output="$(timeout 25s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d | sh" --quiet </dev/null 2>/dev/null || true)"
+              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg inventory "$output" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:(if $inventory=="" then "filesystem_inventory_failed_or_empty" else "inventory_complete" end)}' >> /tmp/user-data-inventory/results.jsonl
+            done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown"),config:(.config // {}),mounts:(.config.mounts // [])}' "/tmp/user-data-inventory/machines-$safe_app.json")
+          done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' /tmp/user-data-inventory/apps.json)
+          jq -s '{generatedAt:(now|todate),purpose:"Inventory only; no files copied; no secret values recorded",results:.}' /tmp/user-data-inventory/results.jsonl > /tmp/user-data-inventory/report.json
+          cat /tmp/user-data-inventory/report.json
+
+      - name: Upload user-data inventory report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: user-data-recovery-inventory
+          path: /tmp/user-data-inventory/report.json
+          retention-days: 30
+          if-no-files-found: warn
