@@ -1,6 +1,10 @@
 name: Preserve recovery volumes from Fly snapshots
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/preserve-fly-snapshot-volumes.yml"
   workflow_dispatch:
     inputs:
       snapshot_jobs:
