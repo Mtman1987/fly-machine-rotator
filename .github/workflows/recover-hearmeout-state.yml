@@ -46,9 +46,14 @@ jobs:
             [ -f "$f" ] && printf '%s\\n' "$f" >> /tmp/hearmeout-files.txt
           done
           sort -u /tmp/hearmeout-files.txt -o /tmp/hearmeout-files.txt
+          echo "remote_file_count=$(wc -l < /tmp/hearmeout-files.txt)"
+          cat /tmp/hearmeout-files.txt
+          if [ ! -s /tmp/hearmeout-files.txt ]; then echo "NO_FILES" > /tmp/hearmeout-status.txt; exit 22; fi
           tar -czf /tmp/hearmeout-state.tar.gz -T /tmp/hearmeout-files.txt
           tar -tzf /tmp/hearmeout-state.tar.gz > /tmp/hearmeout-file-list.txt
+          if [ ! -s /tmp/hearmeout-file-list.txt ]; then echo "EMPTY_ARCHIVE" > /tmp/hearmeout-status.txt; exit 23; fi
           echo "files=$(wc -l < /tmp/hearmeout-file-list.txt)" > /tmp/hearmeout-status.txt
+          cat /tmp/hearmeout-file-list.txt
           REMOTE
           encoded="$(base64 -w0 /tmp/hearmeout-recovery.sh)"
           if ! timeout 60s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/hearmeout-recovery.sh; sh /tmp/hearmeout-recovery.sh'" --quiet </dev/null > logs/remote-command.out 2> logs/remote-command.err; then
@@ -60,9 +65,16 @@ jobs:
               echo "FAILED $remote" >> recovered/hearmeout/failed-files.txt
             fi
           done
+          cat logs/remote-command.out || true
+          cat logs/hearmeout-file-list.txt.out 2>/dev/null || true
           if [ -s recovered/hearmeout/hearmeout-state.tar.gz ]; then
-            tar -tzf recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/ARCHIVE-CONTENTS.txt
-            sha256sum recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/SHA256SUMS
+            if tar -tzf recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/ARCHIVE-CONTENTS.txt && [ -s recovered/hearmeout/ARCHIVE-CONTENTS.txt ]; then
+              sha256sum recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/SHA256SUMS
+            else
+              echo "Downloaded archive is empty or invalid" > recovered/hearmeout/ARCHIVE-WARNING.txt
+            fi
+          else
+            echo "State archive was not downloaded" > recovered/hearmeout/ARCHIVE-WARNING.txt
           fi
           if ! command -v sqlite3 >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; fi
           if [ -s recovered/hearmeout/hearmeout-state.tar.gz ] && command -v sqlite3 >/dev/null 2>&1; then
@@ -81,7 +93,7 @@ jobs:
             echo "media_included=no"
           } > recovered/hearmeout/RECOVERY-REPORT.txt
           cat recovered/hearmeout/RECOVERY-REPORT.txt
-          [ -s recovered/hearmeout/hearmeout-state.tar.gz ]
+          [ -s recovered/hearmeout/hearmeout-state.tar.gz ] && [ -s recovered/hearmeout/ARCHIVE-CONTENTS.txt ]
       - name: Upload HearMeOut state without media
         if: always()
         uses: actions/upload-artifact@v4
