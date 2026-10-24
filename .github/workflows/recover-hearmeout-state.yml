@@ -1,0 +1,94 @@
+name: Recover HearMeOut state without media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-hearmeout-state.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-hearmeout-state
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Recover small user/configuration state only
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          APP=hearmeout-main
+          MACHINE=d8d17d6c7e5068
+          mkdir -p recovered/hearmeout/data recovered/hearmeout/recovery recovered/hearmeout/backups logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+          echo "Source: $APP / $MACHINE / volume vol_4m32y1839o9q7edv" > recovered/hearmeout/TARGET.txt
+          cat > /tmp/hearmeout-recovery.sh <<'REMOTE'
+          set -u
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 /data/app.db ".backup /tmp/hearmeout-app.db" && echo SQLITE_BACKUP_OK
+          elif command -v python3 >/dev/null 2>&1; then
+            python3 -c "import sqlite3; s=sqlite3.connect('file:/data/app.db?mode=ro',uri=True); d=sqlite3.connect('/tmp/hearmeout-app.db'); s.backup(d); d.close(); s.close(); print('SQLITE_BACKUP_OK')"
+          else
+            echo SQLITE_BACKUP_TOOL_MISSING
+          fi
+          : > /tmp/hearmeout-files.txt
+          for f in /tmp/hearmeout-app.db /data/watch-state.json /data/app.db /data/discord-reply-cleanup.json /data/backups/reset-20260701T091157Z/watch-state.json /data/recovery/apollo-hmo-2026-08-30T18-12-42-898Z.db /data/recovery/apollo-hmo-2026-09-12T21-28-36-442Z.db; do
+            [ -f "$f" ] && printf '%s\\n' "$f" >> /tmp/hearmeout-files.txt
+          done
+          sort -u /tmp/hearmeout-files.txt -o /tmp/hearmeout-files.txt
+          tar -czf /tmp/hearmeout-state.tar.gz -T /tmp/hearmeout-files.txt
+          tar -tzf /tmp/hearmeout-state.tar.gz > /tmp/hearmeout-file-list.txt
+          echo "files=$(wc -l < /tmp/hearmeout-file-list.txt)" > /tmp/hearmeout-status.txt
+          REMOTE
+          encoded="$(base64 -w0 /tmp/hearmeout-recovery.sh)"
+          if ! timeout 60s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/hearmeout-recovery.sh; sh /tmp/hearmeout-recovery.sh'" --quiet </dev/null > logs/remote-command.out 2> logs/remote-command.err; then
+            cat logs/remote-command.err; exit 1
+          fi
+          for remote in /tmp/hearmeout-state.tar.gz /tmp/hearmeout-file-list.txt /tmp/hearmeout-status.txt; do
+            dest="recovered/hearmeout/$(basename "$remote")"
+            if ! timeout 180s flyctl ssh sftp get "$remote" "$dest" --app "$APP" --machine "$MACHINE" --quiet </dev/null > "logs/$(basename "$remote").out" 2> "logs/$(basename "$remote").err"; then
+              echo "FAILED $remote" >> recovered/hearmeout/failed-files.txt
+            fi
+          done
+          if [ -s recovered/hearmeout/hearmeout-state.tar.gz ]; then
+            tar -tzf recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/ARCHIVE-CONTENTS.txt
+            sha256sum recovered/hearmeout/hearmeout-state.tar.gz > recovered/hearmeout/SHA256SUMS
+          fi
+          if ! command -v sqlite3 >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; fi
+          if [ -s recovered/hearmeout/hearmeout-state.tar.gz ] && command -v sqlite3 >/dev/null 2>&1; then
+            mkdir -p /tmp/hearmeout-check
+            tar -xzf recovered/hearmeout/hearmeout-state.tar.gz -C /tmp/hearmeout-check
+            if [ -s /tmp/hearmeout-check/tmp/hearmeout-app.db ]; then
+              sqlite3 /tmp/hearmeout-check/tmp/hearmeout-app.db 'PRAGMA integrity_check;' > recovered/hearmeout/SQLITE-INTEGRITY.txt 2>&1 || true
+              cat recovered/hearmeout/SQLITE-INTEGRITY.txt
+            fi
+          fi
+          {
+            echo "app=$APP"
+            echo "machine=$MACHINE"
+            echo "archive_files=$(wc -l < recovered/hearmeout/ARCHIVE-CONTENTS.txt 2>/dev/null || echo 0)"
+            echo "captured_at=$(date -u +%FT%TZ)"
+            echo "media_included=no"
+          } > recovered/hearmeout/RECOVERY-REPORT.txt
+          cat recovered/hearmeout/RECOVERY-REPORT.txt
+          [ -s recovered/hearmeout/hearmeout-state.tar.gz ]
+      - name: Upload HearMeOut state without media
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hearmeout-state-no-media-${{ github.run_id }}
+          path: |
+            recovered/hearmeout/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
