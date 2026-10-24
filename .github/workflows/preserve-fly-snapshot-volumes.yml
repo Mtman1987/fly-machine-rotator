@@ -40,6 +40,9 @@ jobs:
             echo "::error::Missing FLY_API_TOKEN_MAIN / FLY_API_TOKEN secret."
             exit 1
           fi
+          if [ -z "${SNAPSHOT_JOBS:-}" ]; then
+            SNAPSHOT_JOBS="chat-tag-new|vs_BZZ50vG48YVte4jZoLP|1|chat-tag-recovery-20261024"
+          fi
           mkdir -p results
           printf 'app\tsnapshot_id\tsize_gb\tvolume_name\tresult\tdetail\n' > results/volume-preservation.tsv
           failures=0
