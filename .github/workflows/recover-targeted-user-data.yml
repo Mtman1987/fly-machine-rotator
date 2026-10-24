@@ -1,0 +1,177 @@
+name: Recover targeted user data with retries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-targeted-user-data.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: targeted-user-data-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Validate credentials and discover apps
+        shell: bash
+        env:
+          FLY_API_TOKEN: \${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+          RECOVERY_KEY: \${{ secrets.SPMT_ADMIN_RECOVERY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/targeted-recovery/{encrypted,logs,raw}
+          if [ -z "$FLY_API_TOKEN" ]; then echo "Fly token missing" > /tmp/targeted-recovery/logs/preflight.log; exit 1; fi
+          if [ -z "$RECOVERY_KEY" ]; then echo "SPMT_ADMIN_RECOVERY_KEY missing; refusing to encrypt with the Fly token" > /tmp/targeted-recovery/logs/preflight.log; exit 1; fi
+          if ! timeout 30s flyctl apps list --json > /tmp/targeted-recovery/apps.json 2>/tmp/targeted-recovery/logs/apps-list.err; then
+            echo "apps list failed; see apps-list.err" > /tmp/targeted-recovery/logs/preflight.log
+            exit 1
+          fi
+          jq -e 'type=="array"' /tmp/targeted-recovery/apps.json >/dev/null
+          echo "Preflight passed; stopped/suspended machines will not be started." > /tmp/targeted-recovery/logs/preflight.log
+
+      - name: Recover each started machine independently (up to 3 attempts)
+        shell: bash
+        env:
+          FLY_API_TOKEN: \${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+          RECOVERY_KEY: \${{ secrets.SPMT_ADMIN_RECOVERY_KEY }}
+        run: |
+          set -uo pipefail
+          base=/tmp/targeted-recovery
+          : > "$base/results.jsonl"
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
+            machines="$base/raw/machines-$safe_app.json"
+            if ! timeout 25s flyctl machines list --app "$app" --json > "$machines" 2> "$base/logs/machines-$safe_app.err"; then
+              jq -nc --arg app "$safe_app" --arg error "$(head -c 1000 "$base/logs/machines-$safe_app.err" | tr '\n' ' ')" '{app:$app,status:"machine_inventory_failed",error:$error,attempts:1}' >> "$base/results.jsonl"
+              continue
+            fi
+            while IFS= read -r row; do
+              machine="$(printf '%s' "$row" | jq -r '.id // empty')"
+              state="$(printf '%s' "$row" | jq -r '.state // "unknown"')"
+              [ -n "$machine" ] || continue
+              if [ "$state" != "started" ]; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" '{app:$app,machine:$machine,state:$state,status:"skipped_not_started_no_machine_mutation",attempts:0}' >> "$base/results.jsonl"
+                continue
+              fi
+              success=0
+              reason=unknown
+              for attempt in 1 2 3; do
+                tag="$safe_app-$machine-attempt-$attempt"
+                remote="/tmp/user-data-$machine.tar.gz"
+                list="/tmp/user-data-$machine.files"
+                status="/tmp/user-data-$machine.status"
+                rlog="/tmp/user-data-$machine.log"
+                local_archive="$base/raw/$tag.tar.gz"
+                local_files="$base/raw/$tag.files.txt"
+                local_err="$base/logs/$tag.err"
+                echo "BEGIN app=$safe_app machine=$machine attempt=$attempt" > "$base/logs/$tag.log"
+                script='set -u
+                  list="'"$list"'"
+                  : > "$list"
+                  for root in /data /app/data /var/lib /home/node/.config; do
+                    [ -d "$root" ] || continue
+                    find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*thumbnail*" -o -iname "*node_modules*" \) -prune -o -type f \( -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -print >> "$list" 2>/dev/null || true
+                  done
+                  sort -u "$list" -o "$list"
+                  if [ ! -s "$list" ]; then echo no_candidate_files > "'"$status"'"; exit 22; fi
+                  tar -czf "'"$remote"'" -T "$list" 2>"'"$rlog"'"
+                  rc=$?
+                  echo "$rc" > "'"$status"'"
+                  exit "$rc"'
+                encoded="$(printf '%s' "$script" | base64 -w0)"
+                if ! timeout 120s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d > /tmp/user-data-$machine.sh; sh /tmp/user-data-$machine.sh" --quiet </dev/null > "$base/raw/$tag.launch.out" 2> "$local_err"; then
+                  reason=remote_archive_launch_failed
+                  echo "stage=launch error=$(head -c 800 "$local_err" | tr '\n' ' ')" >> "$base/logs/$tag.log"
+                else
+                  remote_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "cat $status 2>/dev/null || echo missing" --quiet </dev/null 2>>"$local_err" | tail -n 1 | tr -cd 'A-Za-z0-9_-')"
+                  if [ "$remote_status" != "0" ]; then
+                    reason="remote_archive_exit_$remote_status"
+                    diag="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "tail -c 1000 $rlog 2>/dev/null || true" --quiet </dev/null 2>>"$local_err" | tr '\n' ' ' || true)"
+                    echo "stage=archive status=$remote_status diagnostic=$diag" >> "$base/logs/$tag.log"
+                  elif ! timeout 600s flyctl ssh sftp get "$remote" "$local_archive" --app "$app" --machine "$machine" --quiet </dev/null > "$base/raw/$tag.sftp.out" 2> "$local_err"; then
+                    reason=download_failed
+                    echo "stage=download error=$(head -c 800 "$local_err" | tr '\n' ' ')" >> "$base/logs/$tag.log"
+                  elif ! tar -tzf "$local_archive" > "$local_files" 2> "$base/logs/$tag.integrity.err"; then
+                    reason=archive_integrity_check_failed
+                    echo "stage=integrity error=$(head -c 800 "$base/logs/$tag.integrity.err" | tr '\n' ' ')" >> "$base/logs/$tag.log"
+                  elif ! node - "$local_archive" "$base/encrypted/$safe_app-$machine.tar.gz.enc" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const { pipeline } = require('node:stream/promises');
+          (async () => {
+            const [src, dst] = process.argv.slice(2);
+            const pass = process.env.RECOVERY_KEY;
+            if (!pass) throw new Error('SPMT_ADMIN_RECOVERY_KEY unavailable');
+            const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+            const key = crypto.scryptSync(pass, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+            const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+            const out = fs.createWriteStream(dst, { mode: 0o600 });
+            out.write(Buffer.concat([Buffer.from('SPMTFLY1'), salt, iv]));
+            await pipeline(fs.createReadStream(src), cipher, out);
+            fs.appendFileSync(dst, cipher.getAuthTag());
+            fs.unlinkSync(src);
+          })().catch(e => { process.stderr.write(String(e.message || e)); process.exitCode = 1; });
+          NODE
+                  then
+                    reason=encryption_failed
+                    echo "stage=encryption failed" >> "$base/logs/$tag.log"
+                  else
+                    enc="$base/encrypted/$safe_app-$machine.tar.gz.enc"
+                    sha="$(sha256sum "$enc" | awk '{print $1}')"
+                    bytes="$(stat -c '%s' "$enc")"
+                    files="$(wc -l < "$local_files" | tr -d ' ')"
+                    jq -nc --arg app "$safe_app" --arg machine "$machine" --arg file "$(basename "$enc")" --arg sha256 "$sha" --argjson bytes "$bytes" --argjson files "$files" --argjson attempts "$attempt" '{app:$app,machine:$machine,file:$file,sha256:$sha256,encrypted_bytes:$bytes,file_count:$files,attempts:$attempts,status:"encrypted_archive_created_integrity_checked"}' >> "$base/results.jsonl"
+                    echo "SUCCESS files=$files encrypted_bytes=$bytes sha256=$sha" >> "$base/logs/$tag.log"
+                    success=1
+                    timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "rm -f $remote $list $status $rlog /tmp/user-data-$machine.sh" --quiet </dev/null >/dev/null 2>&1 || true
+                    break
+                  fi
+                fi
+                if [ "$attempt" -lt 3 ]; then
+                  echo "RETRY next_attempt=$((attempt+1)) reason=$reason" | tee -a "$base/logs/$tag.log"
+                  sleep 3
+                fi
+              done
+              if [ "$success" -eq 0 ]; then
+                jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg reason "$reason" '{app:$app,machine:$machine,state:$state,status:"failed_after_retries",failure_reason:$reason,attempts:3}' >> "$base/results.jsonl"
+              fi
+            done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown")}' "$machines")
+          done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' "$base/apps.json")
+          jq -s '{capturedAt:(now|todate),purpose:"Targeted user-data files only; no stopped machines started; each machine retried independently",results:.}' "$base/results.jsonl" > "$base/report.json"
+          cat "$base/report.json"
+          if jq -e '.results | any(.status=="encrypted_archive_created_integrity_checked")' "$base/report.json" >/dev/null; then exit 0; fi
+          echo "No machine archive succeeded; see diagnostics artifact." >&2
+          exit 1
+
+      - name: Save successful encrypted archives
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-user-data-encrypted-\${{ github.run_id }}
+          path: /tmp/targeted-recovery/encrypted/*.enc
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Save report and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-user-data-diagnostics-\${{ github.run_id }}
+          path: |
+            /tmp/targeted-recovery/report.json
+            /tmp/targeted-recovery/results.jsonl
+            /tmp/targeted-recovery/logs/**
+            /tmp/targeted-recovery/raw/*.err
+          retention-days: 90
+          if-no-files-found: warn
