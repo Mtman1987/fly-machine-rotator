@@ -1,4 +1,5 @@
 name: Immediately remove current public recovery artifacts
+# Re-triggered after later recovery artifacts were published
 
 on:
   push:
