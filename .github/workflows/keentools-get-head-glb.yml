@@ -10,13 +10,12 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   get-head:
     runs-on: ubuntu-latest
     steps:
-      - name: Request GLB with one GET call
+      - name: Request GLB with ARKit facial blendshapes
         env:
           KEENTOOLS_API_KEY: ${{ secrets.KEENTOOLS_API_KEY }}
           AVATAR_ID: ${{ inputs.avatar_id }}
@@ -32,13 +31,13 @@ jobs:
             exit 1
           fi
 
-          # GLB is a single model file; do not request OBJ+texture ZIP.
+          # GLB is a single model file. ARKit requests 51 facial morph targets.
           status=$(curl --silent --show-error --location \
             --output head.glb \
             --write-out '%{http_code}' \
             --header "Authorization: Bearer ${KEENTOOLS_API_KEY}" \
             --header "Accept: model/gltf-binary, application/octet-stream" \
-            "https://api.keentools.io/v1/avatar/${AVATAR_ID}/get-3d-model?mesh_format=glb")
+            "https://api.keentools.io/v1/avatar/${AVATAR_ID}/get-3d-model?mesh_format=glb&blendshapes=arkit")
 
           if [[ "${status}" != "200" ]]; then
             echo "::error::KeenTools returned HTTP ${status}"
@@ -54,12 +53,12 @@ jobs:
             head -c 2000 head.glb
             exit 1
           fi
-          echo "Received GLB successfully ($(stat -c%s head.glb) bytes)."
+          echo "Received GLB with requested ARKit blendshapes ($(stat -c%s head.glb) bytes)."
 
       - name: Publish GLB as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: keentools-head-glb
+          name: keentools-head-glb-arkit
           path: head.glb
           if-no-files-found: error
           retention-days: 7
