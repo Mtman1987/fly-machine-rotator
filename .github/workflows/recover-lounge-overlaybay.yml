@@ -1,4 +1,4 @@
-name: Recover Lounge and OverlayBay state
+name: Recover Lounge state only
 on:
   push:
     branches: [main]
@@ -21,7 +21,7 @@ jobs:
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Recover Lounge and attempt OverlayBay state without media
+      - name: Recover Lounge state without media
         shell: bash
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
@@ -66,59 +66,8 @@ jobs:
             cat logs/lounge-command.err || true
           fi
 
-          # OverlayBay candidate: start the previously suspended machine only for bounded state extraction,
-          # archive small structured state/config files, then suspend it again.
-          APP=hmo-dj-worker
-          MACHINE=8eddd0ea753148
-          echo "OverlayBay candidate: $APP / $MACHINE (activity_data candidate)" | tee recovered/overlaybay/TARGET.txt
-          if timeout 60s flyctl machine start "$MACHINE" -a "$APP" > logs/overlaybay-start.out 2> logs/overlaybay-start.err; then
-            sleep 8
-            cat > /tmp/overlaybay-recovery.sh <<'REMOTE_OVERLAY'
-          set -u
-          mkdir -p /tmp/overlaybay-recovery
-          : > /tmp/overlaybay-recovery/files.txt
-          { echo "=== mount ==="; mount; echo "=== df ==="; df -h; echo "=== /data top-level ==="; ls -la /data 2>&1; echo "=== /data files ==="; find /data -xdev -maxdepth 4 -type f -printf "%s %p\\n" 2>/dev/null | head -n 500; } > /tmp/overlaybay-recovery/inventory.txt
-          cp /tmp/overlaybay-recovery/inventory.txt /tmp/overlaybay-inventory.txt
-          for root in /data /app/data /app/config /app/state /workspace/data /workspace/state /root/.config /srv /opt /mnt/data; do
-            [ -d "$root" ] || continue
-            find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" -o -iname "*node_modules*" -o -iname ".git" \) -prune -o -type f -size -100M \( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -print 2>/dev/null >> /tmp/overlaybay-recovery/files.txt || true
-          done
-          sort -u /tmp/overlaybay-recovery/files.txt -o /tmp/overlaybay-recovery/files.txt
-          sort -u /tmp/overlaybay-recovery/files.txt -o /tmp/overlaybay-recovery/files.txt
-          if [ ! -s /tmp/overlaybay-recovery/files.txt ]; then
-            tar -czf /tmp/overlaybay-state.tar.gz -C /tmp overlaybay-inventory.txt
-            echo "NO_STRUCTURED_STATE_FILES; inventory only" > /tmp/overlaybay-recovery/status
-          else
-            tar -czf /tmp/overlaybay-state.tar.gz -T /tmp/overlaybay-recovery/files.txt
-          fi
-          tar -tzf /tmp/overlaybay-state.tar.gz > /tmp/overlaybay-recovery/list.txt
-          echo "files=$(wc -l < /tmp/overlaybay-recovery/list.txt)" > /tmp/overlaybay-recovery/status
-          REMOTE_OVERLAY
-            encoded_overlay="$(base64 -w0 /tmp/overlaybay-recovery.sh)"
-            if timeout 60s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded_overlay | base64 -d > /tmp/overlaybay-recovery.sh; sh /tmp/overlaybay-recovery.sh'" --quiet </dev/null > logs/overlaybay-command.out 2> logs/overlaybay-command.err; then
-              if timeout 90s flyctl ssh sftp get /tmp/overlaybay-inventory.txt recovered/overlaybay/machine-inventory.txt --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/overlaybay-inventory-sftp.out 2> logs/overlaybay-inventory-sftp.err; then
-                echo "OverlayBay machine inventory:" 
-                head -n 250 recovered/overlaybay/machine-inventory.txt
-              else
-                echo "OverlayBay inventory text download failed."
-                cat logs/overlaybay-inventory-sftp.err || true
-              fi
-              if timeout 180s flyctl ssh sftp get /tmp/overlaybay-state.tar.gz recovered/overlaybay/overlaybay-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/overlaybay-sftp.out 2> logs/overlaybay-sftp.err; then
-                tar -tzf recovered/overlaybay/overlaybay-state.tar.gz > recovered/overlaybay/file-list.txt
-                sha256sum recovered/overlaybay/overlaybay-state.tar.gz > recovered/overlaybay/SHA256SUMS
-                echo "OverlayBay state archive downloaded and integrity-listed." | tee recovered/overlaybay/RESULT.txt
-              else
-                echo "OverlayBay archive created remotely, but download failed." | tee recovered/overlaybay/RESULT.txt
-              fi
-            else
-              echo "OverlayBay extraction failed; diagnostics retained." | tee recovered/overlaybay/RESULT.txt
-              cat logs/overlaybay-command.err || true
-            fi
-            timeout 45s flyctl machine suspend "$MACHINE" -a "$APP" > logs/overlaybay-suspend.out 2> logs/overlaybay-suspend.err || true
-          else
-            echo "Could not start OverlayBay candidate machine; preserved clone remains available for separate recovery mounting." | tee recovered/overlaybay/RESULT.txt
-            cat logs/overlaybay-start.err || true
-          fi
+          # OverlayBay is recovered separately from spmt-live.
+
 
           find recovered -type f -printf '%s %p\\n' | sort -nr > recovered/FILE-SIZES.txt
 
@@ -126,9 +75,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lounge-overlaybay-recovery-${{ github.run_id }}
+          name: lounge-state-recovery-${{ github.run_id }}
           path: |
-            recovered/**
-            logs/**
+            recovered/lounge/**
+            logs/lounge-*.out
+            logs/lounge-*.err
+            logs/lounge-sftp.*
           retention-days: 90
           if-no-files-found: warn
