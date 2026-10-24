@@ -1,0 +1,65 @@
+name: KeenTools - Get 3D Head (GLB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      avatar_id:
+        description: "Existing completed KeenTools avatar ID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  get-head:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request GLB with one GET call
+        env:
+          KEENTOOLS_API_KEY: ${{ secrets.KEENTOOLS_API_KEY }}
+          AVATAR_ID: ${{ inputs.avatar_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${KEENTOOLS_API_KEY}" ]]; then
+            echo "::error::Missing repository secret KEENTOOLS_API_KEY"
+            exit 1
+          fi
+          if [[ ! "${AVATAR_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::avatar_id contains unsupported characters"
+            exit 1
+          fi
+
+          # GLB is a single model file; do not request OBJ+texture ZIP.
+          status=$(curl --silent --show-error --location \
+            --output head.glb \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${KEENTOOLS_API_KEY}" \
+            --header "Accept: model/gltf-binary, application/octet-stream" \
+            "https://api.keentools.io/v1/avatar/${AVATAR_ID}/get-3d-model?mesh_format=glb")
+
+          if [[ "${status}" != "200" ]]; then
+            echo "::error::KeenTools returned HTTP ${status}"
+            if [[ -f head.glb ]]; then head -c 2000 head.glb; fi
+            exit 1
+          fi
+          if [[ ! -s head.glb ]]; then
+            echo "::error::KeenTools returned an empty model"
+            exit 1
+          fi
+          if [[ "$(head -c 4 head.glb)" != "glTF" ]]; then
+            echo "::error::Response was not a binary GLB; refusing to publish it as a model"
+            head -c 2000 head.glb
+            exit 1
+          fi
+          echo "Received GLB successfully ($(stat -c%s head.glb) bytes)."
+
+      - name: Publish GLB as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keentools-head-glb
+          path: head.glb
+          if-no-files-found: error
+          retention-days: 7
