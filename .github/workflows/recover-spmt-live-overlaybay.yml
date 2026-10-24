@@ -37,7 +37,7 @@ jobs:
           : > /tmp/overlaybay-files.txt
           [ -d /data/tenant-scenes ] && find /data/tenant-scenes -maxdepth 1 -type f -name '*.json' -size -20M -print >> /tmp/overlaybay-files.txt
           for f in /data/cloud-xbox-last.json /data/rotator-companion-scope-backup-20261009.json; do
-            [ -f "$f" ] && printf '%s\\n' "$f" >> /tmp/overlaybay-files.txt
+            [ -f "$f" ] && printf '%s\n' "$f" >> /tmp/overlaybay-files.txt
           done
           [ -d /data/backups ] && find /data/backups -maxdepth 1 -type f -name '*.json' -size -20M -print >> /tmp/overlaybay-files.txt
           sort -u /tmp/overlaybay-files.txt -o /tmp/overlaybay-files.txt
