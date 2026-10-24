@@ -1,12 +1,16 @@
 name: Build Recovery Bundle
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-recovery-bundle.yml"
   workflow_dispatch:
     inputs:
       run_ids:
         description: "Comma-separated GitHub Actions run IDs to include (defaults to the known recovery runs)"
         required: false
-        default: "40091621310,40092188524,40092238479,40092499877,40092586580"
+        default: "40091621310,40092188524,40092238479,40098103035,40098643413,40098277039,40098604310,40098384843"
         type: string
 
 permissions:
