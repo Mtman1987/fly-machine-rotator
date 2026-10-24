@@ -49,12 +49,12 @@ jobs:
                 continue
               fi
               # Inspect names/extensions and sizes only. Never read file contents or environment variable values.
-              mount_roots="$(printf '%s\\n' "$mount_paths" | cut -f1 | grep -E '^/[A-Za-z0-9._/-]+$' | tr '\\n' ' ' || true)"
+              mount_roots="$(printf '%s\n' "$mount_paths" | cut -f1 | grep -E '^/[A-Za-z0-9._/-]+$' | tr '\n' ' ' || true)"
               cmd='for root in "$@"; do
                 [ -d "$root" ] || continue
-                find "$root" -xdev -type d \\( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \\) -prune -o -type f \\( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \\) -printf "%p\\t%s\\n" 2>/dev/null
+                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\t%s\n" 2>/dev/null
               done
-              printf "DB_ENV_KEYS\\n"
+              printf "DB_ENV_KEYS\n"
               env | cut -d= -f1 | grep -Ei "DATABASE|POSTGRES|MYSQL|MONGO|REDIS|SQLITE|PRISMA|DRIZZLE" | sort -u || true'
               encoded="$(printf '%s' "$cmd" | base64 -w0)"
               output="$(timeout 25s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d | sh -s -- /data /app/data /var/lib /home/node/.config $mount_roots" --quiet </dev/null 2>/dev/null || true)"
@@ -72,7 +72,7 @@ jobs:
           path: /tmp/user-data-inventory/report.json
           retention-days: 30
           if-no-files-found: warn
- | tr '\\n' ' ' || true)"
+ | tr '\n' ' ' || true)"
               cmd="for root in /data /app/data /var/lib /home/node/.config $mount_roots; do
                 [ -d "$root" ] || continue
                 find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\t%s\n" 2>/dev/null
