@@ -103,9 +103,15 @@ jobs:
             script='set -u
               list="'$list'"
               : > "$list"
+              { echo "find=$(command -v find 2>/dev/null || echo missing)"; echo "tar=$(command -v tar 2>/dev/null || echo missing)"; echo "data_listing:"; ls -la /data 2>&1 || true; echo "app_listing:"; ls -la /app 2>&1 || true; } > "'$rlog'"
               for root in /data /app /srv /opt /var/lib /home /etc /root /workspace /mnt /usr/local /var/www /tmp; do
                 [ -d "$root" ] || continue
-                find "$root" -xdev -mindepth 1 -type d \( -iname "*cache*" -o -iname "*thumbnail*" -o -iname "*node_modules*" -o -iname ".git" -o -iname "*tmp*" \) -prune -o -type f -size -500M ! \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.webm" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" -o -iname "*.iso" -o -iname "*.zip" -o -iname "*.tar" -o -iname "*.gz" -o -iname "*.7z" \) -print >> "$list" 2>/dev/null || true
+                if command -v find >/dev/null 2>&1; then
+                  find "$root" -xdev -mindepth 1 -type d \\( -iname "*cache*" -o -iname "*thumbnail*" -o -iname "*node_modules*" -o -iname ".git" -o -iname "*tmp*" \\) -prune -o -type f -size -500M ! \\( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.webm" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" -o -iname "*.iso" -o -iname "*.zip" -o -iname "*.tar" -o -iname "*.gz" -o -iname "*.7z" \\) -print >> "$list" 2>> "'$rlog'" || true
+                fi
+              done
+              for f in /data/app-state.json /data/app-state.*.json /data/tag-stats.json /app/tag-stats.json /app/data/tag-stats.json /app/data/bot-muted-channels.json /app/data/bot-channels-blacklist.json /app/data/discord-last-tag-message.json; do
+                [ -f "$f" ] && printf '%s\\n' "$f" >> "$list"
               done
               sort -u "$list" -o "$list"
               if [ ! -s "$list" ]; then echo no_candidate_files > "'$status'"; exit 22; fi
