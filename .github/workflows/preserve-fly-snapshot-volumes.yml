@@ -10,7 +10,7 @@ on:
       snapshot_jobs:
         description: "One per line: app|snapshot_id|size_gb|new_volume_name. Keep priority order; originals are never changed."
         required: true
-        default: "chat-tag-new|vs_BZZ50vG48YVte4jZoLP|1|chat-tag-recovery-20261024"
+        default: "chat-tag-new|vs_BZZ50vG48YVte4jZoLP|1|chattag_recovery_20261024"
         type: string
 
 permissions:
