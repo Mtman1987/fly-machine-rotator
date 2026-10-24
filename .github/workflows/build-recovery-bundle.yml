@@ -1,0 +1,89 @@
+name: Build Recovery Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: "Comma-separated GitHub Actions run IDs to include (defaults to the known recovery runs)"
+        required: false
+        default: "40091621310,40092188524,40092238479,40092499877,40092586580"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download and unpack recovery artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_IDS: ${{ inputs.run_ids }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/artifacts bundle/unpacked
+          printf 'Recovery bundle created: %s\nRepository: %s\nRequested run IDs: %s\n\n' "$(date -u +%FT%TZ)" "$REPO" "$RUN_IDS" > bundle/RECOVERY-MANIFEST.txt
+          IFS=',' read -ra IDS <<< "$RUN_IDS"
+          for raw_id in "${IDS[@]}"; do
+            run_id="$(echo "$raw_id" | tr -d '[:space:]')"
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Skipping invalid run ID: $raw_id" | tee -a bundle/RECOVERY-MANIFEST.txt; continue; }
+            echo "Checking run $run_id"
+            echo "Run $run_id:" >> bundle/RECOVERY-MANIFEST.txt
+            response="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/actions/runs/$run_id/artifacts" || true)"
+            if [[ -z "$response" ]]; then
+              echo "  STATUS: unable to list artifacts (run missing, permissions, or API error)" | tee -a bundle/RECOVERY-MANIFEST.txt
+              continue
+            fi
+            count="$(echo "$response" | jq '[.artifacts[] | select(.expired == false)] | length')"
+            if [[ "$count" == "0" ]]; then
+              echo "  STATUS: no available artifacts yet; run may still be running or artifacts expired" | tee -a bundle/RECOVERY-MANIFEST.txt
+              continue
+            fi
+            while IFS=$'\t' read -r artifact_id artifact_name archive_url; do
+              [[ -n "$artifact_id" ]] || continue
+              safe_name="$(echo "$artifact_name" | tr -cs 'A-Za-z0-9._-' '_' | cut -c1-100)"
+              zip_path="bundle/artifacts/run-$run_id-$safe_name.zip"
+              echo "  Downloading artifact $artifact_id ($artifact_name)"
+              if curl -fLsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$archive_url" -o "$zip_path"; then
+                dest="bundle/unpacked/run-$run_id-$safe_name"
+                mkdir -p "$dest"
+                if unzip -q "$zip_path" -d "$dest"; then
+                  echo "  OK: $artifact_name (artifact ID $artifact_id)" | tee -a bundle/RECOVERY-MANIFEST.txt
+                  rm "$zip_path"
+                else
+                  echo "  WARNING: downloaded artifact $artifact_name but ZIP extraction failed; original ZIP retained" | tee -a bundle/RECOVERY-MANIFEST.txt
+                fi
+              else
+                rm -f "$zip_path"
+                echo "  WARNING: download failed for $artifact_name (artifact ID $artifact_id)" | tee -a bundle/RECOVERY-MANIFEST.txt
+              fi
+            done < <(echo "$response" | jq -r '.artifacts[] | select(.expired == false) | [.id, .name, .archive_download_url] | @tsv')
+          done
+          {
+            echo
+            echo "File inventory (relative path | bytes):"
+            find bundle/unpacked -type f -printf '%P | %s bytes\n' | sort
+          } >> bundle/RECOVERY-MANIFEST.txt
+          if [[ -z "$(find bundle/unpacked -type f -print -quit)" ]]; then
+            echo "No recovery files were downloaded. Check the run IDs and artifact availability." | tee -a bundle/RECOVERY-MANIFEST.txt
+            exit 1
+          fi
+          cd bundle
+          zip -qr ../SPMT-Recovery-Bundle.zip RECOVERY-MANIFEST.txt unpacked
+          cd ..
+          sha256sum SPMT-Recovery-Bundle.zip > SPMT-Recovery-Bundle.zip.sha256
+          ls -lh SPMT-Recovery-Bundle.zip SPMT-Recovery-Bundle.zip.sha256
+
+      - name: Upload phone-downloadable bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SPMT-Recovery-Bundle
+          path: |
+            SPMT-Recovery-Bundle.zip
+            SPMT-Recovery-Bundle.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
