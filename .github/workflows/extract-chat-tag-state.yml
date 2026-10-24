@@ -54,7 +54,7 @@ jobs:
               *) local="recovered/chat-tag/app-data/${remote##*/}" ;;
             esac
             echo "Downloading $remote"
-            if timeout 90s flyctl ssh sftp get "$remote" "$local" --app "$app" --machine "$machine" --quiet </dev/null >"logs/$(basename "$remote").out" 2>"logs/$(basename "$remote").err"; then
+            if timeout 90s flyctl ssh sftp get "$remote" "$dest" --app "$app" --machine "$machine" --quiet </dev/null >"logs/$(basename "$remote").out" 2>"logs/$(basename "$remote").err"; then
               if [ -s "$local" ]; then
                 sha256sum "$local" >> recovered/chat-tag/SHA256SUMS
                 wc -c "$local" >> recovered/chat-tag/file-sizes.txt
