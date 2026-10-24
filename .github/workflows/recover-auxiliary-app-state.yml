@@ -89,6 +89,17 @@ jobs:
             fi
           done
 
+          echo "=== SpaceMountainLive ==="
+          cat recovered/spacemountain/TARGET.txt
+          cat recovered/spacemountain/FAILED.txt 2>/dev/null || true
+          cat logs/spacemountain-db.err 2>/dev/null || true
+          echo "=== MikaBot ==="
+          cat recovered/mika-bot/TARGET.txt recovered/mika-bot/RECOVERY-REPORT.txt 2>/dev/null || true
+          cat recovered/mika-bot/FAILED.txt 2>/dev/null || true
+          echo "=== Aetherra inventory ==="
+          cat recovered/aetherra/TARGET.txt recovered/aetherra/INVENTORY.txt recovered/aetherra/INVENTORY-ERROR.txt 2>/dev/null || true
+          echo "=== Rotator inventory ==="
+          cat recovered/rotator/TARGET.txt recovered/rotator/INVENTORY.txt recovered/rotator/INVENTORY-ERROR.txt 2>/dev/null || true
           find recovered -type f -printf '%s %p\\n' | sort -nr > recovered/FILE-SIZES.txt
           echo "captured_at=$(date -u +%FT%TZ)" > recovered/RECOVERY-REPORT.txt
       - name: Upload auxiliary recovery results
