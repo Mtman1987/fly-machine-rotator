@@ -73,19 +73,29 @@ jobs:
             cat logs/mika-list.err logs/mika-list-download.err 2>/dev/null || true
           fi
 
-          # Aetherra and Rotator were preserved as cloned volumes. Record bounded file inventories
-          # without copying credentials or large databases into this artifact.
+          # Aetherra and Rotator were preserved as cloned volumes. Inventory using a base64 script
+          # to avoid nested-shell quoting errors; do not copy credentials or large databases here.
+          cat > /tmp/inventory-data-root.sh <<'REMOTE'
+          echo "=== data root ==="
+          ls -lah /data 2>&1
+          echo "=== structured files under 100 MB ==="
+          find /data -maxdepth 3 -type f -size -100M \( -iname "*.json" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%s %p\\n" 2>/dev/null | head -n 500
+          echo "=== large database candidates ==="
+          find /data -maxdepth 2 -type f -size +100M -printf "%s %p\\n" 2>/dev/null | head -n 100
+          REMOTE
+          inventory_encoded="$(base64 -w0 /tmp/inventory-data-root.sh)"
           for spec in "aetherra 080d0d5c556068" "mtman-machine-rotator 2862e02c9263d8"; do
             APP="${spec%% *}"
             MACHINE="${spec##* }"
             dir="recovered/aetherra"
             [ "$APP" = "mtman-machine-rotator" ] && dir="recovered/rotator"
             echo "Source: $APP / $MACHINE (volume clone preserved separately)" > "$dir/TARGET.txt"
-            cmd="echo '=== data root ==='; ls -lah /data 2>&1; echo '=== structured files ==='; find /data -maxdepth 3 -type f -size -100M \\( -iname '*.json' -o -iname '*.db' -o -iname '*.sqlite' -o -iname '*.sqlite3' -o -iname '*.yaml' -o -iname '*.yml' -o -iname '*.toml' \\) -print 2>/dev/null | head -n 500"
-            if timeout 45s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c '$cmd'" --quiet </dev/null > "$dir/INVENTORY.txt" 2> "$dir/INVENTORY-ERROR.txt"; then
+            if timeout 60s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $inventory_encoded | base64 -d | sh'" --quiet </dev/null > "$dir/INVENTORY.txt" 2> "$dir/INVENTORY-ERROR.txt"; then
               echo "inventory_read=yes" >> "$dir/TARGET.txt"
+              cat "$dir/INVENTORY.txt"
             else
               echo "inventory_read=no; cloned volume remains preserved" >> "$dir/TARGET.txt"
+              cat "$dir/INVENTORY-ERROR.txt" || true
             fi
           done
 
