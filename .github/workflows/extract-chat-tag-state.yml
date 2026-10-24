@@ -1,0 +1,90 @@
+name: Extract Chat Tag state files directly
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/extract-chat-tag-state.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extract-chat-tag-state
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Download persistent Chat Tag state files
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          mkdir -p recovered/chat-tag/data recovered/chat-tag/app-data logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+          app=chat-tag-new
+          machine=d892e7ec137ed8
+          files=(
+            /data/app-state.json
+            /data/app-state.gameSettings.json
+            /data/app-state.discordMessages.json
+            /data/app-state.overlayMessages.json
+            /data/app-state.quackverse.json
+            /data/app-state.quackversePackOpens.json
+            /data/app-state.quackverseRooms.json
+            /data/app-state.bingoCards.json
+            /data/app-state.bingoEvents.json
+            /data/revoked-accounts.json
+            /app/tag-stats.json
+            /app/data/bot-muted-channels.json
+            /app/data/bot-channels-blacklist.json
+            /app/data/discord-last-tag-message.json
+          )
+          failures=0
+          for remote in "${files[@]}"; do
+            case "$remote" in
+              /data/*) local="recovered/chat-tag/data/${remote##*/}" ;;
+              *) local="recovered/chat-tag/app-data/${remote##*/}" ;;
+            esac
+            echo "Downloading $remote"
+            if timeout 90s flyctl ssh sftp get "$remote" "$local" --app "$app" --machine "$machine" --quiet </dev/null >"logs/$(basename "$remote").out" 2>"logs/$(basename "$remote").err"; then
+              if [ -s "$local" ]; then
+                sha256sum "$local" >> recovered/chat-tag/SHA256SUMS
+                wc -c "$local" >> recovered/chat-tag/file-sizes.txt
+              else
+                echo "EMPTY_OR_ZERO_BYTE $remote" >> recovered/chat-tag/missing-or-empty.txt
+              fi
+            else
+              rc=$?
+              echo "FAILED exit=$rc remote=$remote" >> recovered/chat-tag/missing-or-empty.txt
+              cat "logs/$(basename "$remote").err" >> logs/failures.log || true
+              failures=$((failures+1))
+            fi
+          done
+          {
+            echo "app=$app"
+            echo "machine=$machine"
+            echo "files_requested=${#files[@]}"
+            echo "files_downloaded=$(find recovered/chat-tag -type f | wc -l)"
+            echo "failures=$failures"
+            echo "captured_at=$(date -u +%FT%TZ)"
+          } > recovered/chat-tag/RECOVERY-REPORT.txt
+          cat recovered/chat-tag/RECOVERY-REPORT.txt
+          [ -f recovered/chat-tag/data/app-state.json ] && [ -s recovered/chat-tag/data/app-state.json ]
+      - name: Upload extracted Chat Tag state immediately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-tag-state-files-${{ github.run_id }}
+          path: |
+            recovered/chat-tag/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
