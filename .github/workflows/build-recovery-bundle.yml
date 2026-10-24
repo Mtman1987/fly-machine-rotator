@@ -25,7 +25,7 @@ jobs:
       - name: Download and unpack recovery artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_IDS: ${{ inputs.run_ids }}
+          RUN_IDS: ${{ inputs.run_ids || '40091621310,40092188524,40092238479,40098103035,40098643413,40098277039,40098604310,40098384843' }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
