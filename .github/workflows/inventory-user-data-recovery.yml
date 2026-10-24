@@ -2,6 +2,10 @@ name: Inventory user-data recovery targets
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inventory-user-data-recovery.yml'
 
 permissions:
   contents: read
@@ -30,7 +34,10 @@ jobs:
             echo '{"status":"blocked","stage":"apps_list"}' > "$out/report.json"
             exit 1
           fi
-          jq -e 'type=="array"' "$out/apps.json" >/dev/null || { echo '{"status":"blocked","reason":"Invalid app list"}' > "$out/report.json"; exit 1; }
+          if ! jq -e 'type=="array"' "$out/apps.json" >/dev/null; then
+            echo '{"status":"blocked","reason":"Invalid app list"}' > "$out/report.json"
+            exit 1
+          fi
           : > "$out/results.jsonl"
           while IFS= read -r app; do
             [ -n "$app" ] || continue
@@ -43,24 +50,36 @@ jobs:
             while IFS= read -r row; do
               machine="$(printf '%s' "$row" | jq -r '.id // empty')"
               state="$(printf '%s' "$row" | jq -r '.state // "unknown"')"
-              mounts="$(printf '%s' "$row" | jq -c '.config.mounts // []')"
+              mounts="$(printf '%s' "$row" | jq -c '.mounts // .config.mounts // []')"
               [ -n "$machine" ] || continue
               mount_paths="$(printf '%s' "$mounts" | jq -r '.[] | [.path // "", .volume // "", .name // ""] | @tsv')"
               if [ "$state" != "started" ]; then
                 jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" '{app:$app,machine:$machine,state:$state,mounts:$mounts,status:"not_running_filesystem_not_inspected"}' >> "$out/results.jsonl"
                 continue
               fi
-              # List candidate filenames and sizes only; do not read file contents or secret values.
+
+              # Only candidate paths, sizes, and DB-related variable NAMES are collected.
+              # Cap remote output and use --rawfile to avoid OS argument-size limits.
               remote_script='for root in /data /app/data /var/lib /home/node/.config; do
                 [ -d "$root" ] || continue
-                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*upload*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\\t%s\\n" 2>/dev/null
+                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*thumbnail*" \) -prune -o -type f \( -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -printf "%p\t%s\n" 2>/dev/null | head -n 150
               done
-              printf "DB_ENV_KEYS\\n"
+              printf "DB_ENV_KEYS\n"
               env | cut -d= -f1 | grep -Ei "DATABASE|POSTGRES|MYSQL|MONGO|REDIS|SQLITE|PRISMA|DRIZZLE" | sort -u || true'
               encoded="$(printf '%s' "$remote_script" | base64 -w0)"
-              result="$(timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'echo $encoded | base64 -d | sh'" --quiet </dev/null 2>/dev/null || true)"
-              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg inventory "$result" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:(if $inventory=="" then "filesystem_inventory_failed_or_empty" elif ($inventory | startswith("for root in")) then "invalid_echoed_script_not_a_file_inventory" else "inventory_output_returned_review_required" end)}' >> "$out/results.jsonl"
-            done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown"),config:(.config // {}),mounts:(.config.mounts // [])}' "$machines")
+              raw="$out/raw-$safe_app-$machine.txt"
+              bounded="$out/bounded-$safe_app-$machine.txt"
+              timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'echo $encoded | base64 -d | sh'" --quiet </dev/null > "$raw" 2>/dev/null || true
+              head -c 16384 "$raw" > "$bounded"
+              if [ ! -s "$bounded" ]; then
+                status="filesystem_inventory_failed_or_empty"
+              elif head -n 2 "$bounded" | grep -q '^for root in'; then
+                status="invalid_echoed_script_not_a_file_inventory"
+              else
+                status="inventory_output_returned_review_required"
+              fi
+              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg status "$status" --rawfile inventory "$bounded" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:$status}' >> "$out/results.jsonl"
+            done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown"),mounts:(.config.mounts // .mounts // [])}' "$machines")
           done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' "$out/apps.json")
           jq -s '{generatedAt:(now|todate),purpose:"Inventory only; no files copied; no secret values recorded",results:.}' "$out/results.jsonl" > "$out/report.json"
           cat "$out/report.json"
