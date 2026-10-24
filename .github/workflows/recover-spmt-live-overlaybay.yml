@@ -1,0 +1,98 @@
+name: Recover OverlayBay state from SPMT Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-spmt-live-overlaybay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-spmt-live-overlaybay
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Extract OverlayBay tenant scenes and overlay state
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          APP=spmt-live
+          MACHINE=8d0274ce21e918
+          mkdir -p recovered/overlaybay/tenant-scenes recovered/overlaybay/backups logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+          echo "Source: $APP / $MACHINE / volume vol_vde2p30e6xo8d0k4 (spmt_data)" > recovered/overlaybay/TARGET.txt
+          cat > /tmp/overlaybay-list.sh <<'REMOTE'
+          set -u
+          : > /tmp/overlaybay-files.txt
+          [ -d /data/tenant-scenes ] && find /data/tenant-scenes -maxdepth 1 -type f -name '*.json' -size -20M -print >> /tmp/overlaybay-files.txt
+          for f in /data/cloud-xbox-last.json /data/rotator-companion-scope-backup-20261009.json; do
+            [ -f "$f" ] && printf '%s\\n' "$f" >> /tmp/overlaybay-files.txt
+          done
+          [ -d /data/backups ] && find /data/backups -maxdepth 1 -type f -name '*.json' -size -20M -print >> /tmp/overlaybay-files.txt
+          sort -u /tmp/overlaybay-files.txt -o /tmp/overlaybay-files.txt
+          REMOTE
+          encoded="$(base64 -w0 /tmp/overlaybay-list.sh)"
+          if ! timeout 45s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/overlaybay-list.sh; sh /tmp/overlaybay-list.sh'" --quiet </dev/null > logs/list-command.out 2> logs/list-command.err; then
+            cat logs/list-command.err; exit 1
+          fi
+          if ! timeout 90s flyctl ssh sftp get /tmp/overlaybay-files.txt recovered/overlaybay/remote-files.txt --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/list-download.out 2> logs/list-download.err; then
+            cat logs/list-download.err; exit 1
+          fi
+          count=0; failures=0
+          while IFS= read -r remote; do
+            [ -n "$remote" ] || continue
+            case "$remote" in
+              /data/tenant-scenes/*) rel="tenant-scenes/${remote##*/}" ;;
+              /data/backups/*) rel="backups/${remote##*/}" ;;
+              /data/cloud-xbox-last.json) rel="cloud-xbox-last.json" ;;
+              /data/rotator-companion-scope-backup-20261009.json) rel="rotator-companion-scope-backup-20261009.json" ;;
+              *) echo "Unexpected path skipped: $remote" >> logs/skipped.log; continue ;;
+            esac
+            dest="recovered/overlaybay/$rel"
+            if timeout 60s flyctl ssh sftp get "$remote" "$dest" --app "$APP" --machine "$MACHINE" --quiet </dev/null > "logs/file-$count.out" 2> "logs/file-$count.err"; then
+              if [ -s "$dest" ]; then sha256sum "$dest" >> recovered/overlaybay/SHA256SUMS; fi
+            else
+              echo "$remote" >> recovered/overlaybay/failed-files.txt
+              cat "logs/file-$count.err" >> logs/failures.log || true
+              failures=$((failures+1))
+            fi
+            count=$((count+1))
+          done < recovered/overlaybay/remote-files.txt
+          json_count=0; invalid_json=0
+          while IFS= read -r file; do
+            case "$file" in *.json) json_count=$((json_count+1)); jq -e . "$file" >/dev/null 2>&1 || { echo "$file" >> recovered/overlaybay/invalid-json.txt; invalid_json=$((invalid_json+1)); } ;; esac
+          done < <(find recovered/overlaybay -type f -name '*.json')
+          {
+            echo "app=$APP"
+            echo "machine=$MACHINE"
+            echo "remote_files_listed=$(wc -l < recovered/overlaybay/remote-files.txt)"
+            echo "files_attempted=$count"
+            echo "files_failed=$failures"
+            echo "json_files=$json_count"
+            echo "invalid_json_files=$invalid_json"
+            echo "captured_at=$(date -u +%FT%TZ)"
+          } > recovered/overlaybay/RECOVERY-REPORT.txt
+          cat recovered/overlaybay/RECOVERY-REPORT.txt
+          find recovered/overlaybay -type f -printf '%s %p\\n' | sort -nr > recovered/overlaybay/FILE-SIZES.txt
+          [ "$count" -gt 0 ] && [ "$failures" -eq 0 ]
+      - name: Upload OverlayBay state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spmt-live-overlaybay-state-${{ github.run_id }}
+          path: |
+            recovered/overlaybay/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
