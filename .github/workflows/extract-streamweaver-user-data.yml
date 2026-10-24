@@ -49,11 +49,22 @@ jobs:
             rel="${remote#/data/runtime/}"
             dest="recovered/streamweaver/runtime/$rel"
             mkdir -p "$(dirname "$dest")"
-            if timeout 90s flyctl ssh sftp get "$remote" "$dest" --app "$app" --machine "$machine" --quiet </dev/null > "logs/file-$count.out" 2> "logs/file-$count.err"; then
-              if [ -s "$dest" ]; then sha256sum "$dest" >> recovered/streamweaver/SHA256SUMS; fi
+            ok=0
+            attempt=1
+            while [ "$attempt" -le 3 ]; do
+              rm -f "$dest"
+              if timeout 120s flyctl ssh sftp get "$remote" "$dest" --app "$app" --machine "$machine" --quiet </dev/null > "logs/file-$count-attempt-$attempt.out" 2> "logs/file-$count-attempt-$attempt.err" && [ -s "$dest" ]; then
+                ok=1
+                break
+              fi
+              cat "logs/file-$count-attempt-$attempt.err" >> logs/failures.log || true
+              sleep 2
+              attempt=$((attempt+1))
+            done
+            if [ "$ok" -eq 1 ]; then
+              sha256sum "$dest" >> recovered/streamweaver/SHA256SUMS
             else
               echo "$remote" >> recovered/streamweaver/failed-files.txt
-              cat "logs/file-$count.err" >> logs/failures.log || true
               failures=$((failures+1))
             fi
             count=$((count+1))
