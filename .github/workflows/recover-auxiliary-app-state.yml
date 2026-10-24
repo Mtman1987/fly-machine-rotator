@@ -99,6 +99,79 @@ jobs:
             fi
           done
 
+          # Export Aetherra's database/backups from its preserved-volume source; exclude key files.
+          APP=aetherra
+          MACHINE=080d0d5c556068
+          mkdir -p recovered/aetherra/data
+          cat > /tmp/aetherra-pack.sh <<'REMOTE'
+          set -u
+          mkdir -p /tmp/aetherra-recovery
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 /data/aetherra.db ".backup /tmp/aetherra-recovery/aetherra.db" && echo SQLITE_BACKUP_OK
+          elif command -v python3 >/dev/null 2>&1; then
+            python3 -c "import sqlite3; s=sqlite3.connect('file:/data/aetherra.db?mode=ro',uri=True); d=sqlite3.connect('/tmp/aetherra-recovery/aetherra.db'); s.backup(d); d.close(); s.close(); print('SQLITE_BACKUP_OK')"
+          else
+            cp /data/aetherra.db /tmp/aetherra-recovery/aetherra.db
+            [ ! -f /data/aetherra.db-wal ] || cp /data/aetherra.db-wal /tmp/aetherra-recovery/aetherra.db-wal
+            [ ! -f /data/aetherra.db-shm ] || cp /data/aetherra.db-shm /tmp/aetherra-recovery/aetherra.db-shm
+            echo DIRECT_DB_AND_WAL_COPY
+          fi
+          if [ -d /data/backups ]; then
+            find /data/backups -maxdepth 2 -type f -size -100M \( -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.json" \) -exec cp --parents {} /tmp/aetherra-recovery/ \; 2>/dev/null || true
+          fi
+          tar -czf /tmp/aetherra-recovery.tar.gz -C /tmp/aetherra-recovery .
+          tar -tzf /tmp/aetherra-recovery.tar.gz > /tmp/aetherra-recovery-list.txt
+          REMOTE
+          encoded_aetherra="$(base64 -w0 /tmp/aetherra-pack.sh)"
+          if timeout 90s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded_aetherra | base64 -d > /tmp/aetherra-pack.sh; sh /tmp/aetherra-pack.sh'" --quiet </dev/null > logs/aetherra-pack.out 2> logs/aetherra-pack.err; then
+            if timeout 300s flyctl ssh sftp get /tmp/aetherra-recovery.tar.gz recovered/aetherra/data/aetherra-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/aetherra-sftp.out 2> logs/aetherra-sftp.err; then
+              tar -tzf recovered/aetherra/data/aetherra-state.tar.gz > recovered/aetherra/data/ARCHIVE-CONTENTS.txt
+              sha256sum recovered/aetherra/data/aetherra-state.tar.gz > recovered/aetherra/data/SHA256SUMS
+              echo "Aetherra state archive downloaded." | tee recovered/aetherra/data/RESULT.txt
+            else
+              echo "Aetherra archive download failed." > recovered/aetherra/data/RESULT.txt
+            fi
+          else
+            echo "Aetherra archive creation failed." > recovered/aetherra/data/RESULT.txt
+            cat logs/aetherra-pack.err || true
+          fi
+
+          # Export Rotator structured state and mountainview database, excluding credentials and repo clones.
+          APP=mtman-machine-rotator
+          MACHINE=2862e02c9263d8
+          mkdir -p recovered/rotator/data
+          cat > /tmp/rotator-pack.sh <<'REMOTE'
+          set -u
+          mkdir -p /tmp/rotator-recovery
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 /data/mountainview.db ".backup /tmp/rotator-recovery/mountainview.db" && echo SQLITE_BACKUP_OK
+          elif command -v python3 >/dev/null 2>&1; then
+            python3 -c "import sqlite3; s=sqlite3.connect('file:/data/mountainview.db?mode=ro',uri=True); d=sqlite3.connect('/tmp/rotator-recovery/mountainview.db'); s.backup(d); d.close(); s.close(); print('SQLITE_BACKUP_OK')"
+          else
+            [ ! -f /data/mountainview.db ] || cp /data/mountainview.db /tmp/rotator-recovery/mountainview.db
+            [ ! -f /data/mountainview.db-wal ] || cp /data/mountainview.db-wal /tmp/rotator-recovery/mountainview.db-wal
+            [ ! -f /data/mountainview.db-shm ] || cp /data/mountainview.db-shm /tmp/rotator-recovery/mountainview.db-shm
+            echo DIRECT_DB_AND_WAL_COPY
+          fi
+          find /data -xdev -maxdepth 4 -type d \( -path /data/repos -o -path /data/codex-fixer -o -path /data/operations-evidence \) -prune -o -type f -size -100M \( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) ! -iname "*token*" ! -iname "*api-key*" ! -iname "*secret*" ! -iname "*vault*" ! -iname "*key*" -print > /tmp/rotator-recovery-files.txt 2>/dev/null || true
+          while IFS= read -r f; do [ -n "$f" ] && cp --parents "$f" /tmp/rotator-recovery/ 2>/dev/null || true; done < /tmp/rotator-recovery-files.txt
+          tar -czf /tmp/rotator-recovery.tar.gz -C /tmp/rotator-recovery .
+          tar -tzf /tmp/rotator-recovery.tar.gz > /tmp/rotator-recovery-list.txt
+          REMOTE
+          encoded_rotator="$(base64 -w0 /tmp/rotator-pack.sh)"
+          if timeout 90s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded_rotator | base64 -d > /tmp/rotator-pack.sh; sh /tmp/rotator-pack.sh'" --quiet </dev/null > logs/rotator-pack.out 2> logs/rotator-pack.err; then
+            if timeout 180s flyctl ssh sftp get /tmp/rotator-recovery.tar.gz recovered/rotator/data/rotator-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/rotator-sftp.out 2> logs/rotator-sftp.err; then
+              tar -tzf recovered/rotator/data/rotator-state.tar.gz > recovered/rotator/data/ARCHIVE-CONTENTS.txt
+              sha256sum recovered/rotator/data/rotator-state.tar.gz > recovered/rotator/data/SHA256SUMS
+              echo "Rotator state archive downloaded (credential/key files excluded)." | tee recovered/rotator/data/RESULT.txt
+            else
+              echo "Rotator archive download failed." > recovered/rotator/data/RESULT.txt
+            fi
+          else
+            echo "Rotator archive creation failed." > recovered/rotator/data/RESULT.txt
+            cat logs/rotator-pack.err || true
+          fi
+
           echo "=== SpaceMountainLive ==="
           cat recovered/spacemountain/TARGET.txt
           cat recovered/spacemountain/FAILED.txt 2>/dev/null || true
