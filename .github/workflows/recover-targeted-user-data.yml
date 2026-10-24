@@ -118,13 +118,13 @@ jobs:
             else
               remote_status=""
               for poll in $(seq 1 30); do
-                remote_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "cat $status 2>/dev/null || echo pending" --quiet </dev/null 2>>"$local_err" | tail -n 1 | tr -cd 'A-Za-z0-9_-')"
+                remote_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'cat $status 2>/dev/null || echo pending'" --quiet </dev/null 2>>"$local_err" | tail -n 1 | tr -cd 'A-Za-z0-9_-')"
                 [ "$remote_status" != "pending" ] && [ "$remote_status" != "missing" ] && [ -n "$remote_status" ] && break
                 sleep 5
               done
               if [ "$remote_status" != "0" ]; then
                 reason="remote_archive_exit_${remote_status:-timeout}"
-                diag="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "tail -c 1000 $rlog 2>/dev/null || true" --quiet </dev/null 2>>"$local_err" | tr '\n' ' ' || true)"
+                diag="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'tail -c 1000 $rlog 2>/dev/null || true'" --quiet </dev/null 2>>"$local_err" | tr '\n' ' ' || true)"
                 echo "stage=archive status=$remote_status diagnostic=$diag" >> "$base/logs/$tag.log"
               elif ! timeout 600s flyctl ssh sftp get "$remote" "$local_archive" --app "$app" --machine "$machine" --quiet </dev/null > "$base/raw/$tag.sftp.out" 2> "$local_err"; then
                 reason=download_failed
