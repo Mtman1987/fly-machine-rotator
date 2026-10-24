@@ -1,0 +1,103 @@
+name: Recover auxiliary app state from inventoried machines
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-auxiliary-app-state.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-auxiliary-app-state
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Extract SpaceMountainLive and MikaBot state; inventory other volumes
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          mkdir -p recovered/spacemountain recovered/mika-bot recovered/aetherra recovered/rotator logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+
+          # SpaceMountainLive: small app database, not browser/media data.
+          APP=spacemountain-live
+          MACHINE=8953d6a6dd5058
+          echo "Source: $APP / $MACHINE / vol_42kmdp560dmgwl94" > recovered/spacemountain/TARGET.txt
+          for remote in /data/database.db; do
+            if timeout 180s flyctl ssh sftp get "$remote" "recovered/spacemountain/$(basename "$remote")" --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/spacemountain-db.out 2> logs/spacemountain-db.err; then
+              sha256sum "recovered/spacemountain/$(basename "$remote")" > recovered/spacemountain/SHA256SUMS
+            else
+              echo "$remote" > recovered/spacemountain/FAILED.txt
+              cat logs/spacemountain-db.err || true
+            fi
+          done
+
+          # MikaBot: compact JSON configuration and stats database only.
+          APP=mika-bot
+          MACHINE=2871545a942658
+          echo "Source: $APP / $MACHINE / vol_4m3k2eqowknmqyzv" > recovered/mika-bot/TARGET.txt
+          cat > /tmp/mika-list.sh <<'REMOTE'
+          set -u
+          find /app/data -maxdepth 2 -type f -size -100M \( -iname "*.json" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" \) -print 2>/dev/null | sort > /tmp/mika-files.txt
+          REMOTE
+          encoded="$(base64 -w0 /tmp/mika-list.sh)"
+          if timeout 45s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/mika-list.sh; sh /tmp/mika-list.sh'" --quiet </dev/null > logs/mika-list.out 2> logs/mika-list.err &&
+             timeout 90s flyctl ssh sftp get /tmp/mika-files.txt recovered/mika-bot/remote-files.txt --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/mika-list-download.out 2> logs/mika-list-download.err; then
+            count=0
+            while IFS= read -r remote; do
+              [ -n "$remote" ] || continue
+              case "$remote" in /app/data/*) ;; *) continue ;; esac
+              dest="recovered/mika-bot/${remote#/app/data/}"
+              mkdir -p "$(dirname "$dest")"
+              if timeout 90s flyctl ssh sftp get "$remote" "$dest" --app "$APP" --machine "$MACHINE" --quiet </dev/null > "logs/mika-file-$count.out" 2> "logs/mika-file-$count.err"; then
+                [ -s "$dest" ] && sha256sum "$dest" >> recovered/mika-bot/SHA256SUMS
+              else
+                echo "$remote" >> recovered/mika-bot/FAILED.txt
+              fi
+              count=$((count+1))
+            done < recovered/mika-bot/remote-files.txt
+            echo "files_attempted=$count" > recovered/mika-bot/RECOVERY-REPORT.txt
+          else
+            echo "MikaBot file list could not be read." > recovered/mika-bot/RECOVERY-REPORT.txt
+            cat logs/mika-list.err logs/mika-list-download.err 2>/dev/null || true
+          fi
+
+          # Aetherra and Rotator were preserved as cloned volumes. Record bounded file inventories
+          # without copying credentials or large databases into this artifact.
+          for spec in "aetherra 080d0d5c556068" "mtman-machine-rotator 2862e02c9263d8"; do
+            APP="${spec%% *}"
+            MACHINE="${spec##* }"
+            dir="recovered/aetherra"
+            [ "$APP" = "mtman-machine-rotator" ] && dir="recovered/rotator"
+            echo "Source: $APP / $MACHINE (volume clone preserved separately)" > "$dir/TARGET.txt"
+            cmd="echo '=== data root ==='; ls -lah /data 2>&1; echo '=== structured files ==='; find /data -maxdepth 3 -type f -size -100M \\( -iname '*.json' -o -iname '*.db' -o -iname '*.sqlite' -o -iname '*.sqlite3' -o -iname '*.yaml' -o -iname '*.yml' -o -iname '*.toml' \\) -print 2>/dev/null | head -n 500"
+            if timeout 45s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c '$cmd'" --quiet </dev/null > "$dir/INVENTORY.txt" 2> "$dir/INVENTORY-ERROR.txt"; then
+              echo "inventory_read=yes" >> "$dir/TARGET.txt"
+            else
+              echo "inventory_read=no; cloned volume remains preserved" >> "$dir/TARGET.txt"
+            fi
+          done
+
+          find recovered -type f -printf '%s %p\\n' | sort -nr > recovered/FILE-SIZES.txt
+          echo "captured_at=$(date -u +%FT%TZ)" > recovered/RECOVERY-REPORT.txt
+      - name: Upload auxiliary recovery results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auxiliary-app-state-${{ github.run_id }}
+          path: |
+            recovered/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
