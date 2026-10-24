@@ -172,6 +172,27 @@ jobs:
             cat logs/rotator-pack.err || true
           fi
 
+          if ! command -v sqlite3 >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; fi
+          mkdir -p /tmp/aetherra-check /tmp/rotator-check
+          if [ -s recovered/aetherra/data/aetherra-state.tar.gz ]; then
+            tar -xzf recovered/aetherra/data/aetherra-state.tar.gz -C /tmp/aetherra-check
+            echo "=== Aetherra archive contents ==="
+            cat recovered/aetherra/data/ARCHIVE-CONTENTS.txt
+            if [ -s /tmp/aetherra-check/aetherra.db ] && command -v sqlite3 >/dev/null 2>&1; then
+              sqlite3 /tmp/aetherra-check/aetherra.db 'PRAGMA integrity_check;' > recovered/aetherra/data/SQLITE-INTEGRITY.txt 2>&1 || true
+              cat recovered/aetherra/data/SQLITE-INTEGRITY.txt
+            fi
+          fi
+          if [ -s recovered/rotator/data/rotator-state.tar.gz ]; then
+            tar -xzf recovered/rotator/data/rotator-state.tar.gz -C /tmp/rotator-check
+            echo "=== Rotator archive contents ==="
+            cat recovered/rotator/data/ARCHIVE-CONTENTS.txt
+            if [ -s /tmp/rotator-check/mountainview.db ] && command -v sqlite3 >/dev/null 2>&1; then
+              sqlite3 /tmp/rotator-check/mountainview.db 'PRAGMA integrity_check;' > recovered/rotator/data/SQLITE-INTEGRITY.txt 2>&1 || true
+              cat recovered/rotator/data/SQLITE-INTEGRITY.txt
+            fi
+          fi
+
           echo "=== SpaceMountainLive ==="
           cat recovered/spacemountain/TARGET.txt
           cat recovered/spacemountain/FAILED.txt 2>/dev/null || true
