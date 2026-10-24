@@ -105,11 +105,11 @@ jobs:
               : > "$list"
               for root in /data /app /srv /opt /var/lib /home /etc /root /workspace /mnt /usr/local /var/www /tmp; do
                 [ -d "$root" ] || continue
-                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*thumbnail*" -o -iname "*node_modules*" -o -iname ".git" -o -iname "*tmp*" \) -prune -o -type f -size -500M ! \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.webm" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" -o -iname "*.iso" -o -iname "*.zip" -o -iname "*.tar" -o -iname "*.gz" -o -iname "*.7z" \) -print >> "$list" 2>/dev/null || true
+                find "$root" -xdev -mindepth 1 -type d \( -iname "*cache*" -o -iname "*thumbnail*" -o -iname "*node_modules*" -o -iname ".git" -o -iname "*tmp*" \) -prune -o -type f -size -500M ! \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.webm" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" -o -iname "*.iso" -o -iname "*.zip" -o -iname "*.tar" -o -iname "*.gz" -o -iname "*.7z" \) -print >> "$list" 2>/dev/null || true
               done
               sort -u "$list" -o "$list"
               if [ ! -s "$list" ]; then echo no_candidate_files > "'$status'"; exit 22; fi
-              tar -czf "'$remote'" -T "$list" 2>"'$rlog'"
+              tar --ignore-failed-read -czf "'$remote'" -T "$list" 2>"'$rlog'"
               rc=$?
               echo "$rc" > "'$status'"
               exit "$rc"'
@@ -126,7 +126,7 @@ jobs:
               done
               if [ "$remote_status" != "0" ]; then
                 reason="remote_archive_exit_${remote_status:-timeout}"
-                diag="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'tail -c 1000 $rlog 2>/dev/null || true'" --quiet </dev/null 2>>"$local_err" | tr '\n' ' ' || true)"
+                diag="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'cat $rlog 2>/dev/null; echo ---launch---; tail -c 500 $remote.launch.log 2>/dev/null || true'" --quiet </dev/null 2>>"$local_err" | tail -c 1800 | tr '\n' ' ' || true)"
                 echo "stage=archive status=$remote_status diagnostic=$diag" >> "$base/logs/$tag.log"
               elif ! timeout 600s flyctl ssh sftp get "$remote" "$local_archive" --app "$app" --machine "$machine" --quiet </dev/null > "$base/raw/$tag.sftp.out" 2> "$local_err"; then
                 reason=download_failed
