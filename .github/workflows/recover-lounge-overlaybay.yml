@@ -77,13 +77,20 @@ jobs:
           set -u
           mkdir -p /tmp/overlaybay-recovery
           : > /tmp/overlaybay-recovery/files.txt
-          for root in /data /app/data /app/config /app/state; do
+          { echo "=== mount ==="; mount; echo "=== df ==="; df -h; echo "=== /data top-level ==="; ls -la /data 2>&1; echo "=== /data files ==="; find /data -xdev -maxdepth 4 -type f -printf "%s %p\\n" 2>/dev/null | head -n 500; } > /tmp/overlaybay-recovery/inventory.txt
+          cp /tmp/overlaybay-recovery/inventory.txt /tmp/overlaybay-inventory.txt
+          for root in /data /app/data /app/config /app/state /workspace/data /workspace/state /root/.config /srv /opt /mnt/data; do
             [ -d "$root" ] || continue
-            find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" -o -iname "*node_modules*" \) -prune -o -type f -size -100M \( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -print 2>/dev/null >> /tmp/overlaybay-recovery/files.txt || true
+            find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" -o -iname "*node_modules*" -o -iname ".git" \) -prune -o -type f -size -100M \( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -print 2>/dev/null >> /tmp/overlaybay-recovery/files.txt || true
           done
           sort -u /tmp/overlaybay-recovery/files.txt -o /tmp/overlaybay-recovery/files.txt
-          if [ ! -s /tmp/overlaybay-recovery/files.txt ]; then echo "NO_FILES" > /tmp/overlaybay-recovery/status; exit 22; fi
-          tar -czf /tmp/overlaybay-state.tar.gz -T /tmp/overlaybay-recovery/files.txt
+          sort -u /tmp/overlaybay-recovery/files.txt -o /tmp/overlaybay-recovery/files.txt
+          if [ ! -s /tmp/overlaybay-recovery/files.txt ]; then
+            tar -czf /tmp/overlaybay-state.tar.gz -C /tmp overlaybay-inventory.txt
+            echo "NO_STRUCTURED_STATE_FILES; inventory only" > /tmp/overlaybay-recovery/status
+          else
+            tar -czf /tmp/overlaybay-state.tar.gz -T /tmp/overlaybay-recovery/files.txt
+          fi
           tar -tzf /tmp/overlaybay-state.tar.gz > /tmp/overlaybay-recovery/list.txt
           echo "files=$(wc -l < /tmp/overlaybay-recovery/list.txt)" > /tmp/overlaybay-recovery/status
           REMOTE_OVERLAY
