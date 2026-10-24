@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch reference photos from the specified Discord message
+        id: fetch
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.DISCORD_TOKEN }}
           DISCORD_CHANNEL_ID: "1476540488147533895"
@@ -64,6 +65,7 @@ jobs:
           echo "Loaded ${#photos[@]} reference photo(s) from the specified Discord message."
 
       - name: Create head once, wait for completion, and download ARKit GLB
+        id: generate
         env:
           KEENFACE_API_KEY: ${{ secrets.KEENFACE_API_KEY || secrets.KEENTOOLS_API_KEY }}
         shell: bash
