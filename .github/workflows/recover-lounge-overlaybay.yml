@@ -1,0 +1,90 @@
+name: Recover Lounge and OverlayBay state
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-lounge-overlaybay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-lounge-overlaybay
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Recover Lounge and attempt OverlayBay state without media
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          mkdir -p recovered/lounge recovered/overlaybay logs
+          if [ -z "${FLY_API_TOKEN:-}" ]; then echo "::error::Fly API token secret missing"; exit 1; fi
+
+          # Lounge: confirmed mounted volume and running machine from inventory.
+          APP=hmo-dj-worker
+          MACHINE=683ddde2bd1e38
+          echo "Lounge target: $APP / $MACHINE" | tee recovered/lounge/TARGET.txt
+          script='set -u
+            mkdir -p /tmp/lounge-recovery
+            : > /tmp/lounge-recovery/files.txt
+            # Keep Lounge program/config and app state; exclude Chromium caches/profiles.
+            for f in /data/lounge-program.json /data/*.json /data/*.db /data/*.sqlite /data/*.sqlite3; do
+              [ -f "$f" ] && printf "%s\\n" "$f" >> /tmp/lounge-recovery/files.txt
+            done
+            for root in /data/config /data/state /data/lounge /data/runtime /data/backups; do
+              [ -d "$root" ] && find "$root" -xdev -type d \\( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" \\) -prune -o -type f -size -100M \\( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \\) -print >> /tmp/lounge-recovery/files.txt 2>/dev/null || true
+            done
+            sort -u /tmp/lounge-recovery/files.txt -o /tmp/lounge-recovery/files.txt
+            if [ ! -s /tmp/lounge-recovery/files.txt ]; then echo "NO_FILES" > /tmp/lounge-recovery/status; exit 22; fi
+            tar -czf /tmp/lounge-recovery.tar.gz -T /tmp/lounge-recovery/files.txt
+            tar -tzf /tmp/lounge-recovery.tar.gz > /tmp/lounge-recovery/list.txt
+            echo "files=$(wc -l < /tmp/lounge-recovery/list.txt)" > /tmp/lounge-recovery/status
+          '
+          encoded="$(printf '%s' "$script" | base64 -w0)"
+          if timeout 40s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/lounge-recovery.sh; sh /tmp/lounge-recovery.sh'" --quiet </dev/null > logs/lounge-command.out 2> logs/lounge-command.err; then
+            if timeout 180s flyctl ssh sftp get /tmp/lounge-recovery.tar.gz recovered/lounge/lounge-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/lounge-sftp.out 2> logs/lounge-sftp.err; then
+              tar -tzf recovered/lounge/lounge-state.tar.gz > recovered/lounge/file-list.txt
+              sha256sum recovered/lounge/lounge-state.tar.gz > recovered/lounge/SHA256SUMS
+              echo "Lounge extraction archive downloaded and integrity-listed." | tee recovered/lounge/RESULT.txt
+            else
+              echo "Lounge archive was created remotely but download failed." | tee recovered/lounge/RESULT.txt
+            fi
+          else
+            echo "Lounge extraction command failed; diagnostics retained." | tee recovered/lounge/RESULT.txt
+            cat logs/lounge-command.err || true
+          fi
+
+          # OverlayBay/Activity data: machine was suspended in inventory. Try read-only SSH first;
+          # do not start a suspended machine or change production state automatically.
+          APP=hmo-dj-worker
+          MACHINE=8eddd0ea753148
+          echo "OverlayBay candidate: $APP / $MACHINE (activity_data volume; machine previously suspended)" | tee recovered/overlaybay/TARGET.txt
+          if timeout 35s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'find /data -xdev -maxdepth 2 -type f \\( -iname \"*.json\" -o -iname \"*.db\" -o -iname \"*.sqlite\" -o -iname \"*.sqlite3\" -o -iname \"*.yaml\" -o -iname \"*.yml\" -o -iname \"*.toml\" \\) -size -100M -print 2>/dev/null | head -n 300'" --quiet </dev/null > recovered/overlaybay/read-only-inventory.txt 2> logs/overlaybay-command.err; then
+            echo "OverlayBay candidate inventory returned; no media copied." | tee recovered/overlaybay/RESULT.txt
+          else
+            echo "OverlayBay filesystem could not be read while machine was suspended. Its cloned volume is preserved separately; no machine state changed." | tee recovered/overlaybay/RESULT.txt
+            cat logs/overlaybay-command.err || true
+          fi
+
+          find recovered -type f -printf '%s %p\\n' | sort -nr > recovered/FILE-SIZES.txt
+
+      - name: Upload recovery results even if one target fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lounge-overlaybay-recovery-${{ github.run_id }}
+          path: |
+            recovered/**
+            logs/**
+          retention-days: 90
+          if-no-files-found: warn
