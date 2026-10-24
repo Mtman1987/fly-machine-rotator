@@ -2,6 +2,10 @@ name: Inventory user-data recovery targets
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inventory-user-data-recovery.yml'
 
 permissions:
   contents: read
