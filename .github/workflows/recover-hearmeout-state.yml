@@ -43,7 +43,7 @@ jobs:
           fi
           : > /tmp/hearmeout-files.txt
           for f in /tmp/hearmeout-app.db /data/watch-state.json /data/app.db /data/discord-reply-cleanup.json /data/backups/reset-20260701T091157Z/watch-state.json /data/recovery/apollo-hmo-2026-08-30T18-12-42-898Z.db /data/recovery/apollo-hmo-2026-09-12T21-28-36-442Z.db; do
-            [ -f "$f" ] && printf '%s\\n' "$f" >> /tmp/hearmeout-files.txt
+            [ -f "$f" ] && printf '%s\n' "$f" >> /tmp/hearmeout-files.txt
           done
           sort -u /tmp/hearmeout-files.txt -o /tmp/hearmeout-files.txt
           echo "remote_file_count=$(wc -l < /tmp/hearmeout-files.txt)"
