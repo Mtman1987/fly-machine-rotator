@@ -112,12 +112,12 @@ jobs:
               echo "$rc" > "'$status'"
               exit "$rc"'
             encoded="$(printf '%s' "$script" | base64 -w0)"
-            if ! timeout 35s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d > /tmp/user-data-$machine.sh; chmod 700 /tmp/user-data-$machine.sh; rm -f $status $rlog; nohup sh /tmp/user-data-$machine.sh > /tmp/user-data-$machine.launch.log 2>&1 </dev/null & echo recovery_started" --quiet </dev/null > "$base/raw/$tag.launch.out" 2> "$local_err"; then
+            if ! timeout 35s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'echo $encoded | base64 -d > /tmp/user-data-$machine.sh; chmod 700 /tmp/user-data-$machine.sh; rm -f $status $rlog; nohup sh /tmp/user-data-$machine.sh > /tmp/user-data-$machine.launch.log 2>&1 </dev/null & echo recovery_started'" --quiet </dev/null > "$base/raw/$tag.launch.out" 2> "$local_err"; then
               reason=remote_archive_launch_failed
               echo "stage=launch error=$(head -c 800 "$local_err" | tr '\n' ' ')" >> "$base/logs/$tag.log"
             else
               remote_status=""
-              for poll in $(seq 1 30); do
+              for poll in $(seq 1 20); do
                 remote_status="$(timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'cat $status 2>/dev/null || echo pending'" --quiet </dev/null 2>>"$local_err" | tail -n 1 | tr -cd 'A-Za-z0-9_-')"
                 [ "$remote_status" != "pending" ] && [ "$remote_status" != "missing" ] && [ -n "$remote_status" ] && break
                 sleep 5
