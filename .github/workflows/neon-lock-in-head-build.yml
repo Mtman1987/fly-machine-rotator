@@ -153,7 +153,8 @@ jobs:
             const fs = require('fs');
             const id = fs.existsSync('head-id.txt') ? fs.readFileSync('head-id.txt', 'utf8').trim() : '';
             const ok = fs.existsSync('Neon_Lock_In_Gamer_Head_ARKit.glb');
+            const reason = fs.existsSync('failure-reason.txt') ? fs.readFileSync('failure-reason.txt', 'utf8').trim() : 'No failure summary was written; inspect the workflow run logs.';
             const body = ok
               ? '### Neon Lock-In Gamer head build: SUCCESS\\n\\nGenerated the head from the Discord reference photos and uploaded the ARKit GLB artifact.\\n\\nHead ID: `' + id + '`\\nArtifact: `neon-lock-in-gamer-head-arkit`'
-              : '### Neon Lock-In Gamer head build: FAILED\\n\\nCheck the workflow run logs. If credentials or Discord access are missing, the job fails before head generation.';
+              : '### Neon Lock-In Gamer head build: FAILED\\n\\nFetch step: ' + process.env.FETCH_OUTCOME + '\\nGeneration step: ' + process.env.GENERATE_OUTCOME + '\\n\\nReason: ' + reason;
             await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: 72, body});
