@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: targeted-user-data-recovery
+  group: targeted-user-data-recovery-shellfix
   cancel-in-progress: false
 
 jobs:
