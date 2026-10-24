@@ -96,6 +96,13 @@ jobs:
           REMOTE_OVERLAY
             encoded_overlay="$(base64 -w0 /tmp/overlaybay-recovery.sh)"
             if timeout 60s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded_overlay | base64 -d > /tmp/overlaybay-recovery.sh; sh /tmp/overlaybay-recovery.sh'" --quiet </dev/null > logs/overlaybay-command.out 2> logs/overlaybay-command.err; then
+              if timeout 90s flyctl ssh sftp get /tmp/overlaybay-inventory.txt recovered/overlaybay/machine-inventory.txt --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/overlaybay-inventory-sftp.out 2> logs/overlaybay-inventory-sftp.err; then
+                echo "OverlayBay machine inventory:" 
+                head -n 250 recovered/overlaybay/machine-inventory.txt
+              else
+                echo "OverlayBay inventory text download failed."
+                cat logs/overlaybay-inventory-sftp.err || true
+              fi
               if timeout 180s flyctl ssh sftp get /tmp/overlaybay-state.tar.gz recovered/overlaybay/overlaybay-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/overlaybay-sftp.out 2> logs/overlaybay-sftp.err; then
                 tar -tzf recovered/overlaybay/overlaybay-state.tar.gz > recovered/overlaybay/file-list.txt
                 sha256sum recovered/overlaybay/overlaybay-state.tar.gz > recovered/overlaybay/SHA256SUMS
