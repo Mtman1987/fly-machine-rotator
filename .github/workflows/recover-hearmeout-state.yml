@@ -80,10 +80,14 @@ jobs:
           if [ -s recovered/hearmeout/hearmeout-state.tar.gz ] && command -v sqlite3 >/dev/null 2>&1; then
             mkdir -p /tmp/hearmeout-check
             tar -xzf recovered/hearmeout/hearmeout-state.tar.gz -C /tmp/hearmeout-check
-            if [ -s /tmp/hearmeout-check/tmp/hearmeout-app.db ]; then
-              sqlite3 /tmp/hearmeout-check/tmp/hearmeout-app.db 'PRAGMA integrity_check;' > recovered/hearmeout/SQLITE-INTEGRITY.txt 2>&1 || true
-              cat recovered/hearmeout/SQLITE-INTEGRITY.txt
-            fi
+            : > recovered/hearmeout/SQLITE-INTEGRITY.txt
+            for db in /tmp/hearmeout-check/data/app.db /tmp/hearmeout-check/data/recovery/*.db; do
+              [ -s "$db" ] || continue
+              name="$(basename "$db")"
+              result="$(sqlite3 "$db" 'PRAGMA integrity_check;' 2>&1 || true)"
+              printf '%s: %s\\n' "$name" "$result" >> recovered/hearmeout/SQLITE-INTEGRITY.txt
+            done
+            cat recovered/hearmeout/SQLITE-INTEGRITY.txt
           fi
           {
             echo "app=$APP"
