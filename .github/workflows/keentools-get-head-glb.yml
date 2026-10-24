@@ -1,10 +1,10 @@
-name: KeenTools - Get 3D Head (GLB)
+name: KeenFace - Download Existing Head GLB (ARKit)
 
 on:
   workflow_dispatch:
     inputs:
-      avatar_id:
-        description: "Existing completed KeenTools avatar ID"
+      head_id:
+        description: "Existing completed KeenFace v2 head ID (no head creation)"
         required: true
         type: string
 
@@ -15,50 +15,79 @@ jobs:
   get-head:
     runs-on: ubuntu-latest
     steps:
-      - name: Request GLB with ARKit facial blendshapes
+      - name: Request existing GLB with ARKit blendshapes (v2)
         env:
-          KEENTOOLS_API_KEY: ${{ secrets.KEENTOOLS_API_KEY }}
-          AVATAR_ID: ${{ inputs.avatar_id }}
+          KEENFACE_API_KEY: ${{ secrets.KEENFACE_API_KEY || secrets.KEENTOOLS_API_KEY }}
+          HEAD_ID: ${{ inputs.head_id }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${KEENTOOLS_API_KEY}" ]]; then
-            echo "::error::Missing repository secret KEENTOOLS_API_KEY"
+          if [[ -z "${KEENFACE_API_KEY}" ]]; then
+            echo "::error::Missing repository secret KEENFACE_API_KEY (or legacy KEENTOOLS_API_KEY). No API request was made."
             exit 1
           fi
-          if [[ ! "${AVATAR_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-            echo "::error::avatar_id contains unsupported characters"
+          if [[ ! "${HEAD_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::head_id contains unsupported characters. No API request was made."
             exit 1
           fi
 
-          # GLB is a single model file. ARKit requests 51 facial morph targets.
+          # This only requests a file for an EXISTING head. It does not create or bill a new head.
+          endpoint="https://api.keenface.ai/v2/heads/${HEAD_ID}/model?mesh_format=glb&blendshapes=arkit"
+          for attempt in 1 2 3 4 5; do
+            status=$(curl --silent --show-error --location \
+              --output model-response.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${KEENFACE_API_KEY}" \
+              --header "Accept: application/json" \
+              "${endpoint}")
+            if [[ "${status}" != "200" ]]; then
+              echo "::error::KeenFace v2 model endpoint returned HTTP ${status}; no head was created."
+              jq -c '{error: .error}' model-response.json 2>/dev/null || head -c 1500 model-response.json
+              exit 1
+            fi
+
+            event=$(jq -er '.event' model-response.json) || {
+              echo "::error::KeenFace response did not contain the documented event field."
+              head -c 1500 model-response.json
+              exit 1
+            }
+            if [[ "${event}" == "redirect" ]]; then
+              download_url=$(jq -er '.data.url' model-response.json)
+              break
+            fi
+            if [[ "${event}" != "retry-after" ]]; then
+              echo "::error::Unexpected KeenFace model event: ${event}"
+              head -c 1500 model-response.json
+              exit 1
+            fi
+            if [[ "${attempt}" == "5" ]]; then
+              echo "::error::Model file is still preparing after five documented polling attempts. Re-run later; no head was created."
+              exit 1
+            fi
+            wait_seconds=$(jq -er '.data.time_sec' model-response.json)
+            echo "KeenFace is preparing the existing model; waiting ${wait_seconds}s as instructed."
+            sleep "${wait_seconds}"
+          done
+
+          # Signed URL expires quickly; download immediately and do not send the API key to it.
           status=$(curl --silent --show-error --location \
             --output head.glb \
             --write-out '%{http_code}' \
-            --header "Authorization: Bearer ${KEENTOOLS_API_KEY}" \
-            --header "Accept: model/gltf-binary, application/octet-stream" \
-            "https://api.keentools.io/v1/avatar/${AVATAR_ID}/get-3d-model?mesh_format=glb&blendshapes=arkit")
-
-          if [[ "${status}" != "200" ]]; then
-            echo "::error::KeenTools returned HTTP ${status}"
-            if [[ -f head.glb ]]; then head -c 2000 head.glb; fi
-            exit 1
-          fi
-          if [[ ! -s head.glb ]]; then
-            echo "::error::KeenTools returned an empty model"
+            "${download_url}")
+          if [[ "${status}" != "200" || ! -s head.glb ]]; then
+            echo "::error::Signed GLB download failed (HTTP ${status}). Request a fresh link by rerunning this workflow."
             exit 1
           fi
           if [[ "$(head -c 4 head.glb)" != "glTF" ]]; then
-            echo "::error::Response was not a binary GLB; refusing to publish it as a model"
-            head -c 2000 head.glb
+            echo "::error::Downloaded response is not a binary GLB; refusing to publish it."
             exit 1
           fi
-          echo "Received GLB with requested ARKit blendshapes ($(stat -c%s head.glb) bytes)."
+          echo "Downloaded existing KeenFace v2 GLB with ARKit blendshapes ($(stat -c%s head.glb) bytes). No head-generation request was made."
 
       - name: Publish GLB as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: keentools-head-glb-arkit
+          name: keenface-head-glb-arkit
           path: head.glb
           if-no-files-found: error
           retention-days: 7
