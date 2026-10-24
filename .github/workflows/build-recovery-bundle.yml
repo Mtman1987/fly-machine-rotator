@@ -10,7 +10,7 @@ on:
       run_ids:
         description: "Comma-separated GitHub Actions run IDs to include (defaults to the known recovery runs)"
         required: false
-        default: "40091621310,40092188524,40092238479,40098103035,40098643413,40098825641,40099026074,40098384843,40099097726"
+        default: "40091621310,40092188524,40092238479,40098103035,40098643413,40098825641,40099026074,40098384843,40099097726,40099389285"
         type: string
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
       - name: Download and unpack recovery artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_IDS: ${{ inputs.run_ids || '40091621310,40092188524,40092238479,40098103035,40098643413,40098825641,40099026074,40098384843,40099097726' }}
+          RUN_IDS: ${{ inputs.run_ids || '40091621310,40092188524,40092238479,40098103035,40098643413,40098825641,40099026074,40098384843,40099097726,40099389285' }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
