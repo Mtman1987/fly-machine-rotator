@@ -41,6 +41,8 @@ jobs:
           while IFS= read -r app; do
             [ -n "$app" ] || continue
             safe_app="$(printf '%s' "$app" | tr -cd 'A-Za-z0-9._-')"
+            # Recovery priority pass 1: Chat Tag, StreamWeaver, then Discord Stream Hub.
+            case "$safe_app" in chat-tag-new|streamweaver-new|discord-stream-hub-new) ;; *) continue ;; esac
             machines="/tmp/discovery/machines-$safe_app.json"
             if ! timeout 25s flyctl machines list --app "$app" --json > "$machines"; then
               echo "Machine discovery failed for app=$safe_app; other apps will continue." >&2
@@ -48,7 +50,7 @@ jobs:
             fi
             jq -c --arg app "$safe_app" '[.[] | select((.state // .State // "unknown") == "started") | {app:$app,machine:(.id // .ID),state:(.state // .State)} | select(.machine != null and .machine != "")]' "$machines" | jq -c '.[]' >> /tmp/discovery/targets.jsonl
           done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' /tmp/discovery/apps.json)
-          jq -sc '{include:.}' /tmp/discovery/targets.jsonl > /tmp/discovery/matrix.json
+          jq -sc 'sort_by(if .app == "chat-tag-new" then 0 elif .app == "streamweaver-new" then 1 elif .app == "discord-stream-hub-new" then 2 else 99 end) | {include:.}' /tmp/discovery/targets.jsonl > /tmp/discovery/matrix.json
           cat /tmp/discovery/matrix.json
           echo "matrix=$(jq -c . /tmp/discovery/matrix.json)" >> "$GITHUB_OUTPUT"
       - name: Preserve discovery diagnostics
@@ -65,7 +67,7 @@ jobs:
     if: ${{ needs.discover.outputs.matrix != '' && needs.discover.outputs.matrix != '{"include":[]}' }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 1
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
