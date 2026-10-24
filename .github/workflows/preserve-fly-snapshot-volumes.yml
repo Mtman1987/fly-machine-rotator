@@ -76,7 +76,7 @@ jobs:
             # Create a new volume from this snapshot only. Never attach, delete, deploy,
             # or modify the source volume. The region matches the supplied Chat Tag volume.
             set +e
-            output="$(timeout 180s flyctl volumes create "$name" --snapshot-id "$snapshot" --size "$size" --region ord -a "$app" 2>&1)"
+            output="$(timeout 180s flyctl volumes create "$name" --snapshot-id "$snapshot" --size "$size" --region ord -a "$app" --yes 2>&1)"
             rc=$?
             set -e
             printf '%s\n' "$output"
