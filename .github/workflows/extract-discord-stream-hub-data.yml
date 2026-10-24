@@ -60,7 +60,18 @@ jobs:
             fi
           done
           if [ -s recovered/discord-stream-hub/tmp/app-recovery.db ]; then
-            if command -v sqlite3 >/dev/null 2>&1; then sqlite3 recovered/discord-stream-hub/tmp/app-recovery.db 'PRAGMA integrity_check;' > recovered/discord-stream-hub/sqlite-integrity.txt 2>&1 || true; fi
+            if ! command -v sqlite3 >/dev/null 2>&1; then
+              sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
+            fi
+            if command -v sqlite3 >/dev/null 2>&1; then
+              sqlite3 recovered/discord-stream-hub/tmp/app-recovery.db 'PRAGMA integrity_check;' > recovered/discord-stream-hub/sqlite-integrity.txt 2>&1 || true
+              cat recovered/discord-stream-hub/sqlite-integrity.txt
+              grep -qx 'ok' recovered/discord-stream-hub/sqlite-integrity.txt || echo "SQLite integrity check did not return ok" > recovered/discord-stream-hub/INTEGRITY-WARNING.txt
+            else
+              echo "sqlite3 unavailable on runner; integrity not checked" > recovered/discord-stream-hub/INTEGRITY-WARNING.txt
+            fi
+          else
+            echo "Consistent SQLite backup was not downloaded; integrity not checked" > recovered/discord-stream-hub/INTEGRITY-WARNING.txt
           fi
           {
             echo "app=$app"
