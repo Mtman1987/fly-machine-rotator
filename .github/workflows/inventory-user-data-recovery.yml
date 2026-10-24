@@ -58,8 +58,8 @@ jobs:
               printf "DB_ENV_KEYS\\n"
               env | cut -d= -f1 | grep -Ei "DATABASE|POSTGRES|MYSQL|MONGO|REDIS|SQLITE|PRISMA|DRIZZLE" | sort -u || true'
               encoded="$(printf '%s' "$remote_script" | base64 -w0)"
-              result="$(timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "echo $encoded | base64 -d | sh" --quiet </dev/null 2>/dev/null || true)"
-              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg inventory "$result" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:(if $inventory=="" then "filesystem_inventory_failed_or_empty" else "inventory_complete" end)}' >> "$out/results.jsonl"
+              result="$(timeout 30s flyctl ssh console --app "$app" --machine "$machine" --command "sh -c 'echo $encoded | base64 -d | sh'" --quiet </dev/null 2>/dev/null || true)"
+              jq -nc --arg app "$safe_app" --arg machine "$machine" --arg state "$state" --arg mounts "$mount_paths" --arg inventory "$result" '{app:$app,machine:$machine,state:$state,mounts:$mounts,candidate_files_and_sizes:$inventory,status:(if $inventory=="" then "filesystem_inventory_failed_or_empty" elif ($inventory | startswith("for root in")) then "invalid_echoed_script_not_a_file_inventory" else "inventory_output_returned_review_required" end)}' >> "$out/results.jsonl"
             done < <(jq -c '.[] | {id:(.id // .ID),state:(.state // .State // "unknown"),config:(.config // {}),mounts:(.config.mounts // [])}' "$machines")
           done < <(jq -r '.[] | (.Name // .name // .app_name // empty)' "$out/apps.json")
           jq -s '{generatedAt:(now|todate),purpose:"Inventory only; no files copied; no secret values recorded",results:.}' "$out/results.jsonl" > "$out/report.json"
