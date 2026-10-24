@@ -26,12 +26,10 @@ jobs:
         shell: bash
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
-          RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/targeted-recovery/{encrypted,logs,raw}
           if [ -z "$FLY_API_TOKEN" ]; then echo "Fly token missing" > /tmp/targeted-recovery/logs/preflight.log; exit 1; fi
-          if [ -z "$RECOVERY_KEY" ]; then echo "SPMT_ADMIN_RECOVERY_KEY missing; refusing to encrypt with the Fly token" > /tmp/targeted-recovery/logs/preflight.log; exit 1; fi
           if ! timeout 30s flyctl apps list --json > /tmp/targeted-recovery/apps.json 2>/tmp/targeted-recovery/logs/apps-list.err; then
             echo "apps list failed; see apps-list.err" > /tmp/targeted-recovery/logs/preflight.log
             exit 1
@@ -43,7 +41,6 @@ jobs:
         shell: bash
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_MAIN || secrets.FLY_API_TOKEN }}
-          RECOVERY_KEY: ${{ secrets.SPMT_ADMIN_RECOVERY_KEY }}
         run: |
           set -uo pipefail
           base=/tmp/targeted-recovery
@@ -110,34 +107,25 @@ jobs:
                   elif ! tar -tzf "$local_archive" > "$local_files" 2> "$base/logs/$tag.integrity.err"; then
                     reason=archive_integrity_check_failed
                     echo "stage=integrity error=$(head -c 800 "$base/logs/$tag.integrity.err" | tr '\n' ' ')" >> "$base/logs/$tag.log"
-                  elif ! node - "$local_archive" "$base/encrypted/$safe_app-$machine.tar.gz.enc" <<'NODE'
-          const fs = require('node:fs');
-          const crypto = require('node:crypto');
-          const { pipeline } = require('node:stream/promises');
-          (async () => {
-            const [src, dst] = process.argv.slice(2);
-            const pass = process.env.RECOVERY_KEY;
-            if (!pass) throw new Error('SPMT_ADMIN_RECOVERY_KEY unavailable');
-            const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
-            const key = crypto.scryptSync(pass, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
-            const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-            const out = fs.createWriteStream(dst, { mode: 0o600 });
-            out.write(Buffer.concat([Buffer.from('SPMTFLY1'), salt, iv]));
-            await pipeline(fs.createReadStream(src), cipher, out);
-            fs.appendFileSync(dst, cipher.getAuthTag());
-            fs.unlinkSync(src);
-          })().catch(e => { process.stderr.write(String(e.message || e)); process.exitCode = 1; });
-          NODE
-                  then
+                  elif ! {
+                    pubkey="$base/raw/export-public.pem"
+                    printf '%s\n' '-----BEGIN PUBLIC KEY-----' 'MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAs+KIVdIzX8b6T3D3rGN1fWDUrWDYEkDIkHqpWrprjz25oHVQ3wKydiQCCim+56QjAZXCTf0FCkLkUMesZkbRBfnWhlX237axyV9d9CIP9eaJt57KiNlvxPeaNHv8J/NfthHMecw4+9ll1stgvrGP9zh2YdmPT9inDmK3ZaLi7gepcu8MXiKEEAIyePvEezBCMDL2T9ttUsNivE4VBn5gN+3CS7dbGspoQaEbSxy+lMahc4jxUwAB8a0cAgt4XMGSgSwtg3+hgElcuz36/VqD22Bz0NBqFhHBsSW1LGM7+hYl2gryN4wLnxVd0VkGZGF48yG+NygfYVzJX1UeLqfcuL6lrruK235AYKNeDL+f2lgT7WeqCtjwcRamdbivHyKtXsQiBcpMT675WRpdFy7KA4//IdcTUugxelWGfTbTPpZRkJIz6Tbc56dNTn63LnnoyvL8QAicwIi4btRpvBvMfJcaVJ4zrYH0Q8PwYSQaVQEmEdzCHkjEhwGr3o/CXcrLAgMBAAE=' '-----END PUBLIC KEY-----' > "$pubkey"
+                    openssl rand -hex 32 > "$base/raw/$tag.recovery-key"
+                    openssl enc -aes-256-cbc -salt -pbkdf2 -in "$local_archive" -out "$base/encrypted/$safe_app-$machine.tar.gz.enc" -pass "file:$base/raw/$tag.recovery-key" &&
+                    openssl pkeyutl -encrypt -pubin -inkey "$pubkey" -in "$base/raw/$tag.recovery-key" -out "$base/encrypted/$safe_app-$machine.tar.gz.key.enc"
+                  }; then
                     reason=encryption_failed
-                    echo "stage=encryption failed" >> "$base/logs/$tag.log"
+                    echo "stage=encryption failure=$(openssl version 2>&1 | head -c 100)" >> "$base/logs/$tag.log"
                   else
                     enc="$base/encrypted/$safe_app-$machine.tar.gz.enc"
+                    wrapped="$base/encrypted/$safe_app-$machine.tar.gz.key.enc"
+                    rm -f "$base/raw/$tag.recovery-key" "$local_archive"
                     sha="$(sha256sum "$enc" | awk '{print $1}')"
+                    key_sha="$(sha256sum "$wrapped" | awk '{print $1}')"
                     bytes="$(stat -c '%s' "$enc")"
                     files="$(wc -l < "$local_files" | tr -d ' ')"
-                    jq -nc --arg app "$safe_app" --arg machine "$machine" --arg file "$(basename "$enc")" --arg sha256 "$sha" --argjson bytes "$bytes" --argjson files "$files" --argjson attempts "$attempt" '{app:$app,machine:$machine,file:$file,sha256:$sha256,encrypted_bytes:$bytes,file_count:$files,attempts:$attempts,status:"encrypted_archive_created_integrity_checked"}' >> "$base/results.jsonl"
-                    echo "SUCCESS files=$files encrypted_bytes=$bytes sha256=$sha" >> "$base/logs/$tag.log"
+                    jq -nc --arg app "$safe_app" --arg machine "$machine" --arg file "$(basename "$enc")" --arg key_file "$(basename "$wrapped")" --arg sha256 "$sha" --arg key_sha256 "$key_sha" --argjson bytes "$bytes" --argjson files "$files" --argjson attempts "$attempt" '{app:$app,machine:$machine,file:$file,key_file:$key_file,sha256:$sha256,key_sha256:$key_sha256,encrypted_bytes:$bytes,file_count:$files,attempts:$attempts,status:"encrypted_archive_created_integrity_checked"}' >> "$base/results.jsonl"
+                    echo "SUCCESS files=$files encrypted_bytes=$bytes sha256=$sha wrapped_key_sha256=$key_sha" >> "$base/logs/$tag.log"
                     success=1
                     timeout 20s flyctl ssh console --app "$app" --machine "$machine" --command "rm -f $remote $list $status $rlog /tmp/user-data-$machine.sh" --quiet </dev/null >/dev/null 2>&1 || true
                     break
