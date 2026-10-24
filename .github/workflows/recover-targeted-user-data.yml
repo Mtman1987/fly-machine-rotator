@@ -101,9 +101,9 @@ jobs:
             script='set -u
               list="'$list'"
               : > "$list"
-              for root in /data /app/data /var/lib /home/node/.config; do
+              for root in /data /app /srv /opt /var/lib /home /etc; do
                 [ -d "$root" ] || continue
-                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*thumbnail*" -o -iname "*node_modules*" \) -prune -o -type f \( -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.db3" -o -iname "*.bson" -o -iname "*.json" -o -iname "*.jsonl" -o -iname "*.ndjson" -o -iname "*.csv" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" -o -iname "*.xml" -o -iname "*.conf" -o -iname "*.ini" -o -iname "*.env.example" -o -iname "*.txt" \) -print >> "$list" 2>/dev/null || true
+                find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*thumbnail*" -o -iname "*node_modules*" -o -iname ".git" -o -iname "*tmp*" \) -prune -o -type f -size -200M ! \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.webm" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" -o -iname "*.iso" -o -iname "*.zip" -o -iname "*.tar" -o -iname "*.gz" -o -iname "*.7z" \) -print >> "$list" 2>/dev/null || true
               done
               sort -u "$list" -o "$list"
               if [ ! -s "$list" ]; then echo no_candidate_files > "'$status'"; exit 22; fi
