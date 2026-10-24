@@ -1,0 +1,47 @@
+name: Remove exposed recovery artifacts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/remove-public-recovery-artifacts.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  remove-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Wait for recovery run to finish publishing artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=40070315949
+          for attempt in $(seq 1 160); do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.status' 2>/dev/null || echo unknown)"
+            echo "recovery_run=$run_id status=$status"
+            [ "$status" = "completed" ] && break
+            sleep 15
+          done
+
+      - name: Delete artifacts from public recovery runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_id in 40070021676 40070125847 40070315949; do
+            echo "Enumerating artifacts for recovery run $run_id"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts[].id' 2>/dev/null | while IFS= read -r artifact_id; do
+              [ -n "$artifact_id" ] || continue
+              echo "Deleting artifact id=$artifact_id run=$run_id"
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+            done
+          done
+          echo "Artifact deletion requests completed."
