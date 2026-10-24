@@ -34,23 +34,25 @@ jobs:
           APP=hmo-dj-worker
           MACHINE=683ddde2bd1e38
           echo "Lounge target: $APP / $MACHINE" | tee recovered/lounge/TARGET.txt
-          script='set -u
-            mkdir -p /tmp/lounge-recovery
-            : > /tmp/lounge-recovery/files.txt
-            # Keep Lounge program/config and app state; exclude Chromium caches/profiles.
-            for f in /data/lounge-program.json /data/*.json /data/*.db /data/*.sqlite /data/*.sqlite3; do
-              [ -f "$f" ] && printf "%s\\n" "$f" >> /tmp/lounge-recovery/files.txt
-            done
-            for root in /data/config /data/state /data/lounge /data/runtime /data/backups; do
-              [ -d "$root" ] && find "$root" -xdev -type d \\( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" \\) -prune -o -type f -size -100M \\( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \\) -print >> /tmp/lounge-recovery/files.txt 2>/dev/null || true
-            done
-            sort -u /tmp/lounge-recovery/files.txt -o /tmp/lounge-recovery/files.txt
-            if [ ! -s /tmp/lounge-recovery/files.txt ]; then echo "NO_FILES" > /tmp/lounge-recovery/status; exit 22; fi
-            tar -czf /tmp/lounge-recovery.tar.gz -T /tmp/lounge-recovery/files.txt
-            tar -tzf /tmp/lounge-recovery.tar.gz > /tmp/lounge-recovery/list.txt
-            echo "files=$(wc -l < /tmp/lounge-recovery/list.txt)" > /tmp/lounge-recovery/status
-          '
-          encoded="$(printf '%s' "$script" | base64 -w0)"
+          cat > /tmp/lounge-recovery.sh <<'REMOTE_SCRIPT'
+          set -u
+          mkdir -p /tmp/lounge-recovery
+          : > /tmp/lounge-recovery/files.txt
+          for f in /data/lounge-program.json /data/*.json /data/*.db /data/*.sqlite /data/*.sqlite3; do
+            [ -f "$f" ] && printf "%s\\n" "$f" >> /tmp/lounge-recovery/files.txt
+          done
+          for root in /data/config /data/state /data/lounge /data/runtime /data/backups; do
+            if [ -d "$root" ]; then
+              find "$root" -xdev -type d \( -iname "*cache*" -o -iname "*media*" -o -iname "*movie*" -o -iname "*music*" -o -iname "*chromium*" \) -prune -o -type f -size -100M \( -iname "*.json" -o -iname "*.jsonl" -o -iname "*.db" -o -iname "*.sqlite" -o -iname "*.sqlite3" -o -iname "*.yaml" -o -iname "*.yml" -o -iname "*.toml" \) -print >> /tmp/lounge-recovery/files.txt 2>/dev/null || true
+            fi
+          done
+          sort -u /tmp/lounge-recovery/files.txt -o /tmp/lounge-recovery/files.txt
+          if [ ! -s /tmp/lounge-recovery/files.txt ]; then echo "NO_FILES" > /tmp/lounge-recovery/status; exit 22; fi
+          tar -czf /tmp/lounge-recovery.tar.gz -T /tmp/lounge-recovery/files.txt
+          tar -tzf /tmp/lounge-recovery.tar.gz > /tmp/lounge-recovery/list.txt
+          echo "files=$(wc -l < /tmp/lounge-recovery/list.txt)" > /tmp/lounge-recovery/status
+          REMOTE_SCRIPT
+          encoded="$(base64 -w0 /tmp/lounge-recovery.sh)"
           if timeout 40s flyctl ssh console --app "$APP" --machine "$MACHINE" --command "sh -c 'echo $encoded | base64 -d > /tmp/lounge-recovery.sh; sh /tmp/lounge-recovery.sh'" --quiet </dev/null > logs/lounge-command.out 2> logs/lounge-command.err; then
             if timeout 180s flyctl ssh sftp get /tmp/lounge-recovery.tar.gz recovered/lounge/lounge-state.tar.gz --app "$APP" --machine "$MACHINE" --quiet </dev/null > logs/lounge-sftp.out 2> logs/lounge-sftp.err; then
               tar -tzf recovered/lounge/lounge-state.tar.gz > recovered/lounge/file-list.txt
