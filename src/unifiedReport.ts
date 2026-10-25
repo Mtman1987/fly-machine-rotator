@@ -206,6 +206,10 @@ export function buildUnifiedPayload(
     failedCyclesByFingerprint.set(key, { appName: cycle.appName, fingerprint: cycle.fingerprint, attempts: (prior?.attempts || 0) + 1, lastSummary: cycle.summary || prior?.lastSummary || "No failure summary recorded" });
   }
   const blacklisted = [...failedCyclesByFingerprint.values()].filter((entry) => entry.attempts >= 3);
+  const retryable = [...failedCyclesByFingerprint.values()].filter((entry) => entry.attempts > 0 && entry.attempts < 3);
+  const retryableText = retryable.length
+    ? retryable.slice(0, 12).map((entry) => `🟡 ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts}/3; next attempt ${entry.attempts + 1}/3)`).join("\n")
+    : "No incidents currently waiting for another automatic attempt.";
   const blacklistedText = blacklisted.length
     ? blacklisted.slice(0, 12).map((entry) => `${uniqueCurrentFailures.has(`${entry.appName}:${entry.fingerprint}`) ? "🔴" : "🟢"} ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts} times)`).join("\n")
     : "None (no fingerprint has reached three failed repair cycles).";
@@ -214,6 +218,7 @@ export function buildUnifiedPayload(
     `Error events in 24h: ${prunedErrors.length}`,
     `Proven fixes: ${knownFixes.length}`,
     `Failed repair cycles retained: ${repairCycles.filter((cycle) => cycle.status === "failed").length}`,
+    `Retryable incidents (1-2 failures): ${retryable.length}`,
     `Blacklisted signatures (3+ failed cycles): ${blacklisted.length}`,
     `Last log pass: ${lastPassText}`,
     "Blacklist status: red = still seen in this log window; green = not seen in this log window"
@@ -324,6 +329,11 @@ export function buildUnifiedPayload(
           {
             name: "Athena Notes",
             value: codeBlock(athenaText),
+            inline: false
+          },
+          {
+            name: "Outstanding Retries",
+            value: codeBlock(retryableText),
             inline: false
           },
           {
