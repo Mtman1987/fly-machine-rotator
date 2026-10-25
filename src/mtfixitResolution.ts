@@ -180,22 +180,22 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
   if (!job.changedFiles.length) { const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "no_change", updatedAt: new Date().toISOString(), signature, message: safeText(job.summary || "Athena did not find a code change to apply.") }; await saveResolution(env, state); return state; }
   const checksPass = job.checks.length > 0 && job.checks.every((check) => check.ok);
   if (!checksPass) { const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "failed", updatedAt: new Date().toISOString(), signature, message: "Athena found a possible fix, but validation did not pass." }; await saveResolution(env, state); return state; }
-  const existing = await readMtFixItResolution(env, job.id); if (existing && ["awaiting_approval", "deploying", "deployed", "failed", "denied"].includes(existing.status)) return existing;
+  const existing = await readMtFixItResolution(env, job.id); if (existing && ["deploying", "deployed", "failed", "denied"].includes(existing.status)) return existing;
   const patchHash = await jobPatchHash(env, job.id);
   const known = Boolean(patchHash) && (await listKnownFixes(env)).some((item) => item.signature === signature && item.repoId === job.repoId && item.patchHash === patchHash);
   const state: MtFixItResolutionState = {
     schemaVersion: "mtfixit.resolution/v1",
     jobId: job.id,
-    status: known ? "deploying" : "awaiting_approval",
+    status: "deploying",
     updatedAt: new Date().toISOString(),
     signature,
     patchHash: patchHash || undefined,
     knownFix: known,
     message: known
-      ? "This report regenerated the exact previously approved validated patch. Athena is applying the known fix automatically."
-      : "Athena found and validated a new or changed fix. mtman approval is required before merge/deployment.",
+      ? "Previously successful patch matched exactly. Automatically merging and deploying after validation."
+      : "Validated repair patch produced and all configured checks passed. Automatically merging and deploying; deployment verification is required before this is marked complete.",
   };
-  await saveResolution(env, state); if (known) void deployInBackground(job, env, dashboardPort, state); return state;
+  await saveResolution(env, state); void deployInBackground(job, env, dashboardPort, state); return state;
 }
 
 export async function applyMtFixItResolutionAction(jobId: string, action: ResolutionAction, env: NodeJS.ProcessEnv, dashboardPort: number) {
