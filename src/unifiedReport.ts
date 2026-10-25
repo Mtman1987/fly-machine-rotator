@@ -249,7 +249,7 @@ export function buildUnifiedPayload(
   ].join("\n");
   const baseUrl = dashboardUrl.replace(/\/$/, "");
   const latestRepairCycle = repairCycles.at(-1);
-  const confidenceMatch = String(latestRepairCycle?.summary || "").match(/Athena confidence:\\s*(\\d{1,3})%/i);
+  const confidenceMatch = String(latestRepairCycle?.summary || "").match(/Athena confidence:\s*(\d{1,3})%/i);
   const confidencePercent = confidenceMatch ? Math.max(0, Math.min(100, Number(confidenceMatch[1]))) : undefined;
   const confidenceSignal = confidencePercent === undefined
     ? "⚪ confidence not reported"
