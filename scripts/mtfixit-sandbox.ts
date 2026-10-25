@@ -9,8 +9,8 @@ const state: RotatorRuntimeState = {
   lastRunLines: ["OK mock-lounge restart", "OK mock-chat handoff"]
 };
 const cycles = [
-  ...[1, 2, 3].map((n) => ({ appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: `Attempt ${n} failed${n === 3 ? "; Athena confidence: 87%" : ""}` })),
-  ...[1, 2, 3].map(() => ({ appName: "mock-chat", fingerprint: "not-seen-456", status: "failed", summary: "Not seen in the latest log pass" }))
+  ...[1, 2, 3].map(() => ({ appName: "mock-chat", fingerprint: "not-seen-456", status: "failed", summary: "Not seen in the latest log pass" })),
+  ...[1, 2, 3].map((n) => ({ appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: `Attempt ${n} failed${n === 3 ? "; Athena confidence: 87%" : ""}` }))
 ];
 const fixes = Array.from({ length: 23 }, (_, i) => ({ signature: `fix-${i}`, incidentFingerprint: `proven-${i}`, repoId: "mock", successfulDeploys: 1 }));
 const payload = buildUnifiedPayload(
