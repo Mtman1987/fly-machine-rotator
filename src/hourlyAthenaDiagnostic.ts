@@ -111,7 +111,7 @@ function incidentKey(event: ErrorEvent) { return `${event.appName}:${event.finge
 async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> {
   const events = await readJson<ErrorEvent[]>(historyFile(env), []);
   const cycles = await readCycles(env);
-  const attempted = new Set(cycles.map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
+  const attempted = new Set(cycles.filter((cycle) => cycle.status !== "failed").map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
   const failedAttempts = new Map<string, number>();
   for (const cycle of cycles) {
     if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
