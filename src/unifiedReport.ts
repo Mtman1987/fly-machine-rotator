@@ -193,9 +193,11 @@ export function buildUnifiedPayload(
   const latestHistoryEntry = rotationHistory.at(-1);
   const brandAssets = getBrandAssetUrls(dashboardUrl);
   const latestRotation = latestRotationResults ? summarizeRotationResults(latestRotationResults) : summarizeLatestRotation(rotationHistory);
-  const failureCounts = summarizeFailureCounts(prunedErrors);
-  const uniqueCurrentFailures = new Set(prunedErrors.map((event) => `${event.appName}:${event.fingerprint}`));
   const provenFixCount = new Set(knownFixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size;
+  const provenFingerprints = new Set(knownFixes.map((fix) => fix.incidentFingerprint).filter((fingerprint): fingerprint is string => Boolean(fingerprint)));
+  const activeErrors = prunedErrors.filter((event) => !provenFingerprints.has(event.fingerprint));
+  const failureCounts = summarizeFailureCounts(activeErrors);
+  const uniqueCurrentFailures = new Set(activeErrors.map((event) => `${event.appName}:${event.fingerprint}`));
   const lastPassText = uniqueCurrentFailures.size
     ? `🔴 ${uniqueCurrentFailures.size} error fingerprints still present in this log window`
     : "🟢 No error fingerprints present in this log window";
@@ -216,7 +218,7 @@ export function buildUnifiedPayload(
     : "None (no fingerprint has reached three failed repair cycles).";
   const repairAnalyticsText = [
     `Open error fingerprints: ${uniqueCurrentFailures.size}`,
-    `Error events in 24h: ${prunedErrors.length}`,
+    `Outstanding error events in 24h: ${activeErrors.length}`,
     `Proven fixes: ${provenFixCount}`,
     `Failed repair cycles retained: ${repairCycles.filter((cycle) => cycle.status === "failed").length}`,
     `Retryable incidents (1-2 failures): ${retryable.length}`,
