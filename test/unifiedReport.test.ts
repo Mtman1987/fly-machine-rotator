@@ -44,7 +44,7 @@ describe("buildUnifiedPayload", () => {
     const now = new Date().toISOString();
     const payload = buildUnifiedPayload(
       [{ at: now, startedAt: now, finishedAt: now, results: [{ appName: "mock-lounge", success: true, mode: "restart", warnings: 0 }] }],
-      [{ recordedAt: now, appName: "mock-lounge", fingerprint: "still-failing-123", message: "mock failure", suggestion: "retry", context: [] }],
+      [{ recordedAt: now, appName: "mock-lounge", fingerprint: "still-failing-123", message: "mock failure", suggestion: "retry", context: [] }, { recordedAt: now, appName: "mock-lounge", fingerprint: "fixed-incident-789", message: "previously fixed failure", suggestion: "none", context: [] }],
       runtimeState(),
       undefined,
       "https://example.test",
@@ -60,14 +60,16 @@ describe("buildUnifiedPayload", () => {
         { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
         { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass; Athena confidence: 42%" }
       ],
-      [{ signature: "known-signature", incidentFingerprint: "proven-incident", repoId: "mock", successfulDeploys: 1 }]
+      [{ signature: "known-signature", incidentFingerprint: "proven-incident", repoId: "mock", successfulDeploys: 1 }, { signature: "fixed-signature", incidentFingerprint: "fixed-incident-789", repoId: "mock", successfulDeploys: 1 }]
     ) as { embeds: Array<{ fields: Array<{ name: string; value: string }> }> };
     const fields = payload.embeds[0].fields;
     const analytics = fields.find((field) => field.name === "Repair Analytics")?.value || "";
     const athena = fields.find((field) => field.name === "Athena Notes")?.value || "";
     const blacklist = fields.find((field) => field.name === "Blacklisted Errors")?.value || "";
     const retries = fields.find((field) => field.name === "Outstanding Retries")?.value || "";
-    expect(analytics).toContain("Proven fixes: 1");
+    expect(analytics).toContain("Proven fixes: 2");
+    expect(analytics).toContain("Open error fingerprints: 1");
+    expect(analytics).toContain("Outstanding error events in 24h: 1");
     expect(analytics).toContain("Blacklisted signatures (3+ failed cycles): 2");
     expect(athena).toContain("Athena confidence 42%");
     expect(athena).toContain("🔴");
