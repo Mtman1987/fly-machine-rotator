@@ -149,15 +149,19 @@ export function inferRepo(input: CreateJobInput): RepoConfig {
   return getRepoConfigForApp(appName) || listRepoConfigs().find((repo) => repo.id === "streamweaver")!;
 }
 
-function parseQwenCoderResult(content: string): { summary: string; patch: string } {
+function parseQwenCoderResult(content: string): { summary: string; patch: string; confidencePercent?: number } {
   const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("Qwen Coder did not return a JSON object.");
-  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { summary?: unknown; patch?: unknown };
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { summary?: unknown; patch?: unknown; confidencePercent?: unknown };
+  const rawConfidence = Number(parsed.confidencePercent);
+  const confidencePercent = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(100, Math.round(rawConfidence))) : undefined;
+  const summary = redact(String(parsed.summary || "Qwen inspected the assigned repository."));
   return {
-    summary: redact(String(parsed.summary || "Qwen inspected the assigned repository.")),
+    summary: `${summary}\\nAthena confidence: ${confidencePercent === undefined ? "not reported" : `${confidencePercent}% (model self-assessment; tests and live verification remain authoritative)`}`,
     patch: String(parsed.patch || "").trim(),
+    confidencePercent,
   };
 }
 
@@ -176,7 +180,7 @@ async function runQwenCoder(description: string, workspace: string, env: NodeJS.
       max_tokens: 4000,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are Stella Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"patch\":\"unified git diff or empty string\"}. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, APIs, or validation results. The executor runs checks after your response, so do not claim tests, typechecks, or builds ran. Patch paths must be repository-relative." },
+        { role: "system", content: "You are Stella Coder. Inspect the supplied repository files and return strict JSON only: {\"summary\":\"evidence-based result\",\"confidencePercent\":0,\"patch\":\"unified git diff or empty string\"}. Set confidencePercent to an honest integer from 0 to 100 based on evidence quality and causal certainty, not optimism. Make the smallest safe change. If the requested behavior is already implemented, return an empty patch. Never invent environment flags, secrets, files, APIs, or validation results. The executor runs checks after your response, so do not claim tests, typechecks, or builds ran. Patch paths must be repository-relative." },
         { role: "user", content: `Task:\n${description}\n\nSelected repository files:${context}\n\n/no_think` },
       ],
     }),
