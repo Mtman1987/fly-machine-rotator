@@ -112,10 +112,21 @@ async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> 
   const events = await readJson<ErrorEvent[]>(historyFile(env), []);
   const cycles = await readCycles(env);
   const attempted = new Set(cycles.map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
+  const failedAttempts = new Map<string, number>();
+  for (const cycle of cycles) {
+    if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
+    const key = `${cycle.appName}:${cycle.fingerprint}`;
+    failedAttempts.set(key, (failedAttempts.get(key) || 0) + 1);
+  }
   return (Array.isArray(events) ? events : [])
     .filter((event) => Boolean(event?.appName && event?.fingerprint && event?.recordedAt && event?.message))
     .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))
-    .find((event) => classifyIncident({ ...event, context: event.context || [] }).autoFixEligible && !attempted.has(incidentKey(event))) || null;
+    .find((event) => {
+      const key = `${event.appName}:${event.fingerprint}`;
+      return classifyIncident({ ...event, context: event.context || [] }).autoFixEligible
+        && !attempted.has(incidentKey(event))
+        && (failedAttempts.get(key) || 0) < 3;
+    }) || null;
 }
 
 export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; jobId?: string; fileContent?: string }) {
