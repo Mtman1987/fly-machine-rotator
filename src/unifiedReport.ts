@@ -187,6 +187,17 @@ export function buildUnifiedPayload(
   const brandAssets = getBrandAssetUrls(dashboardUrl);
   const latestRotation = latestRotationResults ? summarizeRotationResults(latestRotationResults) : summarizeLatestRotation(rotationHistory);
   const failureCounts = summarizeFailureCounts(prunedErrors);
+  const uniqueCurrentFailures = new Set(prunedErrors.map((event) => `${event.appName}:${event.fingerprint}`));
+  const lastPassText = uniqueCurrentFailures.size
+    ? `🔴 ${uniqueCurrentFailures.size} error fingerprints still present in this log window`
+    : "🟢 No error fingerprints present in this log window";
+  const repairAnalyticsText = [
+    `Open error fingerprints: ${uniqueCurrentFailures.size}`,
+    `Error events in 24h: ${prunedErrors.length}`,
+    `Athena attempts retained: ${latestAthenaAttempt ? 1 : 0} latest attempt available`,
+    `Last log pass: ${lastPassText}`,
+    "Blacklisted-attempt tracking: not yet available in the current runtime ledger"
+  ].join("\\n");
   const latestRunLines = latestRotationResults
     ? latestRotationResults.map((result) => renderModeLine(result.appName, inferMode(result.previousActiveId, result.newActiveId))).join("\n")
     : renderLatestRunLines(rotationHistory, runtimeState.lastRunLines);
