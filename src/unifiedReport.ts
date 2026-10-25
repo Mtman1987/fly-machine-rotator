@@ -82,6 +82,7 @@ async function updateUnifiedDiscordReport(
   const files = [
     { name: "rotator-run-readout.json", content: JSON.stringify(evidence, null, 2) },
     { name: "rotator-log-snapshot.json", content: JSON.stringify(evidence.logSnapshot, null, 2) },
+    { name: "rotator-detailed-report.txt", content: renderDetailedOperationsReport(rotationHistory, errorHistory, observationHistory, athenaAttempts) },
   ];
   // Persist the exact attachment payloads locally first. Discord is a delivery
   // destination, not the canonical store that Athena/SPMT must read back from.
@@ -146,14 +147,14 @@ export async function persistUnifiedReportAttachments(
   files: Array<{ name: string; content: string }>,
   evidenceRoot = process.env.ROTATOR_EVIDENCE_DIR ?? "/data/operations-evidence"
 ): Promise<string[]> {
-  const allowed = new Set(["rotator-run-readout.json", "rotator-log-snapshot.json"]);
+  const allowed = new Set(["rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"]);
   const folder = join(evidenceRoot, "discord-report");
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const saved: string[] = [];
   for (const file of files) {
     if (!allowed.has(file.name)) throw new Error(`Unexpected unified report attachment: ${file.name}`);
-    // The same JSON string is used for Discord and local persistence.
-    JSON.parse(file.content);
+    // JSON attachments are validated as JSON; the detailed report is intentionally plain text.
+    if (file.name.endsWith(".json")) JSON.parse(file.content);
     const path = join(folder, file.name);
     await writeFile(path, file.content, { mode: 0o600 });
     await chmod(path, 0o600);
@@ -163,7 +164,7 @@ export async function persistUnifiedReportAttachments(
   await writeFile(manifest, JSON.stringify({
     schemaVersion: "rotator.discord-report-cache/v1",
     updatedAt: new Date().toISOString(),
-    files: ["rotator-run-readout.json", "rotator-log-snapshot.json"]
+    files: ["rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"]
   }, null, 2), { mode: 0o600 });
   await chmod(manifest, 0o600);
   return [...saved, manifest];
@@ -360,6 +361,34 @@ function summarizeFailureCounts(events: StoredErrorEvent[]): string {
     .map(([appName, count]) => `${appName}: ${count}`)
     .join("\n")
     .slice(0, 1000);
+}
+
+function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[], errors: StoredErrorEvent[], observations: StoredErrorEvent[], attempts: AthenaIncidentAttempt[]): string {
+  const latest = rotationHistory.at(-1);
+  const lines = [
+    "FLY ROTATOR + ATHENA — DETAILED OPERATIONS REPORT",
+    `Generated: ${new Date().toISOString()}`,
+    `Rotation runs retained: ${rotationHistory.length}`,
+    `Error events retained: ${errors.length}`,
+    `Observation events retained: ${observations.length}`,
+    `Athena attempts retained: ${attempts.length}`,
+    "",
+    "LATEST ROTATION",
+    latest ? `At: ${latest.finishedAt ?? latest.at}; trigger: ${latest.trigger ?? "unknown"}; duration: ${latest.durationMs ?? "unknown"}ms` : "No rotation run is recorded."
+  ];
+  if (latest) for (const result of latest.results) lines.push(`- ${result.success ? "SUCCESS" : "FAIL"} ${result.appName}; mode=${result.mode}; from=${result.from ?? "unknown"}; to=${result.to ?? "unknown"}; warnings=${result.warnings ?? 0}; error=${redactSensitiveText(result.error ?? "none")}`);
+  lines.push("", "LATEST ATHENA ATTEMPTS");
+  for (const attempt of attempts.slice(-50).reverse()) lines.push(`- ${attempt.attemptedAt} ${attempt.appName} ${attempt.status} fingerprint=${attempt.fingerprint} incident=${attempt.incidentId}; ${redactSensitiveText(attempt.summary ?? "no summary")}`);
+  lines.push("", "ERROR EVENTS");
+  for (const event of pruneRecentHistory(errors, 7 * 24 * 60 * 60 * 1000).slice(-300).reverse()) {
+    lines.push(`- ${event.recordedAt} ${event.appName} fingerprint=${event.fingerprint} machine=${event.machineId ?? "unknown"} region=${event.region ?? "unknown"}`);
+    lines.push(`  Error: ${redactSensitiveText(event.message)}`);
+    lines.push(`  Suggestion: ${redactSensitiveText(event.suggestion)}`);
+    for (const item of (event.context ?? []).slice(-8)) lines.push(`  Log: ${redactSensitiveText(item)}`);
+  }
+  lines.push("", "OBSERVED-ONLY EVENTS");
+  for (const event of pruneRecentHistory(observations, 7 * 24 * 60 * 60 * 1000).slice(-200).reverse()) lines.push(`- ${event.recordedAt} ${event.appName} fingerprint=${event.fingerprint}: ${redactSensitiveText(event.message)}`);
+  return lines.join("\\n").slice(-900_000);
 }
 
 function renderLast24HourReport(events: StoredErrorEvent[]): string {
