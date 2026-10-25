@@ -40,6 +40,41 @@ describe("persistUnifiedReportAttachments", () => {
 });
 
 describe("buildUnifiedPayload", () => {
+  it("renders mock-room repair outcomes, retry counts, confidence, and red/green blacklist states", () => {
+    const now = new Date().toISOString();
+    const payload = buildUnifiedPayload(
+      [{ at: now, startedAt: now, finishedAt: now, results: [{ appName: "mock-lounge", success: true, mode: "restart", warnings: 0 }] }],
+      [{ recordedAt: now, appName: "mock-lounge", fingerprint: "still-failing-123", message: "mock failure", suggestion: "retry", context: [] }],
+      runtimeState(),
+      undefined,
+      "https://example.test",
+      [],
+      { incidentId: "mock-lounge:still-failing-123", appName: "mock-lounge", fingerprint: "still-failing-123", rotationKey: "mock", attemptedAt: now, finishedAt: now, status: "failed", summary: "Mock room check failed" },
+      [],
+      undefined,
+      [
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt one failed" },
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt two failed" },
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt three failed; Athena confidence: 42%" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" }
+      ],
+      [{ signature: "known-signature", incidentFingerprint: "proven-incident", repoId: "mock", successfulDeploys: 1 }]
+    ) as { embeds: Array<{ fields: Array<{ name: string; value: string }> }> };
+    const fields = payload.embeds[0].fields;
+    const analytics = fields.find((field) => field.name === "Repair Analytics")?.value || "";
+    const athena = fields.find((field) => field.name === "Athena Notes")?.value || "";
+    const blacklist = fields.find((field) => field.name === "Blacklisted Errors")?.value || "";
+    const retries = fields.find((field) => field.name === "Outstanding Retries")?.value || "";
+    expect(analytics).toContain("Proven fixes: 1");
+    expect(analytics).toContain("Blacklisted signatures (3+ failed cycles): 2");
+    expect(athena).toContain("Athena confidence 42%");
+    expect(athena).toContain("🔴");
+    expect(blacklist).toContain("🔴 mock-lounge");
+    expect(blacklist).toContain("🟢 mock-chat");
+    expect(retries).toContain("No incidents currently waiting for another automatic attempt.");
+  });
   it("does not call an empty repair queue an error-free fleet", () => {
     const payload = buildUnifiedPayload([], [], runtimeState(), undefined, "https://example.test", [{
       recordedAt: new Date().toISOString(), appName: "apollo", fingerprint: "auth-failure",
