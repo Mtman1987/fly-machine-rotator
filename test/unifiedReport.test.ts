@@ -13,7 +13,8 @@ describe("persistUnifiedReportAttachments", () => {
     try {
       const saved = await persistUnifiedReportAttachments([
         { name: "rotator-run-readout.json", content: readout },
-        { name: "rotator-log-snapshot.json", content: snapshot },\n        { name: "rotator-detailed-report.txt", content: detail }
+        { name: "rotator-log-snapshot.json", content: snapshot },
+        { name: "rotator-detailed-report.txt", content: detail }
       ], root);
       expect(await readFile(join(root, "discord-report", "rotator-run-readout.json"), "utf8")).toBe(readout);
       expect(await readFile(join(root, "discord-report", "rotator-log-snapshot.json"), "utf8")).toBe(snapshot);
