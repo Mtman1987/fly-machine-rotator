@@ -24,6 +24,7 @@ type CodexJob = {
 type KnownFix = {
   signature: string;
   patchHash: string;
+  incidentFingerprint?: string;
   repoId: string;
   normalizedReport: string;
   learnedAt: string;
@@ -95,6 +96,7 @@ async function rememberKnownFix(env: NodeJS.ProcessEnv, job: CodexJob, state: Mt
   const next: KnownFix = {
     signature: state.signature,
     patchHash: state.patchHash,
+    incidentFingerprint: state.incidentFingerprint,
     repoId: job.repoId,
     normalizedReport: normalizedReport(job.description),
     learnedAt: new Date().toISOString(),
