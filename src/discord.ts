@@ -1,4 +1,5 @@
 import { AppRotationResult } from "./types.js";
+import { runHourlyAthenaDiagnostic } from "./hourlyAthenaDiagnostic.js";
 import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
@@ -12,6 +13,9 @@ export async function sendDiscordReport(webhookUrl: string | undefined, results:
     await history.save();
   }
   await upsertUnifiedDiscordReport(webhookUrl, results);
+  if (results.some((result) => !result.success)) {
+    void runHourlyAthenaDiagnostic(process.env).catch(() => console.error("Rotator failure did not start Athena repair."));
+  }
 }
 
 function formatSummary(results: AppRotationResult[]): string {
