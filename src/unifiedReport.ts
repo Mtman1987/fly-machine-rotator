@@ -248,15 +248,21 @@ export function buildUnifiedPayload(
     `Observed only (${window ? "current window" : "7d"}): ${observations.length}`
   ].join("\n");
   const baseUrl = dashboardUrl.replace(/\/$/, "");
-  const athenaText = latestAthenaAttempt
-    ? [
-        `${latestAthenaAttempt.appName} • ${latestAthenaAttempt.status}`,
-        `fingerprint ${latestAthenaAttempt.fingerprint}`,
-        `started ${formatTimestamp(latestAthenaAttempt.attemptedAt)}`,
-        latestAthenaAttempt.finishedAt ? `finished ${formatTimestamp(latestAthenaAttempt.finishedAt)}` : "still running",
-        latestAthenaAttempt.summary?.slice(0, 420)
-      ].filter(Boolean).join("\n")
-    : "Athena has not attempted an incident in the current retained history.";
+  const latestRepairCycle = repairCycles.at(-1);
+  const confidenceMatch = String(latestRepairCycle?.summary || "").match(/Athena confidence:\\s*(\\d{1,3})%/i);
+  const confidencePercent = confidenceMatch ? Math.max(0, Math.min(100, Number(confidenceMatch[1]))) : undefined;
+  const confidenceSignal = confidencePercent === undefined
+    ? "⚪ confidence not reported"
+    : `${confidencePercent >= 80 ? "🟢" : confidencePercent >= 50 ? "🟡" : "🔴"} Athena confidence ${confidencePercent}% (model self-assessment)`;
+  const athenaText = [
+    latestAthenaAttempt ? `${latestAthenaAttempt.appName} • ${latestAthenaAttempt.status}` : "Athena repair history",
+    latestAthenaAttempt ? `fingerprint ${latestAthenaAttempt.fingerprint}` : undefined,
+    latestAthenaAttempt ? `started ${formatTimestamp(latestAthenaAttempt.attemptedAt)}` : undefined,
+    latestAthenaAttempt?.finishedAt ? `finished ${formatTimestamp(latestAthenaAttempt.finishedAt)}` : undefined,
+    confidenceSignal,
+    latestRepairCycle?.summary?.slice(0, 420),
+    latestAthenaAttempt?.summary?.slice(0, 220)
+  ].filter(Boolean).join("\n");
   const queueLinks = [
     `[Athena repair queue](${baseUrl}/#fixes) • [Observation ledger](${baseUrl}/#observations)`,
     `[Repair queue Markdown](${baseUrl}/logs/errors.md) • [Observation Markdown](${baseUrl}/logs/observations.md)`
