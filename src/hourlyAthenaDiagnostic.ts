@@ -108,7 +108,7 @@ function unwrapJob(payload: any): CoderJob | null {
 
 function incidentKey(event: ErrorEvent) { return `${event.appName}:${event.fingerprint}:${event.recordedAt}`; }
 
-async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> {
+async function pickIncident(env: NodeJS.ProcessEnv, target?: { appName: string; fingerprint: string }): Promise<ErrorEvent | null> {
   const events = await readJson<ErrorEvent[]>(historyFile(env), []);
   const cycles = await readCycles(env);
   const attempted = new Set(cycles.filter((cycle) => cycle.status !== "failed").map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
@@ -120,6 +120,7 @@ async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> 
   }
   return (Array.isArray(events) ? events : [])
     .filter((event) => Boolean(event?.appName && event?.fingerprint && event?.recordedAt && event?.message))
+    .filter((event) => !target || (event.appName === target.appName && event.fingerprint === target.fingerprint))
     .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))
     .find((event) => {
       const key = `${event.appName}:${event.fingerprint}`;
@@ -161,7 +162,7 @@ export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: stri
   }
 }
 
-export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process.env, now = new Date()): Promise<HourlyRepairCycle> {
+export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process.env, now = new Date(), target?: { appName: string; fingerprint: string }): Promise<HourlyRepairCycle> {
   const cycle: HourlyRepairCycle = {
     id: `hourly-${now.toISOString().replace(/[:.]/g, "-")}`,
     startedAt: now.toISOString(),
@@ -170,7 +171,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
   };
   await saveCycle(env, cycle);
   try {
-    const event = await pickIncident(env);
+    const event = await pickIncident(env, target);
     if (!event) {
       cycle.status = "no-actionable-incident";
       cycle.summary = "No new auto-fix-eligible incident was found.";
