@@ -5,6 +5,7 @@ import { getRuntimeStateFile, RotatorRuntimeStateStore } from "./runtimeState.js
 import { SUCCESS_INTERVAL_MS } from "./rotationControl.js";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
 import { prepareIncidentRepairForApproval } from "./incidentRepairPipeline.js";
+import { runHourlyAthenaDiagnostic } from "./hourlyAthenaDiagnostic.js";
 
 export interface AthenaIncidentAttempt {
   incidentId: string;
@@ -69,8 +70,12 @@ export async function triggerAthenaForIncident(
     if (!response.ok) throw new Error(`Stella generate returned ${response.status}: ${body.slice(0, 500)}`);
 
     const preparation = await prepareIncidentRepairForApproval(event.appName, event.fingerprint, env);
-    attempt.status = preparation.status === "error" ? "failed" : "completed";
-    attempt.summary = `${body.slice(0, 240)} preparation=${preparation.status}: ${preparation.message}`.slice(0, 1000);
+    const automatedRepair = await runHourlyAthenaDiagnostic(env, new Date(), event).catch((error) => ({
+      status: "failed",
+      summary: error instanceof Error ? error.message : String(error)
+    }));
+    attempt.status = preparation.status === "error" || automatedRepair.status === "failed" ? "failed" : "completed";
+    attempt.summary = `${body.slice(0, 240)} legacyPreparation=${preparation.status}: ${preparation.message}; MtFixIt=${automatedRepair.status}: ${automatedRepair.summary}`.slice(0, 1000);
   } catch (error) {
     attempt.status = "failed";
     attempt.summary = error instanceof Error ? error.message : String(error);
