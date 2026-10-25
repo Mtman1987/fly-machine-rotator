@@ -68,7 +68,7 @@ async function updateUnifiedDiscordReport(
   const stateFile = getUnifiedReportStateFile();
   const dashboardUrl = getDashboardUrl();
 
-  const [rotationHistory, errorHistory, observationHistory, athenaAttempts, currentState, runtimeState] = await Promise.all([
+  const [rotationHistory, errorHistory, observationHistory, athenaAttempts, repairCycles, knownFixes, currentState, runtimeState] = await Promise.all([
     readRotationHistory(rotationHistoryFile),
     readErrorHistory(errorHistoryFile),
     readErrorHistory(observationHistoryFile),
