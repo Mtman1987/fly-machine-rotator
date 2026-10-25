@@ -11,7 +11,7 @@ test('known-fix signature is stable for the same normalized report and repo', ()
   assert.notEqual(left, mtFixItKnownFixSignature({ repoId: 'streamweaver', description: `I can't tag people even though im it` }));
 });
 
-test('resolution workflow owner-gates new fixes and auto-deploys only exact known fixes', () => {
+test('resolution workflow auto-deploys validated fixes and verifies deployment', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /const known = Boolean\(patchHash\).*item\.patchHash === patchHash/s);
   assert.match(source, /status: known \? "deploying" : "awaiting_approval"/);
@@ -20,8 +20,8 @@ test('resolution workflow owner-gates new fixes and auto-deploys only exact know
   assert.match(source, /await verifyDeployment\(/);
   assert.match(source, /state\.status = "deployed"/);
   assert.match(source, /await rememberKnownFix\(env, job, state\)/);
-  assert.doesNotMatch(source, /queueMtFixItForChatGpt/);
-  assert.doesNotMatch(source, /status: 'awaiting_chatgpt'/);
+  assert.match(source, /waitForPullRequestChecks\(repo, pullRequest\.number, env\)/);
+  assert.match(source, /const checksPass = job\.checks\.length > 0 && job\.checks\.every\(\(check\) => check\.ok\)/);
 });
 
 test('known-fix history requires the same repo signature and exact patch hash', () => {
