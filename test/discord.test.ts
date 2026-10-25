@@ -51,7 +51,7 @@ describe("sendDiscordReport", () => {
     expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
     const form = fetchMock.mock.calls[2]?.[1]?.body as FormData;
     const payload = JSON.parse(String(form.get("payload_json")));
-    expect(payload.attachments.map((item: any) => item.filename)).toEqual(["rotator-run-readout.json", "rotator-log-snapshot.json"]);
+    expect(payload.attachments.map((item: any) => item.filename)).toEqual(["rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"]);
     const evidence = JSON.parse(await (form.get("files[0]") as Blob).text());
     expect(evidence.latestRun[0].previousActiveId).toBe("old-machine");
     expect(evidence.latestRun[0].newActiveId).toBe("new-machine");
