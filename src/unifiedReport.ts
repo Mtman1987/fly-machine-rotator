@@ -207,7 +207,7 @@ export function buildUnifiedPayload(
   }
   const blacklisted = [...failedCyclesByFingerprint.values()].filter((entry) => entry.attempts >= 3);
   const blacklistedText = blacklisted.length
-    ? blacklisted.slice(0, 12).map((entry) => `${uniqueCurrentFailures.has(`${entry.appName}:${entry.fingerprint}`) ? "🔴" : "🟢"} ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts} times)`).join("\\n")
+    ? blacklisted.slice(0, 12).map((entry) => `${uniqueCurrentFailures.has(`${entry.appName}:${entry.fingerprint}`) ? "🔴" : "🟢"} ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts} times)`).join("\n")
     : "None (no fingerprint has reached three failed repair cycles).";
   const repairAnalyticsText = [
     `Open error fingerprints: ${uniqueCurrentFailures.size}`,
@@ -217,7 +217,7 @@ export function buildUnifiedPayload(
     `Blacklisted signatures (3+ failed cycles): ${blacklisted.length}`,
     `Last log pass: ${lastPassText}`,
     "Blacklist status: red = still seen in this log window; green = not seen in this log window"
-  ].join("\\n");
+  ].join("\n");
   const latestRunLines = latestRotationResults
     ? latestRotationResults.map((result) => renderModeLine(result.appName, inferMode(result.previousActiveId, result.newActiveId))).join("\n")
     : renderLatestRunLines(rotationHistory, runtimeState.lastRunLines);
@@ -312,13 +312,23 @@ export function buildUnifiedPayload(
             inline: true
           },
           {
+            name: "Repair Analytics",
+            value: codeBlock(repairAnalyticsText),
+            inline: true
+          },
+          {
             name: "Notes",
             value: codeBlock(notesText),
             inline: true
           },
           {
-            name: "Latest Athena Attempt",
+            name: "Athena Notes",
             value: codeBlock(athenaText),
+            inline: false
+          },
+          {
+            name: "Blacklisted Errors",
+            value: codeBlock(blacklistedText),
             inline: false
           },
           {
