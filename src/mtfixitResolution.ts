@@ -50,6 +50,7 @@ export type MtFixItResolutionState = {
   workflow?: { id: number; name: string; status: string; conclusion?: string | null; url?: string };
   feedback?: string;
   incidentFingerprint?: string;
+  confidencePercent?: number;
 };
 
 type ResolutionAction = "resolve" | "approve" | "deny" | "pass" | "fail";
@@ -262,6 +263,10 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
   const existing = await readMtFixItResolution(env, job.id); if (existing && ["deploying", "deployed", "failed", "denied"].includes(existing.status)) return existing;
   const patchHash = await jobPatchHash(env, job.id);
   const known = Boolean(patchHash) && (await listKnownFixes(env)).some((item) => item.signature === signature && item.repoId === job.repoId && item.patchHash === patchHash);
+  const confidenceText = `${job.summary || ""}\n${job.description || ""}`;
+  const confidenceMatch = confidenceText.match(/(?:self-assessed\s+)?confidence(?:\s+(?:level|score))?\s*[:=—-]?\s*(\d{1,3})\s*%/i);
+  const confidencePercent = confidenceMatch ? Math.max(0, Math.min(100, Number(confidenceMatch[1]))) : undefined;
+  const confidenceThreshold = Math.max(50, Math.min(100, Number(env.MTFIXIT_CONFIDENCE_THRESHOLD || 80)));
   const state: MtFixItResolutionState = {
     schemaVersion: "mtfixit.resolution/v1",
     jobId: job.id,
@@ -270,11 +275,20 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
     signature,
     incidentFingerprint,
     patchHash: patchHash || undefined,
+    confidencePercent,
     knownFix: known,
     message: known
       ? "Previously successful patch matched exactly. Automatically merging and deploying after validation."
       : "Validated repair patch produced and all configured checks passed. Automatically merging and deploying; deployment verification is required before this is marked complete.",
   };
+  if (!known && (confidencePercent === undefined || confidencePercent < confidenceThreshold)) {
+    state.status = "awaiting_approval";
+    state.message = confidencePercent === undefined
+      ? `Athena's report did not include a parseable confidence percentage. Automatic promotion is blocked until the report is reviewed; required threshold is ${confidenceThreshold}%.`
+      : `Athena confidence is ${confidencePercent}%, below the ${confidenceThreshold}% automatic-promotion threshold. Review the evidence before approving deployment.`;
+    await saveResolution(env, state);
+    return state;
+  }
   await saveResolution(env, state); void deployInBackground(job, env, dashboardPort, state); return state;
 }
 
