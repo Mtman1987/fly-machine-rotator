@@ -3,6 +3,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { triggerAthenaForIncident } from "../src/athenaIncidentTrigger.js";
+import { runHourlyAthenaDiagnostic } from "../src/hourlyAthenaDiagnostic.js";
+
+vi.mock("../src/hourlyAthenaDiagnostic.js", () => ({
+  runHourlyAthenaDiagnostic: vi.fn().mockResolvedValue({ status: "no-actionable-incident", summary: "No mock incident selected." })
+}));
 
 const directories: string[] = [];
 
@@ -31,9 +36,11 @@ describe("Stella incident rotation cooldown", () => {
     await expect(triggerAthenaForIncident(event, env, Date.parse("2026-08-09T01:00:00Z"))).resolves.toMatchObject({ triggered: true });
     await expect(triggerAthenaForIncident(event, env, Date.parse("2026-08-09T02:00:00Z"))).resolves.toMatchObject({ triggered: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(runHourlyAthenaDiagnostic).toHaveBeenCalledWith(env, expect.any(Date), event);
 
     await writeFile(runtimeFile, JSON.stringify({ currentStatus: "success", totalRuns: 2, updatedAt: "2026-08-09T12:00:00Z", lastStartedAt: "rotation-2", lastRunLines: [] }));
     await expect(triggerAthenaForIncident(event, env, Date.parse("2026-08-09T13:00:00Z"))).resolves.toMatchObject({ triggered: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(runHourlyAthenaDiagnostic).toHaveBeenCalledTimes(2);
   });
 });
