@@ -48,6 +48,7 @@ export type MtFixItResolutionState = {
   mergeCommit?: string;
   workflow?: { id: number; name: string; status: string; conclusion?: string | null; url?: string };
   feedback?: string;
+  incidentFingerprint?: string;
 };
 
 type ResolutionAction = "resolve" | "approve" | "deny" | "pass" | "fail";
@@ -240,6 +241,7 @@ async function deployInBackground(job: CodexJob, env: NodeJS.ProcessEnv, dashboa
 
 async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: number): Promise<MtFixItResolutionState> {
   const signature = mtFixItKnownFixSignature(job);
+  const incidentFingerprint = job.description.match(/Incident fingerprint:\s*([a-zA-Z0-9:_-]+)/i)?.[1];
   if (job.status === "failed") { const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "failed", updatedAt: new Date().toISOString(), signature, message: safeText(job.error || job.summary || "Athena could not produce a fix.") }; await saveResolution(env, state); return state; }
   if (job.status !== "completed") return (await readMtFixItResolution(env, job.id)) || { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "awaiting_analysis", updatedAt: new Date().toISOString(), signature, message: "Athena is still analyzing the report." };
   if (!job.changedFiles.length) { const state: MtFixItResolutionState = { schemaVersion: "mtfixit.resolution/v1", jobId: job.id, status: "no_change", updatedAt: new Date().toISOString(), signature, message: safeText(job.summary || "Athena did not find a code change to apply.") }; await saveResolution(env, state); return state; }
@@ -254,6 +256,7 @@ async function resolveJob(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: 
     status: "deploying",
     updatedAt: new Date().toISOString(),
     signature,
+    incidentFingerprint,
     patchHash: patchHash || undefined,
     knownFix: known,
     message: known
@@ -281,10 +284,20 @@ export async function applyMtFixItResolutionAction(jobId: string, action: Resolu
     await saveResolution(env, failed);
     const historyPath = String(env.LOG_ERROR_HISTORY_FILE || "/data/error-history.json");
     const history = await readJsonFile<any[]>(historyPath, []);
-    const fingerprint = state.signature || mtFixItKnownFixSignature(job);
+    const fingerprint = state.incidentFingerprint || state.signature || mtFixItKnownFixSignature(job);
     history.push({ recordedAt: new Date().toISOString(), appName: job.appName, fingerprint, message: note, suggestion: "Owner rejected the deployed repair; research an alternate approach and use this feedback as negative evidence.", context: [`MtFixIt job ${job.id}`, `repo ${job.repoId}`, ...(job.changedFiles || []), ...(job.checks || []).filter((check) => !check.ok).map((check) => `${check.command}: ${check.output}`)] });
     await mkdir(dirname(historyPath), { recursive: true });
     await writeFile(historyPath, JSON.stringify(history.slice(-5000), null, 2), "utf8");
+    const cyclesPath = String(env.HOURLY_REPAIR_CYCLES_FILE || "/data/hourly-repair-cycles.json");
+    const cycles = await readJsonFile<any[]>(cyclesPath, []);
+    const now = new Date().toISOString();
+    cycles.push({
+      id: `owner-fail-${job.id}-${Date.now()}`, startedAt: now, finishedAt: now, status: "failed",
+      appName: job.appName, fingerprint,
+      summary: `Owner marked deployed repair as failed: ${note}`
+    });
+    await mkdir(dirname(cyclesPath), { recursive: true });
+    await writeFile(cyclesPath, JSON.stringify(cycles.slice(-500), null, 2), "utf8");
     void import("./hourlyAthenaDiagnostic.js").then(({ runHourlyAthenaDiagnostic }) => runHourlyAthenaDiagnostic(env)).catch(() => console.error("Athena retry after owner FAIL feedback did not start."));
     return failed;
   }
