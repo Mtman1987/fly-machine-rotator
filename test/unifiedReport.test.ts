@@ -58,7 +58,7 @@ describe("buildUnifiedPayload", () => {
         { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt three failed; Athena confidence: 42%" },
         { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
         { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
-        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" }
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass; Athena confidence: 42%" }
       ],
       [{ signature: "known-signature", incidentFingerprint: "proven-incident", repoId: "mock", successfulDeploys: 1 }]
     ) as { embeds: Array<{ fields: Array<{ name: string; value: string }> }> };
