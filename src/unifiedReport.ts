@@ -423,6 +423,16 @@ function summarizeFailureCounts(events: StoredErrorEvent[]): string {
 
 function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[], errors: StoredErrorEvent[], observations: StoredErrorEvent[], attempts: AthenaIncidentAttempt[], cycles: RepairCycleRecord[], fixes: KnownFixRecord[]): string {
   const latest = rotationHistory.at(-1);
+  const currentErrorKeys = new Set(errors.map((event) => `${event.appName}:${event.fingerprint}`));
+  const failedCounts = new Map<string, { appName: string; fingerprint: string; attempts: number; summary: string }>();
+  for (const cycle of cycles) {
+    if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
+    const key = `${cycle.appName}:${cycle.fingerprint}`;
+    const previous = failedCounts.get(key);
+    failedCounts.set(key, { appName: cycle.appName, fingerprint: cycle.fingerprint, attempts: (previous?.attempts || 0) + 1, summary: cycle.summary || previous?.summary || "No failure details recorded." });
+  }
+  const blacklisted = [...failedCounts.values()].filter((item) => item.attempts >= 3);
+  const retryable = [...failedCounts.values()].filter((item) => item.attempts > 0 && item.attempts < 3);
   const lines = [
     "FLY ROTATOR + ATHENA — DETAILED OPERATIONS REPORT",
     `Generated: ${new Date().toISOString()}`,
@@ -432,7 +442,7 @@ function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[],
     `Athena attempts retained: ${attempts.length}`,
     `Owner-proven incidents: ${new Set(fixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size}`,
     `Failed repair cycles: ${cycles.filter((cycle) => cycle.status === "failed").length}`,
-    `Blacklisted fingerprints (3+ failed cycles): ${new Set(cycles.filter((cycle) => cycle.status === "failed" && cycle.appName && cycle.fingerprint).map((cycle) => `${cycle.appName}:${cycle.fingerprint}`)).size}`,
+    `Blacklisted fingerprints (3+ failed cycles): ${blacklisted.length}`,
     "",
     "LATEST ATHENA REPAIR NOTE",
     cycles.at(-1)?.summary || "No repair-cycle summary is recorded.",
@@ -441,6 +451,10 @@ function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[],
     latest ? `At: ${latest.finishedAt ?? latest.at}; trigger: ${latest.trigger ?? "unknown"}; duration: ${latest.durationMs ?? "unknown"}ms` : "No rotation run is recorded."
   ];
   if (latest) for (const result of latest.results) lines.push(`- ${result.success ? "SUCCESS" : "FAIL"} ${result.appName}; mode=${result.mode}; from=${result.from ?? "unknown"}; to=${result.to ?? "unknown"}; warnings=${result.warnings ?? 0}; error=${redactSensitiveText(result.error ?? "none")}`);
+  lines.push("", "OUTSTANDING RETRIES");
+  for (const item of retryable) lines.push(`🟡 ${item.appName} ${item.fingerprint} failed ${item.attempts}/3; next attempt ${item.attempts + 1}/3; ${redactSensitiveText(item.summary)}`);
+  lines.push("", "BLACKLISTED ERRORS");
+  for (const item of blacklisted) lines.push(`${currentErrorKeys.has(`${item.appName}:${item.fingerprint}`) ? "🔴" : "🟢"} ${item.appName} ${item.fingerprint} failed ${item.attempts} times; ${currentErrorKeys.has(`${item.appName}:${item.fingerprint}`) ? "still present in current log window" : "not seen in current log window"}; ${redactSensitiveText(item.summary)}`);
   lines.push("", "LATEST ATHENA ATTEMPTS");
   for (const attempt of attempts.slice(-50).reverse()) lines.push(`- ${attempt.attemptedAt} ${attempt.appName} ${attempt.status} fingerprint=${attempt.fingerprint} incident=${attempt.incidentId}; ${redactSensitiveText(attempt.summary ?? "no summary")}`);
   lines.push("", "ERROR EVENTS");
