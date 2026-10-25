@@ -19,7 +19,7 @@ type AthenaIncidentAttempt = {
 };
 
 type RepairCycleRecord = { appName?: string; fingerprint?: string; status: string; summary?: string; startedAt?: string; finishedAt?: string };
-type KnownFixRecord = { signature?: string; repoId?: string; successfulDeploys?: number; normalizedReport?: string };
+type KnownFixRecord = { signature?: string; incidentFingerprint?: string; repoId?: string; successfulDeploys?: number; normalizedReport?: string };
 
 type RotationHistoryEntry = {
   at: string;
@@ -195,6 +195,7 @@ export function buildUnifiedPayload(
   const latestRotation = latestRotationResults ? summarizeRotationResults(latestRotationResults) : summarizeLatestRotation(rotationHistory);
   const failureCounts = summarizeFailureCounts(prunedErrors);
   const uniqueCurrentFailures = new Set(prunedErrors.map((event) => `${event.appName}:${event.fingerprint}`));
+  const provenFixCount = new Set(knownFixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size;
   const lastPassText = uniqueCurrentFailures.size
     ? `🔴 ${uniqueCurrentFailures.size} error fingerprints still present in this log window`
     : "🟢 No error fingerprints present in this log window";
@@ -216,7 +217,7 @@ export function buildUnifiedPayload(
   const repairAnalyticsText = [
     `Open error fingerprints: ${uniqueCurrentFailures.size}`,
     `Error events in 24h: ${prunedErrors.length}`,
-    `Proven fixes: ${knownFixes.length}`,
+    `Proven fixes: ${provenFixCount}`,
     `Failed repair cycles retained: ${repairCycles.filter((cycle) => cycle.status === "failed").length}`,
     `Retryable incidents (1-2 failures): ${retryable.length}`,
     `Blacklisted signatures (3+ failed cycles): ${blacklisted.length}`,
