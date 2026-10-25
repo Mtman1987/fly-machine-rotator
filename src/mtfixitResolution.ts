@@ -205,7 +205,7 @@ async function notifyOwnerForLiveFeedback(job: CodexJob, state: MtFixItResolutio
     `Files: ${job.changedFiles.join(", ") || "none listed"}`,
     `Deployment: ${state.workflow?.url || "workflow verified"}`,
     "Choose PASS only if your live test confirms the issue is fixed. Choose FAIL if it still fails."
-  ].join("\\n");
+  ].join("\n");
   try {
     await fetch(`${base}/api/internal/owner-dm`, {
       method: "POST",
