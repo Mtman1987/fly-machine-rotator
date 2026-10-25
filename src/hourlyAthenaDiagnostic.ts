@@ -183,7 +183,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
     cycle.incidentRecordedAt = event.recordedAt;
     await saveCycle(env, cycle);
 
-    const description = `Hourly Athena diagnostic for ${event.appName}. Fix this current actionable incident and add regression coverage.\n\nError: ${event.message}\nSuggestion: ${event.suggestion || "none"}\nContext:\n${(event.context || []).slice(-12).join("\n")}`.slice(0, 4000);
+    const description = `Hourly Athena diagnostic for ${event.appName}. Incident fingerprint: ${event.fingerprint}. Fix this current actionable incident and add regression coverage.\n\nError: ${event.message}\nSuggestion: ${event.suggestion || "none"}\nContext:\n${(event.context || []).slice(-12).join("\n")}`.slice(0, 4000);
     const submitted = await coderCli(["submit", event.appName, description, "--wait", "--timeout", "720"], env);
     const job = unwrapJob(submitted.payload);
     cycle.jobId = job?.id;
