@@ -43,3 +43,15 @@ jobs:
         run: npx vitest run test/unifiedReport.test.ts
       - name: Rebuild production bundle after sandbox checks
         run: npm run build
+      - name: Render mock Discord embed and chat-room preview
+        run: npx tsx scripts/mtfixit-sandbox.ts
+      - name: Install Chromium for offline visual snapshot
+        run: npx --yes playwright install chromium
+      - name: Capture sandbox screenshot
+        run: npx --yes playwright screenshot --browser chromium --viewport-size="1440,1000" "file://$GITHUB_WORKSPACE/artifacts/mtfixit-sandbox.html" artifacts/mtfixit-sandbox.png
+      - name: Upload sandbox visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtfixit-offline-sandbox
+          path: artifacts/
+          if-no-files-found: error
