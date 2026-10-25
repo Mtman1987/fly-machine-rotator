@@ -435,7 +435,7 @@ function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[],
   }
   lines.push("", "OBSERVED-ONLY EVENTS");
   for (const event of pruneRecentHistory(observations, 7 * 24 * 60 * 60 * 1000).slice(-200).reverse()) lines.push(`- ${event.recordedAt} ${event.appName} fingerprint=${event.fingerprint}: ${redactSensitiveText(event.message)}`);
-  return lines.join("\\n").slice(-900_000);
+  return lines.join("\n").slice(-900_000);
 }
 
 function renderLast24HourReport(events: StoredErrorEvent[]): string {
