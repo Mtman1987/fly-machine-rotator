@@ -223,6 +223,16 @@ async function notifyOwnerForLiveFeedback(job: CodexJob, state: MtFixItResolutio
   }
 }
 
+async function recordResolutionFailureCycle(job: CodexJob, state: MtFixItResolutionState, env: NodeJS.ProcessEnv, summary: string) {
+  const cyclesPath = String(env.HOURLY_REPAIR_CYCLES_FILE || "/data/hourly-repair-cycles.json");
+  const cycles = await readJsonFile<any[]>(cyclesPath, []);
+  const fingerprint = state.incidentFingerprint || job.description.match(/Incident fingerprint:\\s*([a-zA-Z0-9:_-]+)/i)?.[1] || state.signature || mtFixItKnownFixSignature(job);
+  const now = new Date().toISOString();
+  cycles.push({ id: `resolution-fail-${job.id}-${Date.now()}`, startedAt: now, finishedAt: now, status: "failed", appName: job.appName, fingerprint, summary: safeText(summary, 2000) });
+  await mkdir(dirname(cyclesPath), { recursive: true });
+  await writeFile(cyclesPath, JSON.stringify(cycles.slice(-500), null, 2), "utf8");
+}
+
 async function deployInBackground(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: number, state: MtFixItResolutionState) {
   if (activeDeployments.has(job.id)) return; activeDeployments.add(job.id);
   try {
@@ -273,7 +283,18 @@ export async function applyMtFixItResolutionAction(jobId: string, action: Resolu
   if (action === "pass") {
     if (state.status !== "deployed") throw new Error("PASS is available only after deployment verification succeeds.");
     await rememberKnownFix(env, job, state);
-    const passed = { ...state, knownFix: true, feedback: "Owner confirmed the live fix.", updatedAt: new Date().toISOString(), message: "Owner confirmed the live fix. Added to the proven-fix registry." };
+    const cyclesPath = String(env.HOURLY_REPAIR_CYCLES_FILE || "/data/hourly-repair-cycles.json");
+    const cycles = await readJsonFile<any[]>(cyclesPath, []);
+    const stableFingerprint = state.incidentFingerprint || state.signature;
+    for (const cycle of cycles) {
+      if (cycle.appName === job.appName && cycle.fingerprint === stableFingerprint && cycle.status === "failed") {
+        cycle.status = "proven-fixed";
+        cycle.summary = "Owner confirmed the live fix; previous blacklist/retry count cleared.";
+      }
+    }
+    await mkdir(dirname(cyclesPath), { recursive: true });
+    await writeFile(cyclesPath, JSON.stringify(cycles.slice(-500), null, 2), "utf8");
+    const passed = { ...state, knownFix: true, feedback: "Owner confirmed the live fix.", updatedAt: new Date().toISOString(), message: "Owner confirmed the live fix. Added to the proven-fix registry and cleared its failed-attempt count." };
     await saveResolution(env, passed);
     return passed;
   }
