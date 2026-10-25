@@ -226,7 +226,7 @@ async function notifyOwnerForLiveFeedback(job: CodexJob, state: MtFixItResolutio
 async function recordResolutionFailureCycle(job: CodexJob, state: MtFixItResolutionState, env: NodeJS.ProcessEnv, summary: string) {
   const cyclesPath = String(env.HOURLY_REPAIR_CYCLES_FILE || "/data/hourly-repair-cycles.json");
   const cycles = await readJsonFile<any[]>(cyclesPath, []);
-  const fingerprint = state.incidentFingerprint || job.description.match(/Incident fingerprint:\\s*([a-zA-Z0-9:_-]+)/i)?.[1] || state.signature || mtFixItKnownFixSignature(job);
+  const fingerprint = state.incidentFingerprint || job.description.match(/Incident fingerprint:\s*([a-zA-Z0-9:_-]+)/i)?.[1] || state.signature || mtFixItKnownFixSignature(job);
   const now = new Date().toISOString();
   cycles.push({ id: `resolution-fail-${job.id}-${Date.now()}`, startedAt: now, finishedAt: now, status: "failed", appName: job.appName, fingerprint, summary: safeText(summary, 2000) });
   await mkdir(dirname(cyclesPath), { recursive: true });
@@ -245,7 +245,7 @@ async function deployInBackground(job: CodexJob, env: NodeJS.ProcessEnv, dashboa
     await verifyDeployment(repo, state.mergeCommit, env, state);
     state.status = "deployed"; state.message = "Fix merged and deployment checks completed successfully; awaiting owner live-test PASS/FAIL."; state.updatedAt = new Date().toISOString(); await saveResolution(env, state); await notifyOwnerForLiveFeedback(job, state, env);
   } catch (error) {
-    state.status = "failed"; state.message = safeText(error instanceof Error ? error.message : error, 1200); state.updatedAt = new Date().toISOString(); await saveResolution(env, state);
+    state.status = "failed"; state.message = safeText(error instanceof Error ? error.message : error, 1200); state.updatedAt = new Date().toISOString(); await saveResolution(env, state); await recordResolutionFailureCycle(job, state, env, state.message);
   } finally { activeDeployments.delete(job.id); }
 }
 
