@@ -10,6 +10,7 @@ describe("persistUnifiedReportAttachments", () => {
     const root = await mkdtemp(join(tmpdir(), "rotator-discord-report-"));
     const readout = JSON.stringify({ schemaVersion: "test/v1", logSnapshot: { logs: ["safe"] } }, null, 2);
     const snapshot = JSON.stringify({ logs: ["safe"] }, null, 2);
+    const detail = "Rotation report details";
     try {
       const saved = await persistUnifiedReportAttachments([
         { name: "rotator-run-readout.json", content: readout },
@@ -18,8 +19,9 @@ describe("persistUnifiedReportAttachments", () => {
       ], root);
       expect(await readFile(join(root, "discord-report", "rotator-run-readout.json"), "utf8")).toBe(readout);
       expect(await readFile(join(root, "discord-report", "rotator-log-snapshot.json"), "utf8")).toBe(snapshot);
+      expect(await readFile(join(root, "discord-report", "rotator-detailed-report.txt"), "utf8")).toBe(detail);
       expect(JSON.parse(await readFile(join(root, "discord-report", "latest.json"), "utf8")).files).toEqual([
-        "rotator-run-readout.json", "rotator-log-snapshot.json"
+        "rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"
       ]);
       expect(saved).toHaveLength(4);
     } finally {
