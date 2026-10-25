@@ -92,7 +92,7 @@ async function updateUnifiedDiscordReport(
   const multipartBody = () => {
     const form = new FormData();
     form.set("payload_json", JSON.stringify({ ...payload, allowed_mentions: { parse: [] }, attachments: files.map((file, id) => ({ id, filename: file.name })) }));
-    files.forEach((file,id) => form.set(`files[${id}]`, new Blob([file.content], { type: "application/json" }), file.name));
+    files.forEach((file,id) => form.set(`files[${id}]`, new Blob([file.content], { type: file.name.endsWith(".txt") ? "text/plain" : "application/json" }), file.name));
     return form;
   };
   const webhook = parseDiscordWebhookUrl(webhookUrl);
