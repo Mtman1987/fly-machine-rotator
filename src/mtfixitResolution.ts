@@ -158,11 +158,42 @@ async function verifyDeployment(repo: string, sha: string, env: NodeJS.ProcessEn
   throw new Error("Deployment verification timed out.");
 }
 
+async function waitForPullRequestChecks(repo: string, pullNumber: number, env: NodeJS.ProcessEnv) {
+  const started = Date.now();
+  let discovered = false;
+  while (Date.now() - started < VERIFY_TIMEOUT_MS) {
+    const pull = await githubRequest(env, `/repos/${repo}/pulls/${pullNumber}`) as { head?: { sha?: string } };
+    const sha = String(pull.head?.sha || "").trim();
+    if (!sha) throw new Error("Repair pull request has no head commit SHA.");
+    const [checksPayload, statusPayload] = await Promise.all([
+      githubRequest(env, `/repos/${repo}/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`),
+      githubRequest(env, `/repos/${repo}/commits/${encodeURIComponent(sha)}/status`),
+    ]);
+    const checks = Array.isArray(checksPayload?.check_runs) ? checksPayload.check_runs as any[] : [];
+    const statuses = Array.isArray(statusPayload?.statuses) ? statusPayload.statuses as any[] : [];
+    if (checks.length || statuses.length) {
+      discovered = true;
+      const failedCheck = checks.find((check) => check.status === "completed" && !["success", "neutral", "skipped"].includes(String(check.conclusion || "")));
+      const failedStatus = statuses.find((status) => !["success"].includes(String(status.state || "")));
+      if (failedCheck) throw new Error(`Repair PR check failed: ${failedCheck.name || failedCheck.id} (${failedCheck.conclusion || failedCheck.status}).`);
+      if (failedStatus) throw new Error(`Repair PR status check failed: ${failedStatus.context || failedStatus.id} (${failedStatus.state}).`);
+      const checksPending = checks.some((check) => check.status !== "completed");
+      const statusesPending = statuses.some((status) => !["success"].includes(String(status.state || "")));
+      if (!checksPending && !statusesPending && checks.every((check) => ["success", "neutral", "skipped"].includes(String(check.conclusion || ""))) && statuses.every((status) => status.state === "success")) return;
+    } else if (Date.now() - started >= WORKFLOW_DISCOVERY_GRACE_MS) {
+      throw new Error("No GitHub PR checks/statuses were discovered; refusing to merge an unverified repair.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, VERIFY_INTERVAL_MS));
+  }
+  throw new Error(discovered ? "Repair PR checks did not finish within the verification timeout." : "No GitHub PR checks were discovered before timeout.");
+}
+
 async function deployInBackground(job: CodexJob, env: NodeJS.ProcessEnv, dashboardPort: number, state: MtFixItResolutionState) {
   if (activeDeployments.has(job.id)) return; activeDeployments.add(job.id);
   try {
     const pullRequest = await ensurePublished(job, env, dashboardPort); const repo = repoSlug(job);
-    state.pullRequest = pullRequest; state.status = "deploying"; state.message = `Athena published PR #${pullRequest.number} and is merging/deploying it.`; state.updatedAt = new Date().toISOString(); await saveResolution(env, state);
+    state.pullRequest = pullRequest; state.status = "deploying"; state.message = `Athena published PR #${pullRequest.number}; waiting for pull-request checks before merge.`; state.updatedAt = new Date().toISOString(); await saveResolution(env, state);
+    await waitForPullRequestChecks(repo, pullRequest.number, env);
     await markReady(repo, pullRequest.number, env);
     const merged = await mergePullRequest(repo, pullRequest.number, env); if (!merged?.merged || !merged.sha) throw new Error(merged?.message || "GitHub did not merge the repair pull request");
     state.mergeCommit = String(merged.sha); state.updatedAt = new Date().toISOString(); await saveResolution(env, state);
