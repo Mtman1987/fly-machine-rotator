@@ -231,7 +231,7 @@ async function recordResolutionFailureCycle(job: CodexJob, state: MtFixItResolut
   const cycles = await readJsonFile<any[]>(cyclesPath, []);
   const fingerprint = state.incidentFingerprint || job.description.match(/Incident fingerprint:\s*([a-zA-Z0-9:_-]+)/i)?.[1] || state.signature || mtFixItKnownFixSignature(job);
   const now = new Date().toISOString();
-  cycles.push({ id: `resolution-fail-${job.id}-${Date.now()}`, startedAt: now, finishedAt: now, status: "failed", appName: job.appName, fingerprint, summary: safeText(summary, 2000) });
+  cycles.push({ id: `resolution-fail-${job.id}-${Date.now()}`, startedAt: now, finishedAt: now, status: "failed", appName: job.appName, fingerprint, summary: safeText(`Athena confidence: ${state.confidencePercent ?? "not reported"}%; ${summary}`, 2000) });
   await mkdir(dirname(cyclesPath), { recursive: true });
   await writeFile(cyclesPath, JSON.stringify(cycles.slice(-500), null, 2), "utf8");
 }
