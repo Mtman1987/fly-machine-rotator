@@ -6,21 +6,21 @@ import { buildUnifiedPayload, persistUnifiedReportAttachments } from "../src/uni
 import { RotatorRuntimeState } from "../src/runtimeState.js";
 
 describe("persistUnifiedReportAttachments", () => {
-  it("stores the exact allowlisted JSON attachment contents for direct Rotator reads", async () => {
+  it("stores the JSON evidence and the detailed text report for direct Rotator reads", async () => {
     const root = await mkdtemp(join(tmpdir(), "rotator-discord-report-"));
     const readout = JSON.stringify({ schemaVersion: "test/v1", logSnapshot: { logs: ["safe"] } }, null, 2);
     const snapshot = JSON.stringify({ logs: ["safe"] }, null, 2);
     try {
       const saved = await persistUnifiedReportAttachments([
         { name: "rotator-run-readout.json", content: readout },
-        { name: "rotator-log-snapshot.json", content: snapshot }
+        { name: "rotator-log-snapshot.json", content: snapshot },\n        { name: "rotator-detailed-report.txt", content: detail }
       ], root);
       expect(await readFile(join(root, "discord-report", "rotator-run-readout.json"), "utf8")).toBe(readout);
       expect(await readFile(join(root, "discord-report", "rotator-log-snapshot.json"), "utf8")).toBe(snapshot);
       expect(JSON.parse(await readFile(join(root, "discord-report", "latest.json"), "utf8")).files).toEqual([
         "rotator-run-readout.json", "rotator-log-snapshot.json"
       ]);
-      expect(saved).toHaveLength(3);
+      expect(saved).toHaveLength(4);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
