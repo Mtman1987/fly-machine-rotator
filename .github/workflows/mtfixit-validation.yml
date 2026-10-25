@@ -48,7 +48,7 @@ jobs:
       - name: Install Chromium for offline visual snapshot
         run: npx --yes playwright install chromium
       - name: Capture sandbox screenshot
-        run: npx --yes playwright screenshot --browser chromium --viewport-size="1440,1000" "file://$GITHUB_WORKSPACE/artifacts/mtfixit-sandbox.html" artifacts/mtfixit-sandbox.png
+        run: npx --yes playwright screenshot --browser chromium --full-page --viewport-size="1440,1000" "file://$GITHUB_WORKSPACE/artifacts/mtfixit-sandbox.html" artifacts/mtfixit-sandbox.png
       - name: Upload sandbox visual evidence
         uses: actions/upload-artifact@v4
         with:
