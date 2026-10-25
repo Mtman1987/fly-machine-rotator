@@ -56,6 +56,12 @@ export async function triggerAthenaForIncident(
     console.error("Could not refresh Discord when Stella started", error);
   });
 
+  // Start the new repair workflow independently so a failure in the legacy
+  // proposal generator cannot prevent MtFixIt from handling this log incident.
+  const automatedRepair = await runHourlyAthenaDiagnostic(env, new Date(), event).catch((error) => ({
+    status: "failed",
+    summary: error instanceof Error ? error.message : String(error)
+  }));
   const dashboardPort = Number(env.ROTATOR_INTERNAL_DASHBOARD_PORT ?? (Number(env.PORT ?? env.ROTATOR_DASHBOARD_PORT ?? 8080) + 2));
   const token = String(env.ROTATOR_DASHBOARD_ACTION_TOKEN ?? "").trim();
   try {
@@ -70,15 +76,11 @@ export async function triggerAthenaForIncident(
     if (!response.ok) throw new Error(`Stella generate returned ${response.status}: ${body.slice(0, 500)}`);
 
     const preparation = await prepareIncidentRepairForApproval(event.appName, event.fingerprint, env);
-    const automatedRepair = await runHourlyAthenaDiagnostic(env, new Date(), event).catch((error) => ({
-      status: "failed",
-      summary: error instanceof Error ? error.message : String(error)
-    }));
     attempt.status = preparation.status === "error" || automatedRepair.status === "failed" ? "failed" : "completed";
     attempt.summary = `${body.slice(0, 240)} legacyPreparation=${preparation.status}: ${preparation.message}; MtFixIt=${automatedRepair.status}: ${automatedRepair.summary}`.slice(0, 1000);
   } catch (error) {
     attempt.status = "failed";
-    attempt.summary = error instanceof Error ? error.message : String(error);
+    attempt.summary = `MtFixIt=${automatedRepair.status}: ${automatedRepair.summary}; legacy trigger failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000);
   }
   attempt.finishedAt = new Date().toISOString();
   await writeAthenaIncidentAttempts(attemptsFile, attempts);
