@@ -53,3 +53,24 @@ test('resolution route stays behind scoped SPMT service auth or legacy compatibi
   assert.ok(legacyAuthIndex < resolutionIndex);
   assert.ok(denialIndex < resolutionIndex);
 });
+
+test('new repairs must meet the configured confidence threshold before automatic promotion', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /MTFIXIT_CONFIDENCE_THRESHOLD/);
+  assert.match(source, /confidencePercent < confidenceThreshold/);
+  assert.match(source, /state\.status = "awaiting_approval"/);
+  assert.match(source, /confidencePercent/);
+});
+
+test('failed incidents remain eligible for retry until the three-attempt blacklist is reached', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/hourlyAthenaDiagnostic.ts'), 'utf8');
+  assert.match(source, /cycles\.filter\(\(cycle\) => cycle\.status !== "failed"\)/);
+  assert.match(source, /\(failedAttempts\.get\(key\) \|\| 0\) < 3/);
+});
+
+test('pull-request validation includes the offline mock-chat sandbox as a required check', () => {
+  const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/mtfixit-validation.yml'), 'utf8');
+  assert.match(workflow, /offline-sandbox:/);
+  assert.match(workflow, /needs: validate/);
+  assert.match(workflow, /test\/unifiedReport\.test\.ts/);
+});
