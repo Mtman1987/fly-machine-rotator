@@ -194,8 +194,8 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
       const resolution = await applyMtFixItResolutionAction(job.id, "resolve", env, dashboardPort);
       cycle.status = resolution.status === "deploying" ? "deploying-known-fix" : "awaiting-owner-approval";
       cycle.summary = resolution.status === "deploying"
-        ? `Athena matched a previously approved repair for ${event.appName}; deployment is running automatically.`
-        : `Athena found and validated a repair for ${event.appName}; owner approval is required before merge/deployment.`;
+        ? `Athena validated a repair for ${event.appName}; deployment is running automatically. ${safe(job.summary || "No model summary was returned.", 900)}`
+        : `Athena found and validated a repair for ${event.appName}; owner approval is required before merge/deployment. ${safe(job.summary || "No model summary was returned.", 900)}`;
       cycle.finishedAt = new Date().toISOString();
       await saveCycle(env, cycle);
       await notifyOwner(env, {
@@ -210,7 +210,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
 
     const failure = safe(job?.error || submitted.error || job?.summary || "The autonomous coder did not produce a validated repair.", 6000);
     cycle.status = "failed";
-    cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review.`;
+    cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review. Coder evidence: ${failure.slice(0, 900)}`;
     cycle.finishedAt = new Date().toISOString();
     await saveCycle(env, cycle);
     await notifyOwner(env, {
