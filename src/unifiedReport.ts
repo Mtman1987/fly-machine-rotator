@@ -87,7 +87,7 @@ async function updateUnifiedDiscordReport(
   const files = [
     { name: "rotator-run-readout.json", content: JSON.stringify(evidence, null, 2) },
     { name: "rotator-log-snapshot.json", content: JSON.stringify(evidence.logSnapshot, null, 2) },
-    { name: "rotator-detailed-report.txt", content: renderDetailedOperationsReport(rotationHistory, errorHistory, observationHistory, athenaAttempts) },
+    { name: "rotator-detailed-report.txt", content: renderDetailedOperationsReport(rotationHistory, errorHistory, observationHistory, athenaAttempts, repairCycles, knownFixes) },
   ];
   // Persist the exact attachment payloads locally first. Discord is a delivery
   // destination, not the canonical store that Athena/SPMT must read back from.
@@ -421,7 +421,7 @@ function summarizeFailureCounts(events: StoredErrorEvent[]): string {
     .slice(0, 1000);
 }
 
-function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[], errors: StoredErrorEvent[], observations: StoredErrorEvent[], attempts: AthenaIncidentAttempt[]): string {
+function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[], errors: StoredErrorEvent[], observations: StoredErrorEvent[], attempts: AthenaIncidentAttempt[], cycles: RepairCycleRecord[], fixes: KnownFixRecord[]): string {
   const latest = rotationHistory.at(-1);
   const lines = [
     "FLY ROTATOR + ATHENA — DETAILED OPERATIONS REPORT",
@@ -430,6 +430,12 @@ function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[],
     `Error events retained: ${errors.length}`,
     `Observation events retained: ${observations.length}`,
     `Athena attempts retained: ${attempts.length}`,
+    `Owner-proven incidents: ${new Set(fixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size}`,
+    `Failed repair cycles: ${cycles.filter((cycle) => cycle.status === "failed").length}`,
+    `Blacklisted fingerprints (3+ failed cycles): ${new Set(cycles.filter((cycle) => cycle.status === "failed" && cycle.appName && cycle.fingerprint).map((cycle) => `${cycle.appName}:${cycle.fingerprint}`)).size}`,
+    "",
+    "LATEST ATHENA REPAIR NOTE",
+    cycles.at(-1)?.summary || "No repair-cycle summary is recorded.",
     "",
     "LATEST ROTATION",
     latest ? `At: ${latest.finishedAt ?? latest.at}; trigger: ${latest.trigger ?? "unknown"}; duration: ${latest.durationMs ?? "unknown"}ms` : "No rotation run is recorded."
