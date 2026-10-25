@@ -14,8 +14,8 @@ test('known-fix signature is stable for the same normalized report and repo', ()
 test('resolution workflow auto-deploys validated fixes and verifies deployment', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /const known = Boolean\(patchHash\).*item\.patchHash === patchHash/s);
-  assert.match(source, /status: known \? "deploying" : "awaiting_approval"/);
-  assert.match(source, /if \(known\) void deployInBackground\(job, env, dashboardPort, state\)/);
+  assert.match(source, /status: "deploying"/);
+  assert.match(source, /void deployInBackground\(job, env, dashboardPort, state\)/);
   assert.match(source, /export async function applyMtFixItResolutionAction/);
   assert.match(source, /await verifyDeployment\(/);
   assert.match(source, /state\.status = "deployed"/);
