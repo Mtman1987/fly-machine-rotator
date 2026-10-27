@@ -5,10 +5,12 @@ import { describe, expect, it } from 'vitest';
 function source(path: string) { return readFileSync(resolve(process.cwd(), path), 'utf8'); }
 
 describe('Autonomous MtFixIt routing', () => {
-  it('keeps new repairs owner-gated and lets exact known fixes deploy without ChatGPT', () => {
+  it('only advances validated repairs after PR checks and verifies deployment before recording success', () => {
     const resolution = source('src/mtfixitResolution.ts');
-    expect(resolution).toContain('status: known ? "deploying" : "awaiting_approval"');
-    expect(resolution).toContain('if (known) void deployInBackground(job, env, dashboardPort, state)');
+    expect(resolution).toContain('status: "deploying"');
+    expect(resolution).toContain('await waitForPullRequestChecks(repo, pullRequest.number, env)');
+    expect(resolution).toContain('await verifyDeployment(repo, state.mergeCommit, env, state)');
+    expect(resolution).toContain('await rememberKnownFix(env, job, state)');
     expect(resolution).toContain('export async function applyMtFixItResolutionAction');
     expect(resolution).not.toContain('queueMtFixItForChatGpt');
     expect(resolution).not.toContain("status: 'awaiting_chatgpt'");

@@ -11,17 +11,17 @@ test('known-fix signature is stable for the same normalized report and repo', ()
   assert.notEqual(left, mtFixItKnownFixSignature({ repoId: 'streamweaver', description: `I can't tag people even though im it` }));
 });
 
-test('resolution workflow owner-gates new fixes and auto-deploys only exact known fixes', () => {
+test('resolution workflow auto-deploys validated fixes and verifies deployment', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
   assert.match(source, /const known = Boolean\(patchHash\).*item\.patchHash === patchHash/s);
-  assert.match(source, /status: known \? "deploying" : "awaiting_approval"/);
-  assert.match(source, /if \(known\) void deployInBackground\(job, env, dashboardPort, state\)/);
+  assert.match(source, /status: "deploying"/);
+  assert.match(source, /void deployInBackground\(job, env, dashboardPort, state\)/);
   assert.match(source, /export async function applyMtFixItResolutionAction/);
   assert.match(source, /await verifyDeployment\(/);
   assert.match(source, /state\.status = "deployed"/);
   assert.match(source, /await rememberKnownFix\(env, job, state\)/);
-  assert.doesNotMatch(source, /queueMtFixItForChatGpt/);
-  assert.doesNotMatch(source, /status: 'awaiting_chatgpt'/);
+  assert.match(source, /waitForPullRequestChecks\(repo, pullRequest\.number, env\)/);
+  assert.match(source, /const checksPass = job\.checks\.length > 0 && job\.checks\.every\(\(check\) => check\.ok\)/);
 });
 
 test('known-fix history requires the same repo signature and exact patch hash', () => {
@@ -52,4 +52,25 @@ test('resolution route stays behind scoped SPMT service auth or legacy compatibi
   assert.ok(serviceAuthIndex < resolutionIndex);
   assert.ok(legacyAuthIndex < resolutionIndex);
   assert.ok(denialIndex < resolutionIndex);
+});
+
+test('new repairs must meet the configured confidence threshold before automatic promotion', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/mtfixitResolution.ts'), 'utf8');
+  assert.match(source, /MTFIXIT_CONFIDENCE_THRESHOLD/);
+  assert.match(source, /confidencePercent < confidenceThreshold/);
+  assert.match(source, /state\.status = "awaiting_approval"/);
+  assert.match(source, /confidencePercent/);
+});
+
+test('failed incidents remain eligible for retry until the three-attempt blacklist is reached', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/hourlyAthenaDiagnostic.ts'), 'utf8');
+  assert.match(source, /cycles\.filter\(\(cycle\) => cycle\.status !== "failed"\)/);
+  assert.match(source, /\(failedAttempts\.get\(key\) \|\| 0\) < 3/);
+});
+
+test('pull-request validation includes the offline mock-chat sandbox as a required check', () => {
+  const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/mtfixit-validation.yml'), 'utf8');
+  assert.match(workflow, /offline-sandbox:/);
+  assert.match(workflow, /needs: validate/);
+  assert.match(workflow, /test\/unifiedReport\.test\.ts/);
 });

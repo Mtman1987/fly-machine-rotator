@@ -108,14 +108,26 @@ function unwrapJob(payload: any): CoderJob | null {
 
 function incidentKey(event: ErrorEvent) { return `${event.appName}:${event.fingerprint}:${event.recordedAt}`; }
 
-async function pickIncident(env: NodeJS.ProcessEnv): Promise<ErrorEvent | null> {
+async function pickIncident(env: NodeJS.ProcessEnv, target?: { appName: string; fingerprint: string }): Promise<ErrorEvent | null> {
   const events = await readJson<ErrorEvent[]>(historyFile(env), []);
   const cycles = await readCycles(env);
-  const attempted = new Set(cycles.map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
+  const attempted = new Set(cycles.filter((cycle) => cycle.status !== "failed").map((cycle) => `${cycle.appName || ""}:${cycle.fingerprint || ""}:${cycle.incidentRecordedAt || ""}`));
+  const failedAttempts = new Map<string, number>();
+  for (const cycle of cycles) {
+    if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
+    const key = `${cycle.appName}:${cycle.fingerprint}`;
+    failedAttempts.set(key, (failedAttempts.get(key) || 0) + 1);
+  }
   return (Array.isArray(events) ? events : [])
     .filter((event) => Boolean(event?.appName && event?.fingerprint && event?.recordedAt && event?.message))
+    .filter((event) => !target || (event.appName === target.appName && event.fingerprint === target.fingerprint))
     .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))
-    .find((event) => classifyIncident({ ...event, context: event.context || [] }).autoFixEligible && !attempted.has(incidentKey(event))) || null;
+    .find((event) => {
+      const key = `${event.appName}:${event.fingerprint}`;
+      return classifyIncident({ ...event, context: event.context || [] }).autoFixEligible
+        && !attempted.has(incidentKey(event))
+        && (failedAttempts.get(key) || 0) < 3;
+    }) || null;
 }
 
 export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: string; jobId?: string; fileContent?: string }) {
@@ -150,7 +162,7 @@ export async function notifyOwner(env: NodeJS.ProcessEnv, input: { message: stri
   }
 }
 
-export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process.env, now = new Date()): Promise<HourlyRepairCycle> {
+export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process.env, now = new Date(), target?: { appName: string; fingerprint: string }): Promise<HourlyRepairCycle> {
   const cycle: HourlyRepairCycle = {
     id: `hourly-${now.toISOString().replace(/[:.]/g, "-")}`,
     startedAt: now.toISOString(),
@@ -159,7 +171,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
   };
   await saveCycle(env, cycle);
   try {
-    const event = await pickIncident(env);
+    const event = await pickIncident(env, target);
     if (!event) {
       cycle.status = "no-actionable-incident";
       cycle.summary = "No new auto-fix-eligible incident was found.";
@@ -172,7 +184,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
     cycle.incidentRecordedAt = event.recordedAt;
     await saveCycle(env, cycle);
 
-    const description = `Hourly Athena diagnostic for ${event.appName}. Fix this current actionable incident and add regression coverage.\n\nError: ${event.message}\nSuggestion: ${event.suggestion || "none"}\nContext:\n${(event.context || []).slice(-12).join("\n")}`.slice(0, 4000);
+    const description = `Hourly Athena diagnostic for ${event.appName}. Incident fingerprint: ${event.fingerprint}. Fix this current actionable incident and add regression coverage.\n\nError: ${event.message}\nSuggestion: ${event.suggestion || "none"}\nContext:\n${(event.context || []).slice(-12).join("\n")}`.slice(0, 4000);
     const submitted = await coderCli(["submit", event.appName, description, "--wait", "--timeout", "720"], env);
     const job = unwrapJob(submitted.payload);
     cycle.jobId = job?.id;
@@ -183,8 +195,8 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
       const resolution = await applyMtFixItResolutionAction(job.id, "resolve", env, dashboardPort);
       cycle.status = resolution.status === "deploying" ? "deploying-known-fix" : "awaiting-owner-approval";
       cycle.summary = resolution.status === "deploying"
-        ? `Athena matched a previously approved repair for ${event.appName}; deployment is running automatically.`
-        : `Athena found and validated a repair for ${event.appName}; owner approval is required before merge/deployment.`;
+        ? `Athena validated a repair for ${event.appName}; deployment is running automatically. ${safe(job.summary || "No model summary was returned.", 900)}`
+        : `Athena found and validated a repair for ${event.appName}; owner approval is required before merge/deployment. ${safe(job.summary || "No model summary was returned.", 900)}`;
       cycle.finishedAt = new Date().toISOString();
       await saveCycle(env, cycle);
       await notifyOwner(env, {
@@ -199,7 +211,7 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
 
     const failure = safe(job?.error || submitted.error || job?.summary || "The autonomous coder did not produce a validated repair.", 6000);
     cycle.status = "failed";
-    cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review.`;
+    cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review. Coder evidence: ${failure.slice(0, 900)}`;
     cycle.finishedAt = new Date().toISOString();
     await saveCycle(env, cycle);
     const failedJobEvidence = job ? {

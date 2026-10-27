@@ -1,4 +1,5 @@
 import { AppRotationResult } from "./types.js";
+import { runHourlyAthenaDiagnostic } from "./hourlyAthenaDiagnostic.js";
 import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { upsertUnifiedDiscordReport } from "./unifiedReport.js";
@@ -12,6 +13,25 @@ export async function sendDiscordReport(webhookUrl: string | undefined, results:
     await history.save();
   }
   await upsertUnifiedDiscordReport(webhookUrl, results);
+  const failedResults = results.filter((result) => !result.success);
+  if (failedResults.length) {
+    const errorFile = process.env.LOG_ERROR_HISTORY_FILE ?? "/data/error-history.json";
+    let errors: Array<{ recordedAt: string; appName: string; fingerprint: string; message: string; suggestion: string; context: string[] }> = [];
+    try { const parsed = JSON.parse(await readFile(errorFile, "utf8")); if (Array.isArray(parsed)) errors = parsed; } catch { /* first failure */ }
+    for (const result of failedResults) {
+      const message = String(result.error || result.warnings.join("; ") || "Rotator operation failed").slice(0, 2500);
+      const fingerprint = `${result.appName}:${message.toLowerCase().replace(/\\s+/g, " ").trim().slice(0, 180)}`;
+      if (errors.some((item) => item.appName === result.appName && item.fingerprint === fingerprint && Date.now() - Date.parse(item.recordedAt) < 10 * 60_000)) continue;
+      errors.push({
+        recordedAt: new Date().toISOString(), appName: result.appName, fingerprint, message,
+        suggestion: "Rotator operation failed. Inspect the machine state, action trace, and recent logs before proposing a repair.",
+        context: [...result.actions.slice(-8), ...result.warnings.slice(-8), `before=${JSON.stringify(result.before)}`, `after=${JSON.stringify(result.after)}`].slice(-20)
+      });
+    }
+    await mkdir(dirname(errorFile), { recursive: true });
+    await writeFile(errorFile, JSON.stringify(errors.slice(-5000), null, 2), { mode: 0o600 });
+    void runHourlyAthenaDiagnostic(process.env).catch(() => console.error("Rotator failure did not start Athena repair."));
+  }
 }
 
 function formatSummary(results: AppRotationResult[]): string {

@@ -18,6 +18,9 @@ type AthenaIncidentAttempt = {
   summary?: string;
 };
 
+type RepairCycleRecord = { appName?: string; fingerprint?: string; status: string; summary?: string; startedAt?: string; finishedAt?: string };
+type KnownFixRecord = { signature?: string; incidentFingerprint?: string; repoId?: string; successfulDeploys?: number; normalizedReport?: string };
+
 type RotationHistoryEntry = {
   at: string;
   startedAt?: string;
@@ -65,11 +68,13 @@ async function updateUnifiedDiscordReport(
   const stateFile = getUnifiedReportStateFile();
   const dashboardUrl = getDashboardUrl();
 
-  const [rotationHistory, errorHistory, observationHistory, athenaAttempts, currentState, runtimeState] = await Promise.all([
+  const [rotationHistory, errorHistory, observationHistory, athenaAttempts, repairCycles, knownFixes, currentState, runtimeState] = await Promise.all([
     readRotationHistory(rotationHistoryFile),
     readErrorHistory(errorHistoryFile),
     readErrorHistory(observationHistoryFile),
     readAthenaIncidentAttempts(process.env.ROTATOR_ATHENA_ATTEMPTS_FILE ?? "/data/athena-incident-attempts.json"),
+    readJsonArray<RepairCycleRecord>(process.env.HOURLY_REPAIR_CYCLES_FILE ?? "/data/hourly-repair-cycles.json"),
+    readJsonArray<KnownFixRecord>(process.env.MTFIXIT_KNOWN_FIXES_FILE ?? "/data/codex-fixer/known-fixes.json"),
     DiscordUnifiedReportState.load(stateFile),
     RotatorRuntimeStateStore.load(getRuntimeStateFile()).then((store) => store.snapshot()),
   ]);
@@ -78,10 +83,11 @@ async function updateUnifiedDiscordReport(
   const cutoff = evidence.window?.startedAt;
   const currentErrors = cutoff ? errorHistory.filter(event => event.recordedAt >= cutoff) : errorHistory;
   const currentObservations = cutoff ? observationHistory.filter(event => event.recordedAt >= cutoff) : observationHistory;
-  const payload = buildUnifiedPayload(rotationHistory, currentErrors, runtimeState, latestRotationResults, dashboardUrl, currentObservations, athenaAttempts.filter(attempt => !cutoff || attempt.attemptedAt >= cutoff).at(-1), evidence.machines, evidence.window);
+  const payload = buildUnifiedPayload(rotationHistory, currentErrors, runtimeState, latestRotationResults, dashboardUrl, currentObservations, athenaAttempts.filter(attempt => !cutoff || attempt.attemptedAt >= cutoff).at(-1), evidence.machines, evidence.window, repairCycles, knownFixes);
   const files = [
     { name: "rotator-run-readout.json", content: JSON.stringify(evidence, null, 2) },
     { name: "rotator-log-snapshot.json", content: JSON.stringify(evidence.logSnapshot, null, 2) },
+    { name: "rotator-detailed-report.txt", content: renderDetailedOperationsReport(rotationHistory, errorHistory, observationHistory, athenaAttempts, repairCycles, knownFixes) },
   ];
   // Persist the exact attachment payloads locally first. Discord is a delivery
   // destination, not the canonical store that Athena/SPMT must read back from.
@@ -91,7 +97,7 @@ async function updateUnifiedDiscordReport(
   const multipartBody = () => {
     const form = new FormData();
     form.set("payload_json", JSON.stringify({ ...payload, allowed_mentions: { parse: [] }, attachments: files.map((file, id) => ({ id, filename: file.name })) }));
-    files.forEach((file,id) => form.set(`files[${id}]`, new Blob([file.content], { type: "application/json" }), file.name));
+    files.forEach((file,id) => form.set(`files[${id}]`, new Blob([file.content], { type: file.name.endsWith(".txt") ? "text/plain" : "application/json" }), file.name));
     return form;
   };
   const webhook = parseDiscordWebhookUrl(webhookUrl);
@@ -146,14 +152,14 @@ export async function persistUnifiedReportAttachments(
   files: Array<{ name: string; content: string }>,
   evidenceRoot = process.env.ROTATOR_EVIDENCE_DIR ?? "/data/operations-evidence"
 ): Promise<string[]> {
-  const allowed = new Set(["rotator-run-readout.json", "rotator-log-snapshot.json"]);
+  const allowed = new Set(["rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"]);
   const folder = join(evidenceRoot, "discord-report");
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const saved: string[] = [];
   for (const file of files) {
     if (!allowed.has(file.name)) throw new Error(`Unexpected unified report attachment: ${file.name}`);
-    // The same JSON string is used for Discord and local persistence.
-    JSON.parse(file.content);
+    // JSON attachments are validated as JSON; the detailed report is intentionally plain text.
+    if (file.name.endsWith(".json")) JSON.parse(file.content);
     const path = join(folder, file.name);
     await writeFile(path, file.content, { mode: 0o600 });
     await chmod(path, 0o600);
@@ -163,7 +169,7 @@ export async function persistUnifiedReportAttachments(
   await writeFile(manifest, JSON.stringify({
     schemaVersion: "rotator.discord-report-cache/v1",
     updatedAt: new Date().toISOString(),
-    files: ["rotator-run-readout.json", "rotator-log-snapshot.json"]
+    files: ["rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"]
   }, null, 2), { mode: 0o600 });
   await chmod(manifest, 0o600);
   return [...saved, manifest];
@@ -178,14 +184,48 @@ export function buildUnifiedPayload(
   observationHistory: StoredErrorEvent[] = [],
   latestAthenaAttempt?: AthenaIncidentAttempt,
   machines: MachineLoad[] = [],
-  window?: ObservationWindow
+  window?: ObservationWindow,
+  repairCycles: RepairCycleRecord[] = [],
+  knownFixes: KnownFixRecord[] = []
 ): object {
   const prunedErrors = pruneErrorHistory(errorHistory);
   const observations = pruneRecentHistory(observationHistory, 7 * 24 * 60 * 60 * 1000);
   const latestHistoryEntry = rotationHistory.at(-1);
   const brandAssets = getBrandAssetUrls(dashboardUrl);
   const latestRotation = latestRotationResults ? summarizeRotationResults(latestRotationResults) : summarizeLatestRotation(rotationHistory);
-  const failureCounts = summarizeFailureCounts(prunedErrors);
+  const provenFixCount = new Set(knownFixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size;
+  const provenFingerprints = new Set(knownFixes.map((fix) => fix.incidentFingerprint).filter((fingerprint): fingerprint is string => Boolean(fingerprint)));
+  const activeErrors = prunedErrors.filter((event) => !provenFingerprints.has(event.fingerprint));
+  const failureCounts = summarizeFailureCounts(activeErrors);
+  const uniqueCurrentFailures = new Set(activeErrors.map((event) => `${event.appName}:${event.fingerprint}`));
+  const lastPassText = uniqueCurrentFailures.size
+    ? `🔴 ${uniqueCurrentFailures.size} error fingerprints still present in this log window`
+    : "🟢 No error fingerprints present in this log window";
+  const failedCyclesByFingerprint = new Map<string, { appName: string; fingerprint: string; attempts: number; lastSummary: string }>();
+  for (const cycle of repairCycles) {
+    if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
+    const key = `${cycle.appName}:${cycle.fingerprint}`;
+    const prior = failedCyclesByFingerprint.get(key);
+    failedCyclesByFingerprint.set(key, { appName: cycle.appName, fingerprint: cycle.fingerprint, attempts: (prior?.attempts || 0) + 1, lastSummary: cycle.summary || prior?.lastSummary || "No failure summary recorded" });
+  }
+  const blacklisted = [...failedCyclesByFingerprint.values()].filter((entry) => entry.attempts >= 3);
+  const retryable = [...failedCyclesByFingerprint.values()].filter((entry) => entry.attempts > 0 && entry.attempts < 3);
+  const retryableText = retryable.length
+    ? retryable.slice(0, 12).map((entry) => `🟡 ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts}/3; next attempt ${entry.attempts + 1}/3)`).join("\n")
+    : "No incidents currently waiting for another automatic attempt.";
+  const blacklistedText = blacklisted.length
+    ? blacklisted.slice(0, 12).map((entry) => `${uniqueCurrentFailures.has(`${entry.appName}:${entry.fingerprint}`) ? "🔴" : "🟢"} ${entry.appName} — ${entry.fingerprint.slice(0, 12)} (failed ${entry.attempts} times)`).join("\n")
+    : "None (no fingerprint has reached three failed repair cycles).";
+  const repairAnalyticsText = [
+    `Open error fingerprints: ${uniqueCurrentFailures.size}`,
+    `Outstanding error events in 24h: ${activeErrors.length}`,
+    `Proven fixes: ${provenFixCount}`,
+    `Failed repair cycles retained: ${repairCycles.filter((cycle) => cycle.status === "failed").length}`,
+    `Retryable incidents (1-2 failures): ${retryable.length}`,
+    `Blacklisted signatures (3+ failed cycles): ${blacklisted.length}`,
+    `Last log pass: ${lastPassText}`,
+    "Blacklist status: red = still seen in this log window; green = not seen in this log window"
+  ].join("\n");
   const latestRunLines = latestRotationResults
     ? latestRotationResults.map((result) => renderModeLine(result.appName, inferMode(result.previousActiveId, result.newActiveId))).join("\n")
     : renderLatestRunLines(rotationHistory, runtimeState.lastRunLines);
@@ -216,15 +256,21 @@ export function buildUnifiedPayload(
     `Observed only (${window ? "current window" : "7d"}): ${observations.length}`
   ].join("\n");
   const baseUrl = dashboardUrl.replace(/\/$/, "");
-  const athenaText = latestAthenaAttempt
-    ? [
-        `${latestAthenaAttempt.appName} • ${latestAthenaAttempt.status}`,
-        `fingerprint ${latestAthenaAttempt.fingerprint}`,
-        `started ${formatTimestamp(latestAthenaAttempt.attemptedAt)}`,
-        latestAthenaAttempt.finishedAt ? `finished ${formatTimestamp(latestAthenaAttempt.finishedAt)}` : "still running",
-        latestAthenaAttempt.summary?.slice(0, 420)
-      ].filter(Boolean).join("\n")
-    : "Athena has not attempted an incident in the current retained history.";
+  const latestRepairCycle = repairCycles.at(-1);
+  const confidenceMatch = String(latestRepairCycle?.summary || "").match(/Athena confidence:\s*(\d{1,3})%/i);
+  const confidencePercent = confidenceMatch ? Math.max(0, Math.min(100, Number(confidenceMatch[1]))) : undefined;
+  const confidenceSignal = confidencePercent === undefined
+    ? "⚪ confidence not reported"
+    : `${confidencePercent >= 80 ? "🟢" : confidencePercent >= 50 ? "🟡" : "🔴"} Athena confidence ${confidencePercent}% (model self-assessment)`;
+  const athenaText = [
+    latestAthenaAttempt ? `${latestAthenaAttempt.appName} • ${latestAthenaAttempt.status}` : "Athena repair history",
+    latestAthenaAttempt ? `fingerprint ${latestAthenaAttempt.fingerprint}` : undefined,
+    latestAthenaAttempt ? `started ${formatTimestamp(latestAthenaAttempt.attemptedAt)}` : undefined,
+    latestAthenaAttempt?.finishedAt ? `finished ${formatTimestamp(latestAthenaAttempt.finishedAt)}` : undefined,
+    confidenceSignal,
+    latestRepairCycle?.summary?.slice(0, 420),
+    latestAthenaAttempt?.summary?.slice(0, 220)
+  ].filter(Boolean).join("\n");
   const queueLinks = [
     `[Athena repair queue](${baseUrl}/#fixes) • [Observation ledger](${baseUrl}/#observations)`,
     `[Repair queue Markdown](${baseUrl}/logs/errors.md) • [Observation Markdown](${baseUrl}/logs/observations.md)`
@@ -274,13 +320,28 @@ export function buildUnifiedPayload(
             inline: true
           },
           {
+            name: "Repair Analytics",
+            value: codeBlock(repairAnalyticsText),
+            inline: true
+          },
+          {
             name: "Notes",
             value: codeBlock(notesText),
             inline: true
           },
           {
-            name: "Latest Athena Attempt",
+            name: "Athena Notes",
             value: codeBlock(athenaText),
+            inline: false
+          },
+          {
+            name: "Outstanding Retries",
+            value: codeBlock(retryableText),
+            inline: false
+          },
+          {
+            name: "Blacklisted Errors",
+            value: codeBlock(blacklistedText),
             inline: false
           },
           {
@@ -360,6 +421,54 @@ function summarizeFailureCounts(events: StoredErrorEvent[]): string {
     .map(([appName, count]) => `${appName}: ${count}`)
     .join("\n")
     .slice(0, 1000);
+}
+
+function renderDetailedOperationsReport(rotationHistory: RotationHistoryEntry[], errors: StoredErrorEvent[], observations: StoredErrorEvent[], attempts: AthenaIncidentAttempt[], cycles: RepairCycleRecord[], fixes: KnownFixRecord[]): string {
+  const latest = rotationHistory.at(-1);
+  const currentErrorKeys = new Set(errors.map((event) => `${event.appName}:${event.fingerprint}`));
+  const failedCounts = new Map<string, { appName: string; fingerprint: string; attempts: number; summary: string }>();
+  for (const cycle of cycles) {
+    if (cycle.status !== "failed" || !cycle.appName || !cycle.fingerprint) continue;
+    const key = `${cycle.appName}:${cycle.fingerprint}`;
+    const previous = failedCounts.get(key);
+    failedCounts.set(key, { appName: cycle.appName, fingerprint: cycle.fingerprint, attempts: (previous?.attempts || 0) + 1, summary: cycle.summary || previous?.summary || "No failure details recorded." });
+  }
+  const blacklisted = [...failedCounts.values()].filter((item) => item.attempts >= 3);
+  const retryable = [...failedCounts.values()].filter((item) => item.attempts > 0 && item.attempts < 3);
+  const lines = [
+    "FLY ROTATOR + ATHENA — DETAILED OPERATIONS REPORT",
+    `Generated: ${new Date().toISOString()}`,
+    `Rotation runs retained: ${rotationHistory.length}`,
+    `Error events retained: ${errors.length}`,
+    `Observation events retained: ${observations.length}`,
+    `Athena attempts retained: ${attempts.length}`,
+    `Owner-proven incidents: ${new Set(fixes.map((fix) => fix.incidentFingerprint || fix.signature).filter(Boolean)).size}`,
+    `Failed repair cycles: ${cycles.filter((cycle) => cycle.status === "failed").length}`,
+    `Blacklisted fingerprints (3+ failed cycles): ${blacklisted.length}`,
+    "",
+    "LATEST ATHENA REPAIR NOTE",
+    cycles.at(-1)?.summary || "No repair-cycle summary is recorded.",
+    "",
+    "LATEST ROTATION",
+    latest ? `At: ${latest.finishedAt ?? latest.at}; trigger: ${latest.trigger ?? "unknown"}; duration: ${latest.durationMs ?? "unknown"}ms` : "No rotation run is recorded."
+  ];
+  if (latest) for (const result of latest.results) lines.push(`- ${result.success ? "SUCCESS" : "FAIL"} ${result.appName}; mode=${result.mode}; from=${result.from ?? "unknown"}; to=${result.to ?? "unknown"}; warnings=${result.warnings ?? 0}; error=${redactSensitiveText(result.error ?? "none")}`);
+  lines.push("", "OUTSTANDING RETRIES");
+  for (const item of retryable) lines.push(`🟡 ${item.appName} ${item.fingerprint} failed ${item.attempts}/3; next attempt ${item.attempts + 1}/3; ${redactSensitiveText(item.summary)}`);
+  lines.push("", "BLACKLISTED ERRORS");
+  for (const item of blacklisted) lines.push(`${currentErrorKeys.has(`${item.appName}:${item.fingerprint}`) ? "🔴" : "🟢"} ${item.appName} ${item.fingerprint} failed ${item.attempts} times; ${currentErrorKeys.has(`${item.appName}:${item.fingerprint}`) ? "still present in current log window" : "not seen in current log window"}; ${redactSensitiveText(item.summary)}`);
+  lines.push("", "LATEST ATHENA ATTEMPTS");
+  for (const attempt of attempts.slice(-50).reverse()) lines.push(`- ${attempt.attemptedAt} ${attempt.appName} ${attempt.status} fingerprint=${attempt.fingerprint} incident=${attempt.incidentId}; ${redactSensitiveText(attempt.summary ?? "no summary")}`);
+  lines.push("", "ERROR EVENTS");
+  for (const event of pruneRecentHistory(errors, 7 * 24 * 60 * 60 * 1000).slice(-300).reverse()) {
+    lines.push(`- ${event.recordedAt} ${event.appName} fingerprint=${event.fingerprint} machine=${event.machineId ?? "unknown"} region=${event.region ?? "unknown"}`);
+    lines.push(`  Error: ${redactSensitiveText(event.message)}`);
+    lines.push(`  Suggestion: ${redactSensitiveText(event.suggestion)}`);
+    for (const item of (event.context ?? []).slice(-8)) lines.push(`  Log: ${redactSensitiveText(item)}`);
+  }
+  lines.push("", "OBSERVED-ONLY EVENTS");
+  for (const event of pruneRecentHistory(observations, 7 * 24 * 60 * 60 * 1000).slice(-200).reverse()) lines.push(`- ${event.recordedAt} ${event.appName} fingerprint=${event.fingerprint}: ${redactSensitiveText(event.message)}`);
+  return lines.join("\n").slice(-900_000);
 }
 
 function renderLast24HourReport(events: StoredErrorEvent[]): string {
@@ -463,6 +572,15 @@ function shouldRepostUnifiedReport(status: number, body: string): boolean {
     return /maximum number of edits|30046|too old/i.test(body);
   }
   return false;
+}
+
+async function readJsonArray<T>(path: string): Promise<T[]> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as T[];
+    return Array.isArray(parsed) ? redactSensitiveValue(parsed) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function readRotationHistory(path: string): Promise<RotationHistoryEntry[]> {

@@ -6,21 +6,24 @@ import { buildUnifiedPayload, persistUnifiedReportAttachments } from "../src/uni
 import { RotatorRuntimeState } from "../src/runtimeState.js";
 
 describe("persistUnifiedReportAttachments", () => {
-  it("stores the exact allowlisted JSON attachment contents for direct Rotator reads", async () => {
+  it("stores the JSON evidence and the detailed text report for direct Rotator reads", async () => {
     const root = await mkdtemp(join(tmpdir(), "rotator-discord-report-"));
     const readout = JSON.stringify({ schemaVersion: "test/v1", logSnapshot: { logs: ["safe"] } }, null, 2);
     const snapshot = JSON.stringify({ logs: ["safe"] }, null, 2);
+    const detail = "Rotation report details";
     try {
       const saved = await persistUnifiedReportAttachments([
         { name: "rotator-run-readout.json", content: readout },
-        { name: "rotator-log-snapshot.json", content: snapshot }
+        { name: "rotator-log-snapshot.json", content: snapshot },
+        { name: "rotator-detailed-report.txt", content: detail }
       ], root);
       expect(await readFile(join(root, "discord-report", "rotator-run-readout.json"), "utf8")).toBe(readout);
       expect(await readFile(join(root, "discord-report", "rotator-log-snapshot.json"), "utf8")).toBe(snapshot);
+      expect(await readFile(join(root, "discord-report", "rotator-detailed-report.txt"), "utf8")).toBe(detail);
       expect(JSON.parse(await readFile(join(root, "discord-report", "latest.json"), "utf8")).files).toEqual([
-        "rotator-run-readout.json", "rotator-log-snapshot.json"
+        "rotator-run-readout.json", "rotator-log-snapshot.json", "rotator-detailed-report.txt"
       ]);
-      expect(saved).toHaveLength(3);
+      expect(saved).toHaveLength(4);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -37,6 +40,43 @@ describe("persistUnifiedReportAttachments", () => {
 });
 
 describe("buildUnifiedPayload", () => {
+  it("renders mock-room repair outcomes, retry counts, confidence, and red/green blacklist states", () => {
+    const now = new Date().toISOString();
+    const payload = buildUnifiedPayload(
+      [{ at: now, startedAt: now, finishedAt: now, results: [{ appName: "mock-lounge", success: true, mode: "restart", warnings: 0 }] }],
+      [{ recordedAt: now, appName: "mock-lounge", fingerprint: "still-failing-123", message: "mock failure", suggestion: "retry", context: [] }, { recordedAt: now, appName: "mock-lounge", fingerprint: "fixed-incident-789", message: "previously fixed failure", suggestion: "none", context: [] }],
+      runtimeState(),
+      undefined,
+      "https://example.test",
+      [],
+      { incidentId: "mock-lounge:still-failing-123", appName: "mock-lounge", fingerprint: "still-failing-123", rotationKey: "mock", attemptedAt: now, finishedAt: now, status: "failed", summary: "Mock room check failed" },
+      [],
+      undefined,
+      [
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt one failed" },
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt two failed" },
+        { appName: "mock-lounge", fingerprint: "still-failing-123", status: "failed", summary: "Attempt three failed; Athena confidence: 42%" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass" },
+        { appName: "mock-chat", fingerprint: "cleared-456", status: "failed", summary: "Not seen in latest log pass; Athena confidence: 42%" }
+      ],
+      [{ signature: "known-signature", incidentFingerprint: "proven-incident", repoId: "mock", successfulDeploys: 1 }, { signature: "fixed-signature", incidentFingerprint: "fixed-incident-789", repoId: "mock", successfulDeploys: 1 }]
+    ) as { embeds: Array<{ fields: Array<{ name: string; value: string }> }> };
+    const fields = payload.embeds[0].fields;
+    const analytics = fields.find((field) => field.name === "Repair Analytics")?.value || "";
+    const athena = fields.find((field) => field.name === "Athena Notes")?.value || "";
+    const blacklist = fields.find((field) => field.name === "Blacklisted Errors")?.value || "";
+    const retries = fields.find((field) => field.name === "Outstanding Retries")?.value || "";
+    expect(analytics).toContain("Proven fixes: 2");
+    expect(analytics).toContain("Open error fingerprints: 1");
+    expect(analytics).toContain("Outstanding error events in 24h: 1");
+    expect(analytics).toContain("Blacklisted signatures (3+ failed cycles): 2");
+    expect(athena).toContain("Athena confidence 42%");
+    expect(athena).toContain("🔴");
+    expect(blacklist).toContain("🔴 mock-lounge");
+    expect(blacklist).toContain("🟢 mock-chat");
+    expect(retries).toContain("No incidents currently waiting for another automatic attempt.");
+  });
   it("does not call an empty repair queue an error-free fleet", () => {
     const payload = buildUnifiedPayload([], [], runtimeState(), undefined, "https://example.test", [{
       recordedAt: new Date().toISOString(), appName: "apollo", fingerprint: "auth-failure",
@@ -125,12 +165,16 @@ describe("buildUnifiedPayload", () => {
     expect(embed.fields[3]?.name).toBe("Athena Queue by App");
     expect(embed.fields[3]?.value).toContain("chat-tag-bot-new: 1");
     expect(embed.fields[3]?.value).toContain("streamweaver-new: 1");
-    expect(embed.fields[4]?.name).toBe("Notes");
-    expect(embed.fields[4]?.value).toContain("1 handoffs");
-    expect(embed.fields[5]?.name).toBe("Latest Athena Attempt");
-    expect(embed.fields[6]?.name).toBe("Logs and Incident Lists");
-    expect(embed.fields[6]?.value).toContain("/logs/errors.md");
-    expect(embed.fields[6]?.value).toContain("/logs/observations.md");
+    expect(embed.fields[4]?.name).toBe("Repair Analytics");
+    expect(embed.fields[4]?.value).toContain("Proven fixes: 0");
+    expect(embed.fields[5]?.name).toBe("Notes");
+    expect(embed.fields[5]?.value).toContain("1 handoffs");
+    expect(embed.fields[6]?.name).toBe("Athena Notes");
+    expect(embed.fields[7]?.name).toBe("Outstanding Retries");
+    expect(embed.fields[8]?.name).toBe("Blacklisted Errors");
+    expect(embed.fields[9]?.name).toBe("Logs and Incident Lists");
+    expect(embed.fields[9]?.value).toContain("/logs/errors.md");
+    expect(embed.fields[9]?.value).toContain("/logs/observations.md");
     expect(embed.footer?.text).toContain("rotation start");
     expect(embed.footer?.text).toContain("last finished");
   });
