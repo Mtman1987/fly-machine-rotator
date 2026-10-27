@@ -202,9 +202,51 @@ export async function runHourlyAthenaDiagnostic(env: NodeJS.ProcessEnv = process
     cycle.summary = `Athena detected an actionable ${event.appName} incident, but the autonomous coder did not produce a validated patch. The incident remains durable for retry/review.`;
     cycle.finishedAt = new Date().toISOString();
     await saveCycle(env, cycle);
+    const failedJobEvidence = job ? {
+      id: job.id,
+      status: job.status,
+      appName: job.appName,
+      repoId: job.repoId,
+      description: job.description,
+      summary: job.summary,
+      changedFiles: job.changedFiles || [],
+      checks: job.checks || [],
+      baselineChecks: job.baselineChecks || [],
+      error: job.error || null,
+      pullRequest: job.pullRequest || null,
+    } : null;
+    const evidence = {
+      cycle,
+      incident: {
+        appName: event.appName,
+        fingerprint: event.fingerprint,
+        recordedAt: event.recordedAt,
+        message: event.message,
+        suggestion: event.suggestion || null,
+        context: event.context || [],
+      },
+      coder: {
+        job: failedJobEvidence,
+        submitSucceeded: submitted.ok,
+        submitError: submitted.error || null,
+        failureReason: failure,
+        payloadSummary: submitted.payload ? {
+          id: submitted.payload.id || submitted.payload.job?.id || null,
+          status: submitted.payload.status || submitted.payload.job?.status || null,
+          summary: submitted.payload.summary || submitted.payload.job?.summary || null,
+          error: submitted.payload.error || submitted.payload.job?.error || null,
+        } : null,
+      },
+      nextSteps: [
+        "Inspect the full job description, status, error, changed files, and check outputs above.",
+        "Compare baselineChecks with checks to distinguish pre-existing failures from regressions.",
+        "If no files changed, treat this as a failed repair attempt, not evidence that no fix is needed.",
+        "Do not deploy until a source change and relevant passing validation checks are recorded.",
+      ],
+    };
     await notifyOwner(env, {
-      message: `Athena found an actionable ${event.appName} incident but could not produce a validated repair automatically. No deployment was attempted. Job: **${job?.id || "none"}**`,
-      fileContent: JSON.stringify({ cycle, error: event.message, context: event.context || [], coderFailure: failure }, null, 2),
+      message: `Athena could not validate a repair for ${event.appName}. No deployment was attempted. Job: **${job?.id || "none"}**. The attached report now includes incident timestamps/context, coder status and failure reason, repository/job metadata, changed files, baseline and post-change checks, and next diagnostic steps.`,
+      fileContent: JSON.stringify(evidence, null, 2),
     });
     return cycle;
   } catch (error) {
